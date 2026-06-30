@@ -1,0 +1,583 @@
+# -*- coding: utf-8 -*-
+"""把 capital_flow.db 匯出成一個獨立的 dashboard.html，雙擊就能在瀏覽器打開，不需要跑streamlit/python。
+用法: python export_html.py
+"""
+import json
+import os
+import sqlite3
+from datetime import datetime
+
+import pandas as pd
+
+DB_PATH = "capital_flow.db"
+OUT_PATH = "dashboard.html"
+
+BROAD_GROUPS = {
+    "金融", "科技(綜合)", "生技醫藥", "消費(非必需)", "工業", "傳統產業", "傳統消費", "公用事業", "能源",
+    "不動產", "電信", "傳統產業/原材料", "電力設備", "控股公司", "航運", "造船", "商社", "商社/建設",
+    "汽車", "其他", "未分類", "媒體/娛樂", "遊戲/娛樂", "品牌3C", "IT/系統整合", "網路服務", "人力資源",
+    "工業電腦/物聯網", "IC通路", "安防設備",
+}
+
+UNIT_YI_LABEL = {"TWD": "億元", "KRW": "億韓元", "JPY_million": "億日圓", "CNY": "億人民幣", "USD": "億美元"}
+COUNTRIES = ["台", "日", "美", "韓", "陸"]
+
+
+def rank_tier(rank):
+    if rank <= 50:
+        return "🔥 前50(熱)"
+    elif rank <= 150:
+        return "🟠 51-150(中)"
+    else:
+        return "🟡 151+(邊緣)"
+
+
+def amount_yi_num(row):
+    """原始幣別下的億單位數值(不格式化，純數字，給排序/計算用)"""
+    return row["amount"] / 100 if row["amount_unit"] == "JPY_million" else row["amount"] / 1e8
+
+
+def format_amount_yi(row):
+    yi = amount_yi_num(row)
+    return f"{round(yi):,}{UNIT_YI_LABEL.get(row['amount_unit'], '億')}"
+
+
+def amount_twd_yi_num(row):
+    """換算成台幣的億元數值(不格式化，純數字，給排序/計算用)，缺匯率時回傳None"""
+    if pd.isna(row.get("twd_per_unit")):
+        return None
+    base_amount = row["amount"] * 1e6 if row["amount_unit"] == "JPY_million" else row["amount"]
+    return base_amount * row["twd_per_unit"] / 1e8
+
+
+def format_amount_twd_yi(row):
+    v = row["金額億台幣_num"]
+    return "—" if v is None else f"{round(v):,}億元"
+
+
+def compute_theme_pivot(rankings, classification, snapshot_date):
+    """回傳該snapshot_date的題材熱度分數表(主族群為index)。"""
+    snap = rankings[rankings["snapshot_date"] == snapshot_date]
+    merged = classification.merge(snap, on=["country", "code"], how="inner")
+    country_totals = snap.groupby("country")["金額億台幣_num"].sum()
+    theme_amt = (
+        merged.drop_duplicates(subset=["main_group", "country", "code"])
+        .groupby(["main_group", "country"])["金額億台幣_num"].sum().unstack(fill_value=0)
+    )
+    theme_cnt = (
+        merged.drop_duplicates(subset=["main_group", "country", "code"])
+        .groupby(["main_group", "country"])["code"].count().unstack(fill_value=0)
+    )
+    for c in COUNTRIES:
+        if c not in theme_amt.columns:
+            theme_amt[c] = 0.0
+        if c not in theme_cnt.columns:
+            theme_cnt[c] = 0
+    share = theme_amt[COUNTRIES].div(country_totals.reindex(COUNTRIES), axis=1) * 100
+    pivot = pd.DataFrame({"熱度分數": share.sum(axis=1), "金額合計億台幣": theme_amt[COUNTRIES].sum(axis=1)})
+    for c in COUNTRIES:
+        pivot[c] = theme_cnt[c].astype(int)
+    pivot["合計家數"] = theme_cnt[COUNTRIES].sum(axis=1).astype(int)
+    return pivot
+
+
+def build():
+    conn = sqlite3.connect(DB_PATH)
+    rankings = pd.read_sql("SELECT * FROM rankings", conn)
+    classification = pd.read_sql("SELECT * FROM classification", conn)
+    names = pd.read_sql("SELECT * FROM company_names", conn)
+    fx = pd.read_sql("SELECT * FROM fx_rates", conn)
+    conn.close()
+
+    rankings = rankings.merge(names, on=["country", "code"], how="left")
+    rankings["中文名稱"] = rankings["name_zh"].fillna(rankings["name"])
+    rankings["熱度"] = rankings["rank"].apply(rank_tier)
+    rankings["金額億_num"] = rankings.apply(amount_yi_num, axis=1)
+    rankings["金額億"] = rankings.apply(format_amount_yi, axis=1)
+    rankings["currency"] = rankings["amount_unit"].map({"TWD": "TWD", "KRW": "KRW", "JPY_million": "JPY", "CNY": "CNY", "USD": "USD"})
+    rankings = rankings.merge(fx, on=["snapshot_date", "currency"], how="left")
+    rankings["金額億台幣_num"] = rankings.apply(amount_twd_yi_num, axis=1)
+    rankings["金額億台幣"] = rankings.apply(format_amount_twd_yi, axis=1)
+
+    all_dates = sorted(rankings["snapshot_date"].unique())
+    latest_date = all_dates[-1]
+    previous_date = all_dates[-2] if len(all_dates) >= 2 else None
+    latest = rankings[rankings["snapshot_date"] == latest_date]
+
+    merged = classification.merge(latest, on=["country", "code"], how="inner")
+
+    main_groups_per_company = (
+        classification.groupby(["country", "code"])["main_group"]
+        .apply(lambda x: ", ".join(sorted(set(x))))
+        .reset_index()
+        .rename(columns={"main_group": "main_groups"})
+    )
+    full_table = latest.merge(main_groups_per_company, on=["country", "code"], how="left")
+    full_table["main_groups"] = full_table["main_groups"].fillna("未分類")
+
+    # ---- 熱度分數：該題材在該國的台幣金額佔該國全部上榜公司台幣金額的比例，五國加總 ----
+    pivot = compute_theme_pivot(rankings, classification, latest_date)
+    if previous_date:
+        prev_pivot = compute_theme_pivot(rankings, classification, previous_date)
+        pivot["熱度分數Δ"] = pivot["熱度分數"] - prev_pivot["熱度分數"].reindex(pivot.index)
+        pivot["金額Δ億台幣"] = pivot["金額合計億台幣"] - prev_pivot["金額合計億台幣"].reindex(pivot.index)
+    pivot = pivot.sort_values("熱度分數", ascending=False)
+    pivot_thematic = pivot[~pivot.index.isin(BROAD_GROUPS)]
+
+    def pivot_to_records(p):
+        recs = []
+        for g, r in p.iterrows():
+            rec = {
+                "main_group": g,
+                "熱度分數": round(r["熱度分數"], 2),
+                "金額合計億台幣": f"{round(r['金額合計億台幣']):,}",
+                "_amt_num": round(r["金額合計億台幣"]),
+                "合計家數": int(r["合計家數"]),
+            }
+            for c in COUNTRIES:
+                rec[c] = int(r[c])
+            if previous_date:
+                rec["熱度分數Δ"] = round(r["熱度分數Δ"], 2) if pd.notna(r["熱度分數Δ"]) else None
+                rec["金額Δ億台幣"] = round(r["金額Δ億台幣"]) if pd.notna(r["金額Δ億台幣"]) else None
+            recs.append(rec)
+        return recs
+
+    theme_pivot_all = pivot_to_records(pivot)
+    theme_pivot_thematic = pivot_to_records(pivot_thematic)
+
+    theme_detail = {}
+    detail_cols = ["country", "rank", "code", "中文名稱", "name", "sub_product", "position_note",
+                    "金額億", "金額億台幣", "金額億台幣_num", "熱度"]
+    for g in pivot.index:
+        rows = merged[merged["main_group"] == g][detail_cols].sort_values("rank")
+        theme_detail[g] = rows.to_dict("records")
+
+    full_cols = ["country", "rank", "code", "中文名稱", "name", "金額億", "金額億台幣", "金額億台幣_num", "main_groups", "熱度"]
+    full_table_out = full_table[full_cols].copy()
+    if previous_date:
+        prev = rankings[rankings["snapshot_date"] == previous_date][["country", "code", "rank", "金額億台幣_num"]]
+        prev = prev.rename(columns={"rank": "prev_rank", "金額億台幣_num": "prev_amt"})
+        full_table_out = full_table_out.merge(prev, on=["country", "code"], how="left")
+        full_table_out["排名Δ"] = full_table_out.apply(
+            lambda r: "新進榜" if pd.isna(r["prev_rank"]) else f"{int(r['prev_rank'] - r['rank']):+d}", axis=1
+        )
+        full_table_out["排名Δ_num"] = full_table_out["prev_rank"] - full_table_out["rank"]
+        full_table_out["金額Δ億台幣"] = (full_table_out["金額億台幣_num"] - full_table_out["prev_amt"]).round(0)
+    full_records = full_table_out.sort_values(["country", "rank"]).to_dict("records")
+
+    history_cols = ["snapshot_date", "country", "code", "中文名稱", "rank", "金額億", "金額億台幣", "金額億台幣_num"]
+    history = rankings[history_cols].sort_values(["country", "code", "snapshot_date"])
+    company_history = {}
+    for (country, code), g in history.groupby(["country", "code"]):
+        key = f"{country}|{code}"
+        company_history[key] = {
+            "label": f"{country} {code} {g['中文名稱'].iloc[0]}",
+            "rows": g[["snapshot_date", "rank", "金額億", "金額億台幣", "金額億台幣_num"]].to_dict("records"),
+        }
+
+    # 族群(題材)隨時間變化的歷史，每個歷史snapshot都重算一次熱度分數
+    theme_history = {}
+    for d in all_dates:
+        p = compute_theme_pivot(rankings, classification, d)
+        for g, r in p.iterrows():
+            theme_history.setdefault(g, []).append({
+                "snapshot_date": d,
+                "熱度分數": round(r["熱度分數"], 2),
+                "金額合計億台幣": round(r["金額合計億台幣"]),
+            })
+
+    def load_earnings_csv(path):
+        if not os.path.exists(path):
+            return {"rows": [], "mtime": None}
+        df = pd.read_csv(path, dtype={"代碼": str})
+        mtime = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
+        return {"rows": df.to_dict("records"), "mtime": mtime}
+
+    data = {
+        "latest_date": latest_date,
+        "previous_date": previous_date,
+        "countries": COUNTRIES,
+        "snapshot_dates": sorted(rankings["snapshot_date"].unique().tolist()),
+        "theme_pivot_all": theme_pivot_all,
+        "theme_pivot_thematic": theme_pivot_thematic,
+        "theme_detail": theme_detail,
+        "theme_history": theme_history,
+        "theme_list": sorted(theme_history.keys()),
+        "full_records": full_records,
+        "company_history": company_history,
+        "company_list": sorted(
+            [{"key": k, "label": v["label"]} for k, v in company_history.items()],
+            key=lambda x: x["label"],
+        ),
+        "us_earnings": load_earnings_csv("us_earnings_watch.csv"),
+        "tw_earnings": load_earnings_csv("tw_earnings_watch.csv"),
+    }
+    return data
+
+
+def render_html(data):
+    data_json = json.dumps(data, ensure_ascii=False)
+    html = HTML_TEMPLATE.replace("__DATA_JSON__", data_json)
+    with open(OUT_PATH, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"已產出 {OUT_PATH}，雙擊它就能在瀏覽器打開(最新快照: {data['latest_date']})")
+
+
+HTML_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>股市資金流向追蹤</title>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<style>
+  body { font-family: "Microsoft JhengHei", "PingFang TC", sans-serif; background:#1a1a1a; color:#e0e0e0; margin:0; padding:16px 24px; }
+  h1 { font-size: 22px; }
+  .caption { color:#999; margin-bottom: 16px; }
+  .tabs { display:flex; gap:8px; margin-bottom:12px; border-bottom:1px solid #444; }
+  .tab-btn { background:none; border:none; color:#aaa; padding:10px 16px; cursor:pointer; font-size:15px; }
+  .tab-btn.active { color:#fff; border-bottom:2px solid #4da3ff; font-weight:bold; }
+  .tab-content { display:none; }
+  .tab-content.active { display:block; }
+  table { border-collapse: collapse; width:100%; font-size:13px; margin-bottom: 16px; }
+  th, td { border:1px solid #444; padding:6px 10px; text-align:left; white-space:nowrap; }
+  th { background:#2a2a2a; cursor:pointer; position:sticky; top:0; user-select:none; }
+  th:hover { background:#3a3a3a; }
+  th .arrow { font-size: 11px; color:#4da3ff; }
+  tr:nth-child(even) { background:#222; }
+  select, input { background:#2a2a2a; color:#eee; border:1px solid #555; padding:6px; border-radius:4px; margin-right:8px; }
+  .tier-hot { background:#ff6b6b !important; color:#1a1a1a !important; }
+  .tier-mid { background:#ffd166 !important; color:#1a1a1a !important; }
+  .tier-edge { background:#fff9db !important; color:#1a1a1a !important; }
+  .scroll-box { max-height: 600px; overflow-y:auto; border:1px solid #444; }
+  .controls { margin-bottom: 12px; }
+  .hint { color:#888; font-size:12px; margin-bottom:8px; }
+</style>
+</head>
+<body>
+<h1>股市資金流向追蹤</h1>
+<div class="caption">台股(上市+上櫃) / 日股 / 韓股 / 陸股(滬深A股) / 美股，依成交金額排行，依族群/題材分類。最新快照日期：<span id="latestDate"></span></div>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="showTab(0)">題材跨市場比較</button>
+  <button class="tab-btn" onclick="showTab(1)">排行榜明細</button>
+  <button class="tab-btn" onclick="showTab(2)">公司歷史趨勢</button>
+  <button class="tab-btn" onclick="showTab(3)">財報/法說會提醒</button>
+</div>
+
+<div class="tab-content active" id="tab0">
+  <div class="controls">
+    <label><input type="checkbox" id="onlyThematic" checked onchange="renderThemePivot()"> 只看題材概念股(排除金融/消費/傳統產業等廣義分類)</label>
+  </div>
+  <div class="hint" id="hintTheme">熱度分數 = 該題材在每個國家的「台幣金額 ÷ 該國全部上榜公司台幣金額總和」百分比，五國加總而成。分數越高表示資金集中度越高，不是只看公司數量。點欄位標題可排序。</div>
+  <div class="scroll-box"><table id="themePivotTable"></table></div>
+  <div id="moversChart" style="height:350px"></div>
+  <div class="controls">
+    選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
+  </div>
+  <div class="scroll-box"><table id="themeDetailTable"></table></div>
+</div>
+
+<div class="tab-content" id="tab1">
+  <div class="controls">
+    國家：<select id="countryFilter" multiple size="5" onchange="renderFullTable()">
+      <option value="台" selected>台</option><option value="日" selected>日</option>
+      <option value="美" selected>美</option><option value="韓" selected>韓</option>
+      <option value="陸" selected>陸</option>
+    </select>
+    題材：<select id="groupFilter" onchange="renderFullTable()"><option value="">(不篩選)</option></select>
+  </div>
+  <div class="hint" id="hintFull">點欄位標題可排序(例如點「金額(億台幣)」可依跨市場可比較的台幣金額排大小)。</div>
+  <div class="scroll-box"><table id="fullTable"></table></div>
+</div>
+
+<div class="tab-content" id="tab2">
+  <div class="controls">
+    追蹤對象：
+    <label><input type="radio" name="histMode" value="company" checked onchange="onHistModeChange()"> 公司</label>
+    <label><input type="radio" name="histMode" value="theme" onchange="onHistModeChange()"> 主族群(題材)</label>
+  </div>
+  <div class="controls" id="companyPickWrap">
+    選擇公司：<select id="companyPick" onchange="renderCompanyHistory()" style="width:300px"></select>
+  </div>
+  <div class="controls" id="themeHistPickWrap" style="display:none">
+    選擇主族群：<select id="themeHistPick" onchange="renderThemeHistory()" style="width:300px"></select>
+  </div>
+  <div id="historyChart" style="height:400px"></div>
+  <table id="historyTable"></table>
+</div>
+
+<div class="tab-content" id="tab3">
+  <div class="hint">這個分頁是 `check_earnings.py` 上次執行結果的快照，要更新請在終端機跑 <code>python check_earnings.py</code> 後重新產生 dashboard.html。🔥=3天內 🟠=7天內。</div>
+  <div id="earningsTimeline" style="height:300px"></div>
+  <h4>美股財報 <span id="usEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
+  <div class="scroll-box"><table id="usEarningsTable"></table></div>
+  <h4>台股法說會 <span id="twEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
+  <div class="scroll-box"><table id="twEarningsTable"></table></div>
+</div>
+
+<script>
+const DATA = __DATA_JSON__;
+
+function tierClass(tier) {
+  if (tier.indexOf("前50") >= 0) return "tier-hot";
+  if (tier.indexOf("51-150") >= 0) return "tier-mid";
+  return "tier-edge";
+}
+
+// columns: [{key, label, numeric(bool), sortKey(optional, defaults to key)}]
+function buildTable(tableEl, columns, rows, rowClassFn) {
+  tableEl._cols = columns;
+  tableEl._rows = rows;
+  tableEl._rowClassFn = rowClassFn;
+  if (!tableEl._sortState) tableEl._sortState = {colIndex: null, dir: 1};
+  renderTableBody(tableEl);
+}
+
+function renderTableBody(tableEl) {
+  const columns = tableEl._cols, rowClassFn = tableEl._rowClassFn;
+  let rows = tableEl._rows.slice();
+  const {colIndex, dir} = tableEl._sortState;
+  if (colIndex !== null) {
+    const col = columns[colIndex];
+    const sortKey = col.sortKey || col.key;
+    rows.sort((a, b) => {
+      let va = a[sortKey], vb = b[sortKey];
+      if (va === undefined || va === null) va = col.numeric ? -Infinity : "";
+      if (vb === undefined || vb === null) vb = col.numeric ? -Infinity : "";
+      if (col.numeric) return (va - vb) * dir;
+      return String(va).localeCompare(String(vb)) * dir;
+    });
+  }
+  let thead = "<tr>" + columns.map((c, i) => {
+    let arrow = "";
+    if (tableEl._sortState.colIndex === i) arrow = `<span class="arrow">${tableEl._sortState.dir === 1 ? "▲" : "▼"}</span>`;
+    return `<th onclick="onHeaderClick('${tableEl.id}', ${i})">${c.label} ${arrow}</th>`;
+  }).join("") + "</tr>";
+  let tbody = rows.map(r => {
+    let cls = rowClassFn ? rowClassFn(r) : "";
+    let tds = columns.map(c => `<td>${r[c.key] !== undefined && r[c.key] !== null ? r[c.key] : ""}</td>`).join("");
+    return `<tr class="${cls}">${tds}</tr>`;
+  }).join("");
+  tableEl.innerHTML = thead + tbody;
+}
+
+function onHeaderClick(tableId, colIndex) {
+  const tableEl = document.getElementById(tableId);
+  const s = tableEl._sortState;
+  if (s.colIndex === colIndex) { s.dir = -s.dir; } else { s.colIndex = colIndex; s.dir = 1; }
+  renderTableBody(tableEl);
+}
+
+function showTab(i) {
+  document.querySelectorAll(".tab-btn").forEach((b, idx) => b.classList.toggle("active", idx === i));
+  document.querySelectorAll(".tab-content").forEach((t, idx) => t.classList.toggle("active", idx === i));
+}
+
+function renderThemePivot() {
+  const onlyThematic = document.getElementById("onlyThematic").checked;
+  const pivot = onlyThematic ? DATA.theme_pivot_thematic.slice(0, 10) : DATA.theme_pivot_all;
+  const cols = [
+    {key: "main_group", label: "主族群"},
+    {key: "熱度分數", label: "熱度分數", numeric: true},
+  ];
+  if (DATA.previous_date) {
+    cols.push({key: "熱度分數Δ", label: "熱度分數Δ", numeric: true});
+    cols.push({key: "金額Δ億台幣", label: "金額Δ(億台幣)", numeric: true});
+  }
+  cols.push({key: "金額合計億台幣", label: "金額合計(億台幣)", numeric: true, sortKey: "_amt_num"});
+  DATA.countries.forEach(c => cols.push({key: c, label: c, numeric: true}));
+  cols.push({key: "合計家數", label: "合計家數", numeric: true});
+  const tableEl = document.getElementById("themePivotTable");
+  tableEl._sortState = {colIndex: 1, dir: -1};
+  buildTable(tableEl, cols, pivot);
+
+  const sel = document.getElementById("themePick");
+  const prev = sel.value;
+  sel.innerHTML = Object.keys(DATA.theme_detail).map(g => `<option value="${g}">${g}</option>`).join("");
+  if (prev && DATA.theme_detail[prev]) sel.value = prev;
+  renderThemeDetail();
+  renderMoversChart();
+}
+
+function renderMoversChart() {
+  const el = document.getElementById("moversChart");
+  if (!DATA.previous_date) { el.innerHTML = ""; return; }
+  const thematic = DATA.theme_pivot_thematic.filter(p => p["熱度分數Δ"] !== null && p["熱度分數Δ"] !== undefined);
+  const sorted = thematic.slice().sort((a, b) => b["熱度分數Δ"] - a["熱度分數Δ"]);
+  const topUp = sorted.slice(0, 5);
+  const topDown = sorted.slice(-5).reverse();
+  const movers = topDown.concat(topUp);
+  const seen = new Set();
+  const uniqueMovers = movers.filter(m => !seen.has(m.main_group) && seen.add(m.main_group));
+  uniqueMovers.sort((a, b) => a["熱度分數Δ"] - b["熱度分數Δ"]);
+  Plotly.newPlot(el.id, [{
+    x: uniqueMovers.map(m => m["熱度分數Δ"]),
+    y: uniqueMovers.map(m => m.main_group),
+    type: "bar", orientation: "h",
+    marker: {color: uniqueMovers.map(m => m["熱度分數Δ"] >= 0 ? "#ff6b6b" : "#4da3ff")},
+  }], {
+    title: `本次熱度分數變化最大的題材(前5上升/前5下降，跟${DATA.previous_date}比較)`,
+    paper_bgcolor: "#1a1a1a", plot_bgcolor: "#1a1a1a", font: {color: "#e0e0e0"},
+    xaxis: {title: "熱度分數Δ"},
+  }, {responsive: true});
+}
+
+function renderThemeDetail() {
+  const g = document.getElementById("themePick").value;
+  const rows = DATA.theme_detail[g] || [];
+  const cols = [
+    {key: "country", label: "國家"}, {key: "rank", label: "排名", numeric: true}, {key: "code", label: "代碼"},
+    {key: "中文名稱", label: "中文名稱"}, {key: "name", label: "原文名稱"}, {key: "sub_product", label: "細分產品"},
+    {key: "position_note", label: "產業地位"}, {key: "金額億", label: "金額(億)"},
+    {key: "金額億台幣", label: "金額(億台幣)", numeric: true, sortKey: "金額億台幣_num"}, {key: "熱度", label: "熱度"},
+  ];
+  const tableEl = document.getElementById("themeDetailTable");
+  tableEl._sortState = {colIndex: 1, dir: 1};
+  buildTable(tableEl, cols, rows, r => tierClass(r["熱度"]));
+}
+
+function renderFullTable() {
+  const countries = Array.from(document.getElementById("countryFilter").selectedOptions).map(o => o.value);
+  const group = document.getElementById("groupFilter").value;
+  let rows = DATA.full_records.filter(r => countries.includes(r.country));
+  if (group) rows = rows.filter(r => (r.main_groups || "").includes(group));
+  const cols = [
+    {key: "country", label: "國家"}, {key: "rank", label: "排名", numeric: true}, {key: "code", label: "代碼"},
+    {key: "中文名稱", label: "中文名稱"}, {key: "name", label: "原文名稱"}, {key: "金額億", label: "金額(億)"},
+    {key: "金額億台幣", label: "金額(億台幣)", numeric: true, sortKey: "金額億台幣_num"},
+  ];
+  if (DATA.previous_date) {
+    cols.push({key: "排名Δ", label: "排名Δ", sortKey: "排名Δ_num", numeric: true});
+    cols.push({key: "金額Δ億台幣", label: "金額Δ(億台幣)", numeric: true});
+  }
+  cols.push({key: "main_groups", label: "主族群"}, {key: "熱度", label: "熱度"});
+  const tableEl = document.getElementById("fullTable");
+  if (!tableEl._sortState) tableEl._sortState = {colIndex: 1, dir: 1};
+  buildTable(tableEl, cols, rows, r => tierClass(r["熱度"]));
+}
+
+function renderCompanyHistory() {
+  const key = document.getElementById("companyPick").value;
+  const entry = DATA.company_history[key];
+  if (!entry) return;
+  const rows = entry.rows;
+  Plotly.newPlot("historyChart", [{
+    x: rows.map(r => r.snapshot_date), y: rows.map(r => r.rank), mode: "lines+markers", line: {color: "#4da3ff"},
+  }], {
+    title: entry.label + " 排名變化(數字越小越熱)",
+    yaxis: {autorange: "reversed", title: "排名"},
+    paper_bgcolor: "#1a1a1a", plot_bgcolor: "#1a1a1a", font: {color: "#e0e0e0"},
+  }, {responsive: true});
+  const cols = [
+    {key: "snapshot_date", label: "日期"}, {key: "rank", label: "排名", numeric: true},
+    {key: "金額億", label: "金額(億)"}, {key: "金額億台幣", label: "金額(億台幣)", numeric: true, sortKey: "金額億台幣_num"},
+  ];
+  buildTable(document.getElementById("historyTable"), cols, rows);
+}
+
+function onHistModeChange() {
+  const mode = document.querySelector('input[name="histMode"]:checked').value;
+  document.getElementById("companyPickWrap").style.display = mode === "company" ? "" : "none";
+  document.getElementById("themeHistPickWrap").style.display = mode === "theme" ? "" : "none";
+  if (mode === "company") renderCompanyHistory(); else renderThemeHistory();
+}
+
+function renderThemeHistory() {
+  const g = document.getElementById("themeHistPick").value;
+  const rows = DATA.theme_history[g] || [];
+  Plotly.newPlot("historyChart", [{
+    x: rows.map(r => r.snapshot_date), y: rows.map(r => r["熱度分數"]), mode: "lines+markers", line: {color: "#ff8c4d"},
+  }], {
+    title: g + " 熱度分數變化(數字越大資金越集中)",
+    yaxis: {title: "熱度分數"},
+    paper_bgcolor: "#1a1a1a", plot_bgcolor: "#1a1a1a", font: {color: "#e0e0e0"},
+  }, {responsive: true});
+  const cols = [
+    {key: "snapshot_date", label: "日期"}, {key: "熱度分數", label: "熱度分數", numeric: true},
+    {key: "金額合計億台幣", label: "金額合計(億台幣)", numeric: true},
+  ];
+  buildTable(document.getElementById("historyTable"), cols, rows);
+}
+
+function daysUntil(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((d - today) / 86400000);
+}
+
+function earningsTierClass(dateStr) {
+  const n = daysUntil(dateStr);
+  if (n <= 3) return "tier-hot";
+  if (n <= 7) return "tier-mid";
+  return "";
+}
+
+function renderEarningsTab() {
+  document.getElementById("usEarningsMtime").textContent = DATA.us_earnings.mtime ? `(最後查詢: ${DATA.us_earnings.mtime})` : "(尚未查詢過)";
+  document.getElementById("twEarningsMtime").textContent = DATA.tw_earnings.mtime ? `(最後查詢: ${DATA.tw_earnings.mtime})` : "(尚未查詢過)";
+
+  const usCols = [
+    {key: "日期", label: "日期"}, {key: "時段", label: "時段"}, {key: "代碼", label: "代碼"},
+    {key: "公司", label: "公司"}, {key: "成交金額排名", label: "排名", numeric: true},
+    {key: "主族群", label: "主族群"}, {key: "市值", label: "市值"}, {key: "EPS預估", label: "EPS預估"},
+  ];
+  buildTable(document.getElementById("usEarningsTable"), usCols, DATA.us_earnings.rows, r => earningsTierClass(r["日期"]));
+
+  const twCols = [
+    {key: "日期", label: "日期"}, {key: "時間", label: "時間"}, {key: "代碼", label: "代碼"},
+    {key: "公司", label: "公司"}, {key: "成交金額排名", label: "排名", numeric: true}, {key: "主族群", label: "主族群"},
+  ];
+  buildTable(document.getElementById("twEarningsTable"), twCols, DATA.tw_earnings.rows, r => earningsTierClass(r["日期"]));
+
+  const tlRows = [];
+  DATA.us_earnings.rows.forEach(r => tlRows.push({date: r["日期"], label: "美:" + r["代碼"], market: "美股"}));
+  DATA.tw_earnings.rows.forEach(r => tlRows.push({date: r["日期"], label: "台:" + r["代碼"], market: "台股"}));
+  if (tlRows.length) {
+    const us = tlRows.filter(r => r.market === "美股"), tw = tlRows.filter(r => r.market === "台股");
+    Plotly.newPlot("earningsTimeline", [
+      {x: us.map(r => r.date), y: us.map(r => r.label), mode: "markers", type: "scatter", name: "美股", marker: {size: 14, color: "#4da3ff"}},
+      {x: tw.map(r => r.date), y: tw.map(r => r.label), mode: "markers", type: "scatter", name: "台股", marker: {size: 14, color: "#ff6b6b"}},
+    ], {
+      title: "時間軸總覽", paper_bgcolor: "#1a1a1a", plot_bgcolor: "#1a1a1a", font: {color: "#e0e0e0"},
+      shapes: [{type: "line", x0: new Date().toISOString().slice(0, 10), x1: new Date().toISOString().slice(0, 10), y0: 0, y1: 1, yref: "paper", line: {color: "white", dash: "dash"}}],
+    }, {responsive: true});
+  } else {
+    document.getElementById("earningsTimeline").innerHTML = "";
+  }
+}
+
+function init() {
+  document.getElementById("latestDate").textContent = DATA.latest_date;
+  if (DATA.previous_date) {
+    document.getElementById("hintTheme").textContent += ` 跟上次快照(${DATA.previous_date})比較的Δ欄位已顯示。`;
+    document.getElementById("hintFull").textContent += ` 跟上次快照(${DATA.previous_date})比較的Δ欄位已顯示。`;
+  }
+  const groupSet = new Set();
+  DATA.theme_pivot_all.forEach(p => groupSet.add(p.main_group));
+  const groupSel = document.getElementById("groupFilter");
+  Array.from(groupSet).sort().forEach(g => {
+    const opt = document.createElement("option"); opt.value = g; opt.textContent = g; groupSel.appendChild(opt);
+  });
+  const companySel = document.getElementById("companyPick");
+  DATA.company_list.forEach(c => {
+    const opt = document.createElement("option"); opt.value = c.key; opt.textContent = c.label; companySel.appendChild(opt);
+  });
+  const themeHistSel = document.getElementById("themeHistPick");
+  DATA.theme_list.forEach(g => {
+    const opt = document.createElement("option"); opt.value = g; opt.textContent = g; themeHistSel.appendChild(opt);
+  });
+  renderThemePivot();
+  renderFullTable();
+  renderEarningsTab();
+  if (DATA.company_list.length) { companySel.value = DATA.company_list[0].key; renderCompanyHistory(); }
+  if (DATA.theme_list.length) { themeHistSel.value = DATA.theme_list[0]; }
+}
+init();
+</script>
+</body>
+</html>
+"""
+
+if __name__ == "__main__":
+    data = build()
+    render_html(data)
