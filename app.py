@@ -131,7 +131,7 @@ with st.sidebar:
     all_groups = sorted(classification["main_group"].dropna().unique())
     selected_groups = st.multiselect("主族群(題材)", all_groups)
 
-tab1, tab2, tab3, tab4 = st.tabs(["題材跨市場比較", "排行榜明細", "公司歷史趨勢", "財報/法說會提醒"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["題材跨市場比較", "排行榜明細", "公司歷史趨勢", "財報/法說會提醒", "新聞/目標價"])
 
 # 比目前選的日期更早的最近一個snapshot，用來算「跟上次比」的變化值；只有一個snapshot時就沒有上次可比
 earlier_dates = [d for d in snapshot_dates if d < selected_date]
@@ -158,10 +158,10 @@ with tab1:
         if previous_date:
             st.caption(f"Δ欄位是跟上一次快照({previous_date})比較的變化值")
 
-            st.subheader("本次熱度分數變化最大的題材(前5上升/前5下降)")
+            st.subheader("本次熱度分數變化最大的題材(前10上升/前10下降)")
             thematic_delta = pivot.loc[~pivot.index.isin(BROAD_GROUPS), "熱度分數Δ"].dropna()
-            top_up = thematic_delta.sort_values(ascending=False).head(5)
-            top_down = thematic_delta.sort_values(ascending=True).head(5)
+            top_up = thematic_delta.sort_values(ascending=False).head(10)
+            top_down = thematic_delta.sort_values(ascending=True).head(10)
             movers = pd.concat([top_down, top_up]).reset_index()
             movers.columns = ["主族群", "熱度分數Δ"]
             movers["方向"] = movers["熱度分數Δ"].apply(lambda v: "上升" if v >= 0 else "下降")
@@ -170,7 +170,10 @@ with tab1:
                 color_discrete_map={"上升": "#ff6b6b", "下降": "#4da3ff"},
                 title=f"跟上次快照({previous_date})比較",
             )
-            fig_movers.update_layout(yaxis={"categoryorder": "total ascending"})
+            fig_movers.update_layout(
+                yaxis={"categoryorder": "total ascending", "automargin": True},
+                height=550, margin={"l": 160},
+            )
             st.plotly_chart(fig_movers, width="stretch")
         else:
             st.caption("目前只有一個快照日期，累積第二次資料後這裡會多出「跟上次比」的Δ變化欄位和漲跌排行圖")
@@ -327,3 +330,31 @@ with tab4:
         fig_tl.update_traces(marker={"size": 14})
         fig_tl.add_vline(x=today_str, line_dash="dash", line_color="white")
         st.plotly_chart(fig_tl, width="stretch")
+
+# ---- Tab 5: 新聞/目標價 ----
+with tab5:
+    st.subheader("題材相關新聞與法人目標價")
+    st.caption(
+        "這個分頁是人工搜尋+逐一驗證連結真實性後手動整理的結果(不是自動爬蟲)，"
+        "確保每個連結點開都看得到對應的內容。更新方式：請我針對特定題材重新搜尋最新消息，"
+        "整理後存進 theme_news.csv。"
+    )
+    try:
+        news_df = pd.read_csv("theme_news.csv")
+        col1, col2 = st.columns(2)
+        with col1:
+            news_groups = st.multiselect("篩選主族群", sorted(news_df["主族群"].unique()), default=sorted(news_df["主族群"].unique()))
+        with col2:
+            news_types = st.multiselect("篩選類型", sorted(news_df["類型"].unique()), default=sorted(news_df["類型"].unique()))
+        filtered = news_df[news_df["主族群"].isin(news_groups) & news_df["類型"].isin(news_types)]
+        filtered = filtered.sort_values("主族群")
+        st.dataframe(
+            filtered,
+            width="stretch",
+            height=600,
+            column_config={
+                "連結": st.column_config.LinkColumn("連結", display_text="開啟"),
+            },
+        )
+    except FileNotFoundError:
+        st.info("還沒有 theme_news.csv，請先請我針對題材搜尋整理新聞與目標價。")

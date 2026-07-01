@@ -211,6 +211,7 @@ def build():
         ),
         "us_earnings": load_earnings_csv("us_earnings_watch.csv"),
         "tw_earnings": load_earnings_csv("tw_earnings_watch.csv"),
+        "theme_news": pd.read_csv("theme_news.csv").to_dict("records") if os.path.exists("theme_news.csv") else [],
     }
     return data
 
@@ -262,6 +263,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <button class="tab-btn" onclick="showTab(1)">排行榜明細</button>
   <button class="tab-btn" onclick="showTab(2)">公司歷史趨勢</button>
   <button class="tab-btn" onclick="showTab(3)">財報/法說會提醒</button>
+  <button class="tab-btn" onclick="showTab(4)">新聞/目標價</button>
 </div>
 
 <div class="tab-content active" id="tab0">
@@ -270,7 +272,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   </div>
   <div class="hint" id="hintTheme">熱度分數 = 該題材在每個國家的「台幣金額 ÷ 該國全部上榜公司台幣金額總和」百分比，五國加總而成。分數越高表示資金集中度越高，不是只看公司數量。點欄位標題可排序。</div>
   <div class="scroll-box"><table id="themePivotTable"></table></div>
-  <div id="moversChart" style="height:350px"></div>
+  <div id="moversChart" style="height:550px"></div>
   <div class="controls">
     選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
   </div>
@@ -315,6 +317,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="scroll-box"><table id="twEarningsTable"></table></div>
 </div>
 
+<div class="tab-content" id="tab4">
+  <div class="hint">這個分頁是人工搜尋+逐一驗證連結真實性後手動整理的結果(不是自動爬蟲)，確保每個連結點開都看得到對應內容。要更新請另外搜尋整理後加進 theme_news.csv，再重新產生 dashboard.html。</div>
+  <div class="controls">
+    主族群：<select id="newsGroupFilter" multiple size="6" onchange="renderNewsTable()"></select>
+    類型：<select id="newsTypeFilter" multiple size="2" onchange="renderNewsTable()"></select>
+  </div>
+  <div class="scroll-box"><table id="newsTable"></table></div>
+</div>
+
 <script>
 const DATA = __DATA_JSON__;
 
@@ -355,7 +366,11 @@ function renderTableBody(tableEl) {
   }).join("") + "</tr>";
   let tbody = rows.map(r => {
     let cls = rowClassFn ? rowClassFn(r) : "";
-    let tds = columns.map(c => `<td>${r[c.key] !== undefined && r[c.key] !== null ? r[c.key] : ""}</td>`).join("");
+    let tds = columns.map(c => {
+      const v = r[c.key];
+      if (c.isLink && v) return `<td><a href="${v}" target="_blank" rel="noopener">開啟↗</a></td>`;
+      return `<td>${v !== undefined && v !== null ? v : ""}</td>`;
+    }).join("");
     return `<tr class="${cls}">${tds}</tr>`;
   }).join("");
   tableEl.innerHTML = thead + tbody;
@@ -404,8 +419,8 @@ function renderMoversChart() {
   if (!DATA.previous_date) { el.innerHTML = ""; return; }
   const thematic = DATA.theme_pivot_thematic.filter(p => p["熱度分數Δ"] !== null && p["熱度分數Δ"] !== undefined);
   const sorted = thematic.slice().sort((a, b) => b["熱度分數Δ"] - a["熱度分數Δ"]);
-  const topUp = sorted.slice(0, 5);
-  const topDown = sorted.slice(-5).reverse();
+  const topUp = sorted.slice(0, 10);
+  const topDown = sorted.slice(-10).reverse();
   const movers = topDown.concat(topUp);
   const seen = new Set();
   const uniqueMovers = movers.filter(m => !seen.has(m.main_group) && seen.add(m.main_group));
@@ -416,9 +431,11 @@ function renderMoversChart() {
     type: "bar", orientation: "h",
     marker: {color: uniqueMovers.map(m => m["熱度分數Δ"] >= 0 ? "#ff6b6b" : "#4da3ff")},
   }], {
-    title: `本次熱度分數變化最大的題材(前5上升/前5下降，跟${DATA.previous_date}比較)`,
+    title: `本次熱度分數變化最大的題材(前10上升/前10下降，跟${DATA.previous_date}比較)`,
     paper_bgcolor: "#1a1a1a", plot_bgcolor: "#1a1a1a", font: {color: "#e0e0e0"},
     xaxis: {title: "熱度分數Δ"},
+    yaxis: {automargin: true},
+    margin: {l: 160},
   }, {responsive: true});
 }
 
@@ -546,6 +563,23 @@ function renderEarningsTab() {
   }
 }
 
+function renderNewsTable() {
+  const groupSel = document.getElementById("newsGroupFilter");
+  const typeSel = document.getElementById("newsTypeFilter");
+  const selectedGroups = Array.from(groupSel.selectedOptions).map(o => o.value);
+  const selectedTypes = Array.from(typeSel.selectedOptions).map(o => o.value);
+  let rows = DATA.theme_news.slice();
+  if (selectedGroups.length) rows = rows.filter(r => selectedGroups.indexOf(r["主族群"]) >= 0);
+  if (selectedTypes.length) rows = rows.filter(r => selectedTypes.indexOf(r["類型"]) >= 0);
+  rows.sort((a, b) => String(b["日期"]).localeCompare(String(a["日期"])));
+  const cols = [
+    {key: "主族群", label: "主族群"}, {key: "類型", label: "類型"}, {key: "日期", label: "日期"},
+    {key: "標題", label: "標題"}, {key: "來源", label: "來源"}, {key: "連結", label: "連結", isLink: true},
+    {key: "重點摘要", label: "重點摘要"}, {key: "相關公司", label: "相關公司"},
+  ];
+  buildTable(document.getElementById("newsTable"), cols, rows);
+}
+
 function init() {
   document.getElementById("latestDate").textContent = DATA.latest_date;
   if (DATA.previous_date) {
@@ -566,9 +600,21 @@ function init() {
   DATA.theme_list.forEach(g => {
     const opt = document.createElement("option"); opt.value = g; opt.textContent = g; themeHistSel.appendChild(opt);
   });
+  const newsGroupSet = new Set(), newsTypeSet = new Set();
+  DATA.theme_news.forEach(n => { newsGroupSet.add(n["主族群"]); newsTypeSet.add(n["類型"]); });
+  const newsGroupSel = document.getElementById("newsGroupFilter");
+  Array.from(newsGroupSet).sort().forEach(g => {
+    const opt = document.createElement("option"); opt.value = g; opt.textContent = g; newsGroupSel.appendChild(opt);
+  });
+  const newsTypeSel = document.getElementById("newsTypeFilter");
+  Array.from(newsTypeSet).sort().forEach(t => {
+    const opt = document.createElement("option"); opt.value = t; opt.textContent = t; newsTypeSel.appendChild(opt);
+  });
+
   renderThemePivot();
   renderFullTable();
   renderEarningsTab();
+  renderNewsTable();
   if (DATA.company_list.length) { companySel.value = DATA.company_list[0].key; renderCompanyHistory(); }
   if (DATA.theme_list.length) { themeHistSel.value = DATA.theme_list[0]; }
 }
