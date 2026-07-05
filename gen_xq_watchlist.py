@@ -32,15 +32,18 @@ SUFFIX = {
     "韓": ".KS",
 }
 
-# 預設啟用的市場（台+美，日韓陸可手動加入）
-DEFAULT_MARKETS = ["台", "美"]
+DEFAULT_MARKETS = ["台", "美", "日", "韓", "陸"]
 
 
 def xq_code(country: str, code: str) -> str:
     if country == "陸":
-        # 上交所 6 開頭 → .SH；深交所 0/3 開頭 → .SZ
-        suffix = ".SH" if code.startswith("6") else ".SZ"
-        return f"{code}{suffix}"
+        # DB 存 sh600460 / sz300373 格式，轉成 600460.SH / 300373.SZ
+        if code.lower().startswith("sh"):
+            return f"{code[2:]}.SH"
+        if code.lower().startswith("sz"):
+            return f"{code[2:]}.SZ"
+        # fallback：6 開頭 → 上交所
+        return f"{code}.{'SH' if code.startswith('6') else 'SZ'}"
     return f"{code}{SUFFIX.get(country, '')}"
 
 
