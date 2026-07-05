@@ -1,22 +1,20 @@
 # -*- coding: utf-8 -*-
 """
 gen_xq_watchlist.py
-從 capital_flow.db 依題材熱度生成 XQ 自選股匯入檔
+從 capital_flow.db 依題材熱度「變化量(Δ)」生成 XQ 自選股匯入檔
 
 輸出規則：
-  - 取當週最熱 TOP_N_THEMES 個主族群
-  - 每個族群在指定市場各取前 TOP_N_PER_THEME 名（依成交值排名）
-  - 台股：代碼加 .TW（如 2330.TW）
-  - 美股：直接用 ticker（如 NVDA）
+  - 取熱度上升前 N 個題材 + 熱度下降前 N 個題材（預設各15）
+  - 台股：排行榜有出現的全放
+  - 其他市場（美/日/韓/陸）：各前5名
   - 編碼：Big5 + CRLF（XQ 匯入標準格式）
 
 用法：
   python gen_xq_watchlist.py
-  python gen_xq_watchlist.py --themes 12 --per 4   # 自訂數量
+  python gen_xq_watchlist.py --top 10 --per 5
 """
 import argparse
 import sqlite3
-from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -24,7 +22,6 @@ import pandas as pd
 DB = "capital_flow.db"
 OUT_DIR = "XQ檔案匯入"
 
-# XQ 代碼格式（market → suffix）
 SUFFIX = {
     "台": ".TW",
     "美": ".US",
@@ -34,28 +31,30 @@ SUFFIX = {
 
 DEFAULT_MARKETS = ["台", "美", "日", "韓", "陸"]
 
+_CURRENCY_MAP = {"TWD": "TWD", "KRW": "KRW", "JPY_million": "JPY", "CNY": "CNY", "USD": "USD"}
+_BAD_CHARS = str.maketrans({"/": "-", "(": "", ")": ""})
+
 
 def xq_code(country: str, code: str) -> str:
     if country == "陸":
-        # DB 存 sh600460 / sz300373 格式，轉成 600460.SH / 300373.SZ
         if code.lower().startswith("sh"):
             return f"{code[2:]}.SH"
         if code.lower().startswith("sz"):
             return f"{code[2:]}.SZ"
-        # fallback：6 開頭 → 上交所
         return f"{code}.{'SH' if code.startswith('6') else 'SZ'}"
     return f"{code}{SUFFIX.get(country, '')}"
 
 
-def get_latest_snapshot(conn) -> str:
-    return conn.execute("SELECT MAX(snapshot_date) FROM rankings").fetchone()[0]
-
-
-_CURRENCY_MAP = {"TWD": "TWD", "KRW": "KRW", "JPY_million": "JPY", "CNY": "CNY", "USD": "USD"}
+def get_two_latest_snapshots(conn):
+    rows = conn.execute(
+        "SELECT DISTINCT snapshot_date FROM rankings ORDER BY snapshot_date DESC LIMIT 2"
+    ).fetchall()
+    current = rows[0][0]
+    previous = rows[1][0] if len(rows) >= 2 else None
+    return current, previous
 
 
 def _to_twd_yi(amount, amount_unit, fx_dict):
-    """換算成台幣億元（與 export_html.py amount_twd_yi_num 邏輯相同）"""
     if amount_unit == "JPY_million":
         base, curr = amount * 1e6, "JPY"
     else:
@@ -64,20 +63,14 @@ def _to_twd_yi(amount, amount_unit, fx_dict):
 
 
 def compute_theme_hotness(conn, snapshot_date: str, markets: list) -> pd.DataFrame:
-    """
-    複製 dashboard 熱度公式：
-    各國「該題材台幣金額 ÷ 該國全部上榜公司台幣金額總和」百分比，五國加總。
-    回傳 DataFrame 欄位：main_group, theme_score，依 theme_score 降冪排列。
-    """
+    """各國台幣金額佔比%，五國加總 → 熱度分數（與 dashboard 公式相同）"""
     placeholders = ",".join("?" * len(markets))
 
-    # 全市場排行（用來算各國總台幣金額）
     all_snap = pd.read_sql(f"""
-        SELECT country, amount, amount_unit
-        FROM rankings WHERE snapshot_date = ? AND country IN ({placeholders})
+        SELECT country, amount, amount_unit FROM rankings
+        WHERE snapshot_date = ? AND country IN ({placeholders})
     """, conn, params=[snapshot_date] + markets)
 
-    # 有分類的排行（計算各題材各國台幣金額）
     classified_snap = pd.read_sql(f"""
         SELECT r.country, r.code, r.amount, r.amount_unit, c.main_group
         FROM rankings r
@@ -85,7 +78,6 @@ def compute_theme_hotness(conn, snapshot_date: str, markets: list) -> pd.DataFra
         WHERE r.snapshot_date = ? AND r.country IN ({placeholders})
     """, conn, params=[snapshot_date] + markets)
 
-    # 匯率
     fx = pd.read_sql("SELECT currency, twd_per_unit FROM fx_rates WHERE snapshot_date = ?",
                      conn, params=[snapshot_date])
     fx_dict = dict(zip(fx["currency"], fx["twd_per_unit"]))
@@ -111,19 +103,23 @@ def compute_theme_hotness(conn, snapshot_date: str, markets: list) -> pd.DataFra
     share = theme_amt[markets].div(country_totals.reindex(markets), axis=1) * 100
     scores = share.sum(axis=1).reset_index()
     scores.columns = ["main_group", "theme_score"]
-    return scores.sort_values("theme_score", ascending=False)
+    return scores
 
 
-def build_xq_lines(
-    conn,
-    snapshot_date: str,
-    markets: list,
-    top_n_themes: int,
-    top_n_per_market: int,  # 非台股市場每題材取前N名
-) -> tuple[list[str], int, pd.DataFrame]:
-    theme_scores = compute_theme_hotness(conn, snapshot_date, markets)
+def build_xq_lines(conn, snapshot_date, previous_date, markets, top_n, top_n_per_market):
+    # ── 計算熱度 Δ ──
+    curr_scores = compute_theme_hotness(conn, snapshot_date, markets)
 
-    # 只保留台股公司數 > 0 的題材（過濾掉台=0 的純外國題材）
+    if previous_date:
+        prev_scores = compute_theme_hotness(conn, previous_date, markets)
+        merged = curr_scores.merge(prev_scores, on="main_group", how="left",
+                                   suffixes=("", "_prev"))
+        merged["delta"] = merged["theme_score"] - merged["theme_score_prev"].fillna(0)
+    else:
+        merged = curr_scores.copy()
+        merged["delta"] = merged["theme_score"]
+
+    # ── 只保留台股有出現的題材 ──
     tw_count = pd.read_sql("""
         SELECT c.main_group, COUNT(*) AS tw_count
         FROM rankings r
@@ -131,110 +127,108 @@ def build_xq_lines(
         WHERE r.snapshot_date = ? AND r.country = '台'
         GROUP BY c.main_group
     """, conn, params=[snapshot_date]).set_index("main_group")["tw_count"]
-    theme_scores = theme_scores.merge(tw_count.rename("tw_count"), on="main_group", how="left")
-    theme_scores["tw_count"] = theme_scores["tw_count"].fillna(0)
-    theme_scores = theme_scores[theme_scores["tw_count"] > 0]
-    top_themes = theme_scores.head(top_n_themes)
 
-    # 台股名單：排行榜有出現的所有公司（不限排名門檻），其他市場同樣取有排名者
+    merged = merged.merge(tw_count.rename("tw_count"), on="main_group", how="left")
+    merged["tw_count"] = merged["tw_count"].fillna(0)
+    merged = merged[merged["tw_count"] > 0]
+
+    # ── 上升前N + 下降前N ──
+    rising  = merged.sort_values("delta", ascending=False).head(top_n)
+    falling = merged.sort_values("delta", ascending=True).head(top_n)
+
+    # ── 當週排行榜（台股全放，其他前N名）──
     placeholders = ",".join("?" * len(markets))
-    all_classified = pd.read_sql(f"""
+    all_ranked = pd.read_sql(f"""
         SELECT r.country, r.code, r.rank, c.main_group
         FROM rankings r
         JOIN classification c ON c.country = r.country AND c.code = r.code
-        WHERE r.snapshot_date = ?
-          AND r.country IN ({placeholders})
+        WHERE r.snapshot_date = ? AND r.country IN ({placeholders})
     """, conn, params=[snapshot_date] + markets)
 
-    # 取得公司名稱
     names_df = pd.read_sql(
-        "SELECT country, code, name_zh AS name FROM company_names", conn
-    )
+        "SELECT country, code, name_zh AS name FROM company_names", conn)
     name_map = {(r.country, r.code): r.name for r in names_df.itertuples()}
-
-    lines = []
-    total = 0
-    summary_rows = []
 
     market_order = [m for m in ["台", "美", "日", "韓", "陸"] if m in markets]
 
-    # XQ 標籤不接受 /()- 等符號，統一替換為全形或底線
-    _bad = str.maketrans({"/": "-", "(": "", ")": ""})
+    def build_section(themes_df, label_prefix, rank_offset=0):
+        lines, rows = [], []
+        for i, (_, row) in enumerate(themes_df.iterrows(), 1):
+            theme = row["main_group"]
+            delta = row["delta"]
+            sign = "+" if delta >= 0 else ""
+            safe_theme = theme.translate(_BAD_CHARS)
+            lines.append(f"{safe_theme}_{sign}{delta:.1f}:")
 
-    for rank_i, (_, row) in enumerate(top_themes.iterrows(), 1):
-        theme = row["main_group"]
-        score = row["theme_score"]
-        safe_theme = theme.translate(_bad)
-        score_str = f"{score:.0f}點0"
-        lines.append(f"{safe_theme}_{score_str}:")
+            rank_i = rank_offset + i
+            for market in market_order:
+                mdf = all_ranked[
+                    (all_ranked["main_group"] == theme) & (all_ranked["country"] == market)
+                ].sort_values("rank")
+                market_df = mdf if market == "台" else mdf.head(top_n_per_market)
+                for _, s in market_df.iterrows():
+                    code_xq = xq_code(market, s["code"])
+                    lines.append(code_xq)
+                    rows.append({
+                        "方向": label_prefix,
+                        "排名": rank_i,
+                        "題材": theme,
+                        "熱度Δ": round(delta, 2),
+                        "市場": market,
+                        "代碼": s["code"],
+                        "XQ代碼": code_xq,
+                        "公司": name_map.get((market, s["code"]), ""),
+                        "當週排行": int(s["rank"]),
+                    })
+        return lines, rows
 
-        for market in market_order:
-            mdf = all_classified[
-                (all_classified["main_group"] == theme) & (all_classified["country"] == market)
-            ].sort_values("rank")
-            # 台股全放，其他市場取前 N 名
-            market_df = mdf if market == "台" else mdf.head(top_n_per_market)
-            for _, s in market_df.iterrows():
-                code_xq = xq_code(market, s["code"])
-                lines.append(code_xq)
-                total += 1
-                summary_rows.append({
-                    "熱度排名": rank_i,
-                    "題材": theme,
-                    "熱度分": int(score),
-                    "市場": market,
-                    "代碼": s["code"],
-                    "XQ代碼": code_xq,
-                    "公司": name_map.get((market, s["code"]), ""),
-                    "排名": int(s["rank"]),
-                })
+    rising_lines,  rising_rows  = build_section(rising,  "上升")
+    falling_lines, falling_rows = build_section(falling, "下降", rank_offset=top_n)
 
-    summary = pd.DataFrame(summary_rows)
-    return lines, total, summary
+    all_lines = rising_lines + falling_lines
+    all_rows  = rising_rows  + falling_rows
+    summary = pd.DataFrame(all_rows)
+    return all_lines, len(all_rows), summary
 
 
 def main():
-    parser = argparse.ArgumentParser(description="生成XQ題材熱度自選股匯入檔")
-    parser.add_argument("--themes", type=int, default=20, help="取前N個熱度族群（預設20）")
-    parser.add_argument("--per",    type=int, default=5,  help="每個族群每市場取前N名（預設5）")
-    parser.add_argument("--markets", nargs="+", default=DEFAULT_MARKETS,
-                        help="市場列表，例如 台 美 日（預設：台 美）")
+    parser = argparse.ArgumentParser(description="生成XQ題材熱度變化自選股匯入檔")
+    parser.add_argument("--top", type=int, default=15,
+                        help="上升/下降各取前N個題材（預設15）")
+    parser.add_argument("--per", type=int, default=5,
+                        help="非台股市場每題材取前N名（預設5）")
+    parser.add_argument("--markets", nargs="+", default=DEFAULT_MARKETS)
     args = parser.parse_args()
 
     Path(OUT_DIR).mkdir(exist_ok=True)
     conn = sqlite3.connect(DB)
-    snapshot = get_latest_snapshot(conn)
-    print(f"快照日期: {snapshot}  市場: {args.markets}  前{args.themes}族群  每族群每市場前{args.per}名")
+    snapshot, prev_snapshot = get_two_latest_snapshots(conn)
+
+    print(f"當週快照: {snapshot}  對比: {prev_snapshot or '無（首週）'}")
+    print(f"市場: {args.markets}  上升/下降各前{args.top}題材  非台股各前{args.per}名\n")
 
     lines, total, summary = build_xq_lines(
-        conn, snapshot, args.markets, args.themes, args.per
+        conn, snapshot, prev_snapshot, args.markets, args.top, args.per
     )
     conn.close()
 
     date_tag = snapshot.replace("-", "")
-
-    # ── XQ 匯入檔（Big5 + CRLF，用二進位模式避免 Windows 雙重換行）──
-    out_xq = Path(OUT_DIR) / f"XQ_題材熱度_{date_tag}.csv"
+    out_xq = Path(OUT_DIR) / f"XQ_題材Δ_{date_tag}.csv"
     content = "\r\n".join(lines) + "\r\n"
     with open(out_xq, "wb") as f:
         f.write(content.encode("big5", errors="replace"))
 
-    # ── 人看的摘要 Excel / CSV ──
-    out_summary = Path(OUT_DIR) / f"題材熱度_個股名單_{date_tag}.csv"
+    out_summary = Path(OUT_DIR) / f"題材Δ_個股名單_{date_tag}.csv"
     summary.to_csv(out_summary, index=False, encoding="utf-8-sig")
 
-    print(f"\n已輸出 XQ 匯入檔：{out_xq}（共 {total} 檔）")
+    print(f"已輸出 XQ 匯入檔：{out_xq}（共 {total} 筆）")
     print(f"已輸出 個股摘要：{out_summary}\n")
 
-    # 印出熱度排行摘要
-    print(f"{'排':>3} {'題材':<18} {'熱度分':>6}  {'台股代碼':<30} {'美股代碼'}")
-    print("-" * 80)
-    for theme_rank, grp in summary.groupby("熱度排名"):
-        tw_codes = " ".join(grp[grp["市場"] == "台"]["代碼"].tolist())
-        us_codes = " ".join(grp[grp["市場"] == "美"]["代碼"].tolist())
-        theme = grp["題材"].iloc[0]
-        score = grp["熱度分"].iloc[0]
-        print(f"{theme_rank:>3}. {theme:<18} {score:>6}  {tw_codes:<30} {us_codes}")
+    print(f"{'方向':<4} {'排':>2} {'題材':<18} {'熱度Δ':>7}")
+    print("-" * 40)
+    seen = []
+    for _, r in summary[["方向","排名","題材","熱度Δ"]].drop_duplicates("題材").iterrows():
+        print(f"{r['方向']:<4} {r['排名']:>2}. {r['題材']:<18} {r['熱度Δ']:>+7.2f}")
 
 
 if __name__ == "__main__":
