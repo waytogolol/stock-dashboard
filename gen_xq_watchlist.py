@@ -79,7 +79,7 @@ def build_xq_lines(
     snapshot_date: str,
     markets: list,
     top_n_themes: int,
-    top_n_per_market: int,
+    top_n_per_market: int,  # 非台股市場每題材取前N名
 ) -> tuple[list[str], int, pd.DataFrame]:
     theme_scores, classified = compute_theme_scores(conn, snapshot_date, markets)
 
@@ -118,13 +118,11 @@ def build_xq_lines(
         lines.append(f"{safe_theme}_{score_str}:")
 
         for market in market_order:
-            market_df = (
-                classified[
-                    (classified["main_group"] == theme) & (classified["country"] == market)
-                ]
-                .sort_values("rank")
-                .head(top_n_per_market)
-            )
+            mdf = classified[
+                (classified["main_group"] == theme) & (classified["country"] == market)
+            ].sort_values("rank")
+            # 台股全放，其他市場取前 N 名
+            market_df = mdf if market == "台" else mdf.head(top_n_per_market)
             for _, s in market_df.iterrows():
                 code_xq = xq_code(market, s["code"])
                 lines.append(code_xq)
