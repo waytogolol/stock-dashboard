@@ -115,6 +115,7 @@ def check_tw_earnings(days=14):
 
     watch = calendar[calendar["code"].isin(tw_list["code"])].copy()
     watch = watch.merge(tw_list[["code", "rank"]], on="code", how="left")
+    watch = watch[watch["rank"] <= 200]   # 只追蹤成交值前200名（儀表板可見範圍）
     watch["主族群"] = watch["code"].map(groups_per_code).fillna("未分類")
     watch = watch.sort_values(["date", "rank"])[["date", "time", "code", "name", "rank", "主族群", "location", "summary"]]
     watch.columns = ["日期", "時間", "代碼", "公司", "成交金額排名", "主族群", "地點", "摘要"]
