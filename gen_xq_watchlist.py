@@ -24,15 +24,6 @@ import pandas as pd
 DB = "capital_flow.db"
 OUT_DIR = "XQ檔案匯入"
 
-# 排除過於廣泛的族群（跟現有 export_html.py 保持一致）
-BROAD_GROUPS = {
-    "金融", "科技(綜合)", "生技醫藥", "消費(非必需)", "工業", "傳統產業", "傳統消費",
-    "公用事業", "能源", "不動產", "電信", "傳統產業/原材料", "電力設備", "控股公司",
-    "航運", "造船", "商社", "商社/建設", "汽車", "其他", "未分類", "媒體/娛樂",
-    "遊戲/娛樂", "品牌3C", "IT/系統整合", "網路服務", "人力資源", "工業電腦/物聯網",
-    "IC通路", "安防設備",
-}
-
 # XQ 代碼格式（market → suffix）
 SUFFIX = {
     "台": ".TW",
@@ -89,8 +80,16 @@ def build_xq_lines(
 ) -> tuple[list[str], int, pd.DataFrame]:
     theme_scores, classified = compute_theme_scores(conn, snapshot_date, markets)
 
-    # 過濾廣泛族群
-    theme_scores = theme_scores[~theme_scores["main_group"].isin(BROAD_GROUPS)]
+    # 只保留台股公司數 > 0 的題材（過濾掉台=0 的純外國題材）
+    tw_count = (
+        classified[classified["country"] == "台"]
+        .groupby("main_group")["code"]
+        .count()
+        .rename("tw_count")
+    )
+    theme_scores = theme_scores.merge(tw_count, on="main_group", how="left")
+    theme_scores["tw_count"] = theme_scores["tw_count"].fillna(0)
+    theme_scores = theme_scores[theme_scores["tw_count"] > 0]
     top_themes = theme_scores.head(top_n_themes)
 
     # 取得公司名稱
