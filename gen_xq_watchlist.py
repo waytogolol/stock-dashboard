@@ -81,11 +81,11 @@ def build_xq_lines(
     top_n_themes: int,
     top_n_per_market: int,  # 非台股市場每題材取前N名
 ) -> tuple[list[str], int, pd.DataFrame]:
-    theme_scores, classified = compute_theme_scores(conn, snapshot_date, markets)
+    theme_scores, classified_top200 = compute_theme_scores(conn, snapshot_date, markets)
 
     # 只保留台股公司數 > 0 的題材（過濾掉台=0 的純外國題材）
     tw_count = (
-        classified[classified["country"] == "台"]
+        classified_top200[classified_top200["country"] == "台"]
         .groupby("main_group")["code"]
         .count()
         .rename("tw_count")
@@ -94,6 +94,16 @@ def build_xq_lines(
     theme_scores["tw_count"] = theme_scores["tw_count"].fillna(0)
     theme_scores = theme_scores[theme_scores["tw_count"] > 0]
     top_themes = theme_scores.head(top_n_themes)
+
+    # 台股名單：排行榜有出現的所有公司（不限排名門檻），其他市場同樣取有排名者
+    placeholders = ",".join("?" * len(markets))
+    all_classified = pd.read_sql(f"""
+        SELECT r.country, r.code, r.rank, c.main_group
+        FROM rankings r
+        JOIN classification c ON c.country = r.country AND c.code = r.code
+        WHERE r.snapshot_date = ?
+          AND r.country IN ({placeholders})
+    """, conn, params=[snapshot_date] + markets)
 
     # 取得公司名稱
     names_df = pd.read_sql(
@@ -118,8 +128,8 @@ def build_xq_lines(
         lines.append(f"{safe_theme}_{score_str}:")
 
         for market in market_order:
-            mdf = classified[
-                (classified["main_group"] == theme) & (classified["country"] == market)
+            mdf = all_classified[
+                (all_classified["main_group"] == theme) & (all_classified["country"] == market)
             ].sort_values("rank")
             # 台股全放，其他市場取前 N 名
             market_df = mdf if market == "台" else mdf.head(top_n_per_market)
