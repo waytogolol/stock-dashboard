@@ -252,6 +252,36 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .scroll-box { max-height: 600px; overflow-y:auto; border:1px solid #444; }
   .controls { margin-bottom: 12px; }
   .hint { color:#888; font-size:12px; margin-bottom:8px; }
+  /* ── 法說會日曆 ── */
+  .cal-wrap { margin-bottom:16px; }
+  .cal-nav { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .cal-nav button { background:#333; border:none; color:#e0e0e0; padding:4px 14px; cursor:pointer; border-radius:4px; font-size:15px; }
+  .cal-nav button:hover { background:#444; }
+  #calTitle { font-size:15px; font-weight:bold; color:#e0e0e0; }
+  .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:3px; }
+  .cal-head { text-align:center; color:#888; font-size:12px; padding:4px 0; font-weight:bold; }
+  .cal-head.sun { color:#e07070; } .cal-head.sat { color:#7090d0; }
+  .cal-cell { min-height:72px; background:#222; border-radius:5px; padding:5px; box-sizing:border-box; }
+  .cal-cell.today { background:#12283d; border:1px solid #4da3ff; }
+  .cal-cell.out { opacity:0.22; pointer-events:none; }
+  .cal-num { font-size:12px; color:#888; margin-bottom:3px; }
+  .cal-num.sun { color:#e07070; } .cal-num.sat { color:#7090d0; }
+  .cal-cell.today .cal-num { color:#4da3ff; font-weight:bold; font-size:13px; background:#1a4a70; display:inline-block; border-radius:50%; width:20px; height:20px; line-height:20px; text-align:center; margin-bottom:4px; }
+  .cal-evt { font-size:10px; border-radius:3px; padding:1px 4px; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:default; }
+  .cal-evt.tw { background:#4a1010; color:#ffaaaa; border-left:2px solid #ff6b6b; }
+  .cal-evt.us { background:#0a1f3a; color:#99ccff; border-left:2px solid #4da3ff; }
+  .cal-evt.fire { border-left-color:#ff2222; animation:pulse 1.2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+  @media (prefers-color-scheme:light), :root[data-theme="light"] {
+    .cal-cell { background:#f4f4f4; } .cal-cell.today { background:#dbeeff; border-color:#0066cc; }
+    .cal-cell.today .cal-num { color:#0066cc; background:#c0dcf8; }
+    .cal-num { color:#666; } #calTitle { color:#222; }
+    .cal-nav button { background:#ddd; color:#333; } .cal-nav button:hover { background:#bbb; }
+    .cal-head { color:#555; } .cal-head.sun { color:#cc3333; } .cal-head.sat { color:#3366cc; }
+    .cal-num.sun { color:#cc3333; } .cal-num.sat { color:#3366cc; }
+    .cal-evt.tw { background:#fde8e8; color:#aa0000; border-left-color:#cc2222; }
+    .cal-evt.us { background:#e8f0fe; color:#003399; border-left-color:#3366cc; }
+  }
 </style>
 </head>
 <body>
@@ -310,7 +340,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 <div class="tab-content" id="tab3">
   <div class="hint">這個分頁是 `check_earnings.py` 上次執行結果的快照，要更新請在終端機跑 <code>python check_earnings.py</code> 後重新產生 dashboard.html。🔥=3天內 🟠=7天內。</div>
-  <div id="earningsTimeline" style="height:300px"></div>
+  <div class="cal-wrap">
+    <div class="cal-nav">
+      <button onclick="calMove(-1)">&#9664;</button>
+      <span id="calTitle"></span>
+      <button onclick="calMove(1)">&#9654;</button>
+    </div>
+    <div class="cal-grid" id="calGrid"></div>
+  </div>
   <h4>美股財報 <span id="usEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
   <div class="scroll-box"><table id="usEarningsTable"></table></div>
   <h4>台股法說會 <span id="twEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
@@ -546,21 +583,92 @@ function renderEarningsTab() {
   ];
   buildTable(document.getElementById("twEarningsTable"), twCols, DATA.tw_earnings.rows, r => earningsTierClass(r["日期"]));
 
-  const tlRows = [];
-  DATA.us_earnings.rows.forEach(r => tlRows.push({date: r["日期"], label: "美:" + r["代碼"], market: "美股"}));
-  DATA.tw_earnings.rows.forEach(r => tlRows.push({date: r["日期"], label: "台:" + r["代碼"], market: "台股"}));
-  if (tlRows.length) {
-    const us = tlRows.filter(r => r.market === "美股"), tw = tlRows.filter(r => r.market === "台股");
-    Plotly.newPlot("earningsTimeline", [
-      {x: us.map(r => r.date), y: us.map(r => r.label), mode: "markers", type: "scatter", name: "美股", marker: {size: 14, color: "#4da3ff"}},
-      {x: tw.map(r => r.date), y: tw.map(r => r.label), mode: "markers", type: "scatter", name: "台股", marker: {size: 14, color: "#ff6b6b"}},
-    ], {
-      title: "時間軸總覽", paper_bgcolor: "#1a1a1a", plot_bgcolor: "#1a1a1a", font: {color: "#e0e0e0"},
-      shapes: [{type: "line", x0: new Date().toISOString().slice(0, 10), x1: new Date().toISOString().slice(0, 10), y0: 0, y1: 1, yref: "paper", line: {color: "white", dash: "dash"}}],
-    }, {responsive: true});
-  } else {
-    document.getElementById("earningsTimeline").innerHTML = "";
+  // 初始化日曆：顯示當月
+  const _now = new Date();
+  renderCalendar(_now.getFullYear(), _now.getMonth());
+}
+
+// ── 法說會日曆 ──────────────────────────────────────────────
+let calYear = 0, calMonth = 0;
+const WEEKDAYS = ["日","一","二","三","四","五","六"];
+const MONTHS_ZH = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"];
+
+function buildEvtMap() {
+  const m = {};
+  (DATA.tw_earnings.rows || []).forEach(r => {
+    const d = r["日期"]; if (!d) return;
+    if (!m[d]) m[d] = [];
+    m[d].push({label: r["代碼"] + " " + r["公司"], market: "tw", date: d});
+  });
+  (DATA.us_earnings.rows || []).forEach(r => {
+    const d = r["日期"]; if (!d) return;
+    if (!m[d]) m[d] = [];
+    m[d].push({label: r["代碼"], market: "us", date: d});
+  });
+  return m;
+}
+
+function renderCalendar(year, month) {
+  calYear = year; calMonth = month;
+  document.getElementById("calTitle").textContent = year + "年" + MONTHS_ZH[month];
+  const evtMap = buildEvtMap();
+  const todayStr = new Date().toISOString().slice(0,10);
+  const grid = document.getElementById("calGrid");
+  grid.innerHTML = "";
+
+  // 標頭
+  WEEKDAYS.forEach((h,i) => {
+    const el = document.createElement("div");
+    el.className = "cal-head" + (i===0?" sun":i===6?" sat":"");
+    el.textContent = h; grid.appendChild(el);
+  });
+
+  const firstDow = new Date(year, month, 1).getDay();
+  const lastDate = new Date(year, month+1, 0).getDate();
+  const prevLast = new Date(year, month, 0).getDate();
+
+  // 上個月尾巴
+  for (let i = 0; i < firstDow; i++) {
+    const cell = document.createElement("div");
+    cell.className = "cal-cell out";
+    cell.innerHTML = `<div class="cal-num">${prevLast - firstDow + 1 + i}</div>`;
+    grid.appendChild(cell);
   }
+
+  // 本月
+  for (let d = 1; d <= lastDate; d++) {
+    const dow = (firstDow + d - 1) % 7;
+    const dateStr = `${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    const evts = evtMap[dateStr] || [];
+    const isToday = dateStr === todayStr;
+    const cell = document.createElement("div");
+    cell.className = "cal-cell" + (isToday?" today":"") + (evts.length?" has-event":"");
+    const numCls = dow===0?" sun":dow===6?" sat":"";
+    let html = `<div class="cal-num${numCls}">${d}</div>`;
+    evts.forEach(ev => {
+      const n = daysUntil(ev.date);
+      const fire = (n >= 0 && n <= 3) ? " fire" : "";
+      html += `<div class="cal-evt ${ev.market}${fire}" title="${ev.label}">${ev.label}</div>`;
+    });
+    cell.innerHTML = html;
+    grid.appendChild(cell);
+  }
+
+  // 下個月頭
+  const trailing = (7 - ((firstDow + lastDate) % 7)) % 7;
+  for (let d = 1; d <= trailing; d++) {
+    const cell = document.createElement("div");
+    cell.className = "cal-cell out";
+    cell.innerHTML = `<div class="cal-num">${d}</div>`;
+    grid.appendChild(cell);
+  }
+}
+
+function calMove(delta) {
+  calMonth += delta;
+  if (calMonth < 0) { calMonth = 11; calYear--; }
+  if (calMonth > 11) { calMonth = 0; calYear++; }
+  renderCalendar(calYear, calMonth);
 }
 
 function renderNewsTable() {
