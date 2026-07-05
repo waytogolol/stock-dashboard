@@ -308,7 +308,7 @@ function initSearchBox(inputId, dropdownId, hiddenId, items, onSelect) {
   function showDropdown(list) {
     if (!list.length) { dropdown.style.display = "none"; return; }
     dropdown.innerHTML = "";
-    list.slice(0, 50).forEach(item => {
+    list.forEach(item => {
       const div = document.createElement("div");
       div.className = "search-item";
       div.textContent = item.label;
