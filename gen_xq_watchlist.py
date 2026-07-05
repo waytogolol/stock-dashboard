@@ -27,10 +27,10 @@ OUT_DIR = "XQ檔案匯入"
 # XQ 代碼格式（market → suffix）
 SUFFIX = {
     "台": ".TW",
-    "美": "",       # US ticker 直接用，不加後綴
-    "日": ".T",     # 東京交易所（XQ 支援度待確認）
-    "韓": ".KS",    # 韓國（XQ 支援度待確認）
-    "陸": ".SS",    # A 股（XQ 支援度待確認）
+    "美": ".US",
+    "日": ".JP",
+    "韓": ".KS",
+    "陸": ".SS",    # A 股格式待確認
 }
 
 # 預設啟用的市場（台+美，日韓陸可手動加入）
@@ -98,17 +98,21 @@ def build_xq_lines(
     )
     name_map = {(r.country, r.code): r.name for r in names_df.itertuples()}
 
-    lines = [f"題材熱度Top{top_n_themes}_{snapshot_date}:"]
+    lines = []
     total = 0
     summary_rows = []
 
     market_order = [m for m in ["台", "美", "日", "韓", "陸"] if m in markets]
 
+    # XQ 標籤不接受 /()- 等符號，統一替換為全形或底線
+    _bad = str.maketrans({"/": "-", "(": "", ")": ""})
+
     for rank_i, (_, row) in enumerate(top_themes.iterrows(), 1):
         theme = row["main_group"]
         score = row["theme_score"]
+        safe_theme = theme.translate(_bad)
         score_str = f"{score:.0f}點0"
-        lines.append(f"{theme}_{score_str}:")
+        lines.append(f"{safe_theme}_{score_str}:")
 
         for market in market_order:
             market_df = (
@@ -133,7 +137,6 @@ def build_xq_lines(
                     "排名": int(s["rank"]),
                 })
 
-    lines.append(f"# 共{total}檔  產生:{date.today().isoformat()}")
     summary = pd.DataFrame(summary_rows)
     return lines, total, summary
 
@@ -158,11 +161,11 @@ def main():
 
     date_tag = snapshot.replace("-", "")
 
-    # ── XQ 匯入檔（Big5 + CRLF）──
+    # ── XQ 匯入檔（Big5 + CRLF，用二進位模式避免 Windows 雙重換行）──
     out_xq = Path(OUT_DIR) / f"XQ_題材熱度_{date_tag}.csv"
-    content = "\r\n".join(lines)
-    with open(out_xq, "w", encoding="big5", errors="replace") as f:
-        f.write(content)
+    content = "\r\n".join(lines) + "\r\n"
+    with open(out_xq, "wb") as f:
+        f.write(content.encode("big5", errors="replace"))
 
     # ── 人看的摘要 Excel / CSV ──
     out_summary = Path(OUT_DIR) / f"題材熱度_個股名單_{date_tag}.csv"
