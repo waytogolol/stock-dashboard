@@ -30,7 +30,6 @@ SUFFIX = {
     "美": ".US",
     "日": ".JP",
     "韓": ".KS",
-    "陸": ".SS",    # A 股格式待確認
 }
 
 # 預設啟用的市場（台+美，日韓陸可手動加入）
@@ -38,6 +37,10 @@ DEFAULT_MARKETS = ["台", "美"]
 
 
 def xq_code(country: str, code: str) -> str:
+    if country == "陸":
+        # 上交所 6 開頭 → .SH；深交所 0/3 開頭 → .SZ
+        suffix = ".SH" if code.startswith("6") else ".SZ"
+        return f"{code}{suffix}"
     return f"{code}{SUFFIX.get(country, '')}"
 
 
