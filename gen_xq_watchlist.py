@@ -51,30 +51,67 @@ def get_latest_snapshot(conn) -> str:
     return conn.execute("SELECT MAX(snapshot_date) FROM rankings").fetchone()[0]
 
 
-def compute_theme_scores(conn, snapshot_date: str, markets: list) -> pd.DataFrame:
+_CURRENCY_MAP = {"TWD": "TWD", "KRW": "KRW", "JPY_million": "JPY", "CNY": "CNY", "USD": "USD"}
+
+
+def _to_twd_yi(amount, amount_unit, fx_dict):
+    """換算成台幣億元（與 export_html.py amount_twd_yi_num 邏輯相同）"""
+    if amount_unit == "JPY_million":
+        base, curr = amount * 1e6, "JPY"
+    else:
+        base, curr = amount, _CURRENCY_MAP.get(amount_unit, "TWD")
+    return base * fx_dict.get(curr, 1.0) / 1e8
+
+
+def compute_theme_hotness(conn, snapshot_date: str, markets: list) -> pd.DataFrame:
     """
-    計算題材熱度：在排名前200以內的公司，以 (200 - rank) 加總為熱度分數。
-    回傳 DataFrame，欄位：main_group, score，依 score 降冪排列。
+    複製 dashboard 熱度公式：
+    各國「該題材台幣金額 ÷ 該國全部上榜公司台幣金額總和」百分比，五國加總。
+    回傳 DataFrame 欄位：main_group, theme_score，依 theme_score 降冪排列。
     """
     placeholders = ",".join("?" * len(markets))
-    df = pd.read_sql(f"""
-        SELECT r.country, r.code, r.rank, c.main_group
-        FROM rankings r
-        JOIN classification c ON c.country = r.country AND c.code = r.code
-        WHERE r.snapshot_date = ?
-          AND r.country IN ({placeholders})
-          AND r.rank <= 200
+
+    # 全市場排行（用來算各國總台幣金額）
+    all_snap = pd.read_sql(f"""
+        SELECT country, amount, amount_unit
+        FROM rankings WHERE snapshot_date = ? AND country IN ({placeholders})
     """, conn, params=[snapshot_date] + markets)
 
-    df["score"] = 200 - df["rank"]
-    scores = (
-        df.groupby("main_group")["score"]
+    # 有分類的排行（計算各題材各國台幣金額）
+    classified_snap = pd.read_sql(f"""
+        SELECT r.country, r.code, r.amount, r.amount_unit, c.main_group
+        FROM rankings r
+        JOIN classification c ON c.country = r.country AND c.code = r.code
+        WHERE r.snapshot_date = ? AND r.country IN ({placeholders})
+    """, conn, params=[snapshot_date] + markets)
+
+    # 匯率
+    fx = pd.read_sql("SELECT currency, twd_per_unit FROM fx_rates WHERE snapshot_date = ?",
+                     conn, params=[snapshot_date])
+    fx_dict = dict(zip(fx["currency"], fx["twd_per_unit"]))
+
+    all_snap["twd_yi"] = all_snap.apply(
+        lambda r: _to_twd_yi(r["amount"], r["amount_unit"], fx_dict), axis=1)
+    classified_snap["twd_yi"] = classified_snap.apply(
+        lambda r: _to_twd_yi(r["amount"], r["amount_unit"], fx_dict), axis=1)
+
+    country_totals = all_snap.groupby("country")["twd_yi"].sum()
+
+    theme_amt = (
+        classified_snap
+        .drop_duplicates(subset=["main_group", "country", "code"])
+        .groupby(["main_group", "country"])["twd_yi"]
         .sum()
-        .reset_index()
-        .rename(columns={"score": "theme_score"})
-        .sort_values("theme_score", ascending=False)
+        .unstack(fill_value=0)
     )
-    return scores, df
+    for c in markets:
+        if c not in theme_amt.columns:
+            theme_amt[c] = 0.0
+
+    share = theme_amt[markets].div(country_totals.reindex(markets), axis=1) * 100
+    scores = share.sum(axis=1).reset_index()
+    scores.columns = ["main_group", "theme_score"]
+    return scores.sort_values("theme_score", ascending=False)
 
 
 def build_xq_lines(
@@ -84,16 +121,17 @@ def build_xq_lines(
     top_n_themes: int,
     top_n_per_market: int,  # 非台股市場每題材取前N名
 ) -> tuple[list[str], int, pd.DataFrame]:
-    theme_scores, classified_top200 = compute_theme_scores(conn, snapshot_date, markets)
+    theme_scores = compute_theme_hotness(conn, snapshot_date, markets)
 
     # 只保留台股公司數 > 0 的題材（過濾掉台=0 的純外國題材）
-    tw_count = (
-        classified_top200[classified_top200["country"] == "台"]
-        .groupby("main_group")["code"]
-        .count()
-        .rename("tw_count")
-    )
-    theme_scores = theme_scores.merge(tw_count, on="main_group", how="left")
+    tw_count = pd.read_sql("""
+        SELECT c.main_group, COUNT(*) AS tw_count
+        FROM rankings r
+        JOIN classification c ON c.country = r.country AND c.code = r.code
+        WHERE r.snapshot_date = ? AND r.country = '台'
+        GROUP BY c.main_group
+    """, conn, params=[snapshot_date]).set_index("main_group")["tw_count"]
+    theme_scores = theme_scores.merge(tw_count.rename("tw_count"), on="main_group", how="left")
     theme_scores["tw_count"] = theme_scores["tw_count"].fillna(0)
     theme_scores = theme_scores[theme_scores["tw_count"] > 0]
     top_themes = theme_scores.head(top_n_themes)
