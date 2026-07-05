@@ -100,7 +100,18 @@ for item in targets:
 | HTTP 429 Too Many Requests | 速率限制（軟封鎖） | 等 24h，再降速 |
 | 回傳空白/假資料 | 蜜罐/偽裝 | 停止，分析回傳內容 |
 
-### 換 IP 方法（由易到難）
+#### MOPS 實際狀況（已驗證 2026-07）
+
+MOPS 使用**應用層 WAF**，而不只是 IP 封鎖：
+- GET `/mops/web/index` → ✅ 200 OK（公開歡迎頁，不受保護）
+- GET `/mops/web/t05sr01`（搜尋頁） → ❌ RemoteDisconnected
+- POST `/mops/web/ajax_t05sr01_3`（查詢 API） → ❌ RemoteDisconnected
+
+即使 IP 沒被封、瀏覽器可正常開啟，Python requests 仍被封鎖。
+伺服器會驗證是否為真實瀏覽器（可能包含 JS challenge 或 Browser Fingerprinting）。
+`requests` 無法繞過，**唯一程式化解法是 Selenium / Playwright（真實瀏覽器驅動）**。
+
+## 換 IP 方法（由易到難）
 1. **重開路由器**（如果 ISP 給動態 IP，可能換到新 IP）
 2. **用行動網路熱點** 跑一次（不同 IP 段）
 3. **VPN** 切換節點（注意：政府網站可能封 VPN 出口 IP）
