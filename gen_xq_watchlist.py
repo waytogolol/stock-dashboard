@@ -86,24 +86,31 @@ def build_xq_lines(
     markets: list,
     top_n_themes: int,
     top_n_per_market: int,
-) -> list[str]:
+) -> tuple[list[str], int, pd.DataFrame]:
     theme_scores, classified = compute_theme_scores(conn, snapshot_date, markets)
 
     # 過濾廣泛族群
     theme_scores = theme_scores[~theme_scores["main_group"].isin(BROAD_GROUPS)]
     top_themes = theme_scores.head(top_n_themes)
 
+    # 取得公司名稱
+    names_df = pd.read_sql(
+        "SELECT country, code, name_zh AS name FROM company_names", conn
+    )
+    name_map = {(r.country, r.code): r.name for r in names_df.itertuples()}
+
     lines = [f"題材熱度Top{top_n_themes}_{snapshot_date}:"]
     total = 0
+    summary_rows = []
 
-    for _, row in top_themes.iterrows():
+    market_order = [m for m in ["台", "美", "日", "韓", "陸"] if m in markets]
+
+    for rank_i, (_, row) in enumerate(top_themes.iterrows(), 1):
         theme = row["main_group"]
         score = row["theme_score"]
-        score_str = f"{score:.0f}點{int((score % 1) * 10)}" if score % 1 else f"{score:.0f}點0"
+        score_str = f"{score:.0f}點0"
         lines.append(f"{theme}_{score_str}:")
 
-        # 逐市場取前 N 名（台股優先）
-        market_order = [m for m in ["台", "美", "日", "韓", "陸"] if m in markets]
         for market in market_order:
             market_df = (
                 classified[
@@ -113,17 +120,29 @@ def build_xq_lines(
                 .head(top_n_per_market)
             )
             for _, s in market_df.iterrows():
-                lines.append(xq_code(market, s["code"]))
+                code_xq = xq_code(market, s["code"])
+                lines.append(code_xq)
                 total += 1
+                summary_rows.append({
+                    "熱度排名": rank_i,
+                    "題材": theme,
+                    "熱度分": int(score),
+                    "市場": market,
+                    "代碼": s["code"],
+                    "XQ代碼": code_xq,
+                    "公司": name_map.get((market, s["code"]), ""),
+                    "排名": int(s["rank"]),
+                })
 
     lines.append(f"# 共{total}檔  產生:{date.today().isoformat()}")
-    return lines, total
+    summary = pd.DataFrame(summary_rows)
+    return lines, total, summary
 
 
 def main():
     parser = argparse.ArgumentParser(description="生成XQ題材熱度自選股匯入檔")
-    parser.add_argument("--themes", type=int, default=10, help="取前N個主題（預設10）")
-    parser.add_argument("--per",    type=int, default=3,  help="每個主題每市場取前N名（預設3）")
+    parser.add_argument("--themes", type=int, default=20, help="取前N個熱度族群（預設20）")
+    parser.add_argument("--per",    type=int, default=5,  help="每個族群每市場取前N名（預設5）")
     parser.add_argument("--markets", nargs="+", default=DEFAULT_MARKETS,
                         help="市場列表，例如 台 美 日（預設：台 美）")
     args = parser.parse_args()
@@ -131,26 +150,37 @@ def main():
     Path(OUT_DIR).mkdir(exist_ok=True)
     conn = sqlite3.connect(DB)
     snapshot = get_latest_snapshot(conn)
-    print(f"快照日期: {snapshot}，市場: {args.markets}，"
-          f"前{args.themes}主題，每主題每市場前{args.per}名")
+    print(f"快照日期: {snapshot}  市場: {args.markets}  前{args.themes}族群  每族群每市場前{args.per}名")
 
-    lines, total = build_xq_lines(
+    lines, total, summary = build_xq_lines(
         conn, snapshot, args.markets, args.themes, args.per
     )
     conn.close()
 
     date_tag = snapshot.replace("-", "")
-    out_path = Path(OUT_DIR) / f"XQ_題材熱度_{date_tag}.csv"
+
+    # ── XQ 匯入檔（Big5 + CRLF）──
+    out_xq = Path(OUT_DIR) / f"XQ_題材熱度_{date_tag}.csv"
     content = "\r\n".join(lines)
-    with open(out_path, "w", encoding="big5", errors="replace") as f:
+    with open(out_xq, "w", encoding="big5", errors="replace") as f:
         f.write(content)
 
-    print(f"已輸出：{out_path}（共 {total} 檔）")
-    # 順便印出預覽
-    for line in lines[:40]:
-        print(" ", line)
-    if len(lines) > 40:
-        print(f"  ...（共 {len(lines)} 行）")
+    # ── 人看的摘要 Excel / CSV ──
+    out_summary = Path(OUT_DIR) / f"題材熱度_個股名單_{date_tag}.csv"
+    summary.to_csv(out_summary, index=False, encoding="utf-8-sig")
+
+    print(f"\n已輸出 XQ 匯入檔：{out_xq}（共 {total} 檔）")
+    print(f"已輸出 個股摘要：{out_summary}\n")
+
+    # 印出熱度排行摘要
+    print(f"{'排':>3} {'題材':<18} {'熱度分':>6}  {'台股代碼':<30} {'美股代碼'}")
+    print("-" * 80)
+    for theme_rank, grp in summary.groupby("熱度排名"):
+        tw_codes = " ".join(grp[grp["市場"] == "台"]["代碼"].tolist())
+        us_codes = " ".join(grp[grp["市場"] == "美"]["代碼"].tolist())
+        theme = grp["題材"].iloc[0]
+        score = grp["熱度分"].iloc[0]
+        print(f"{theme_rank:>3}. {theme:<18} {score:>6}  {tw_codes:<30} {us_codes}")
 
 
 if __name__ == "__main__":
