@@ -1,3 +1,5 @@
+本地版/
+plotly.min.js
 __pycache__/
 *.pyc
 streamlit.log

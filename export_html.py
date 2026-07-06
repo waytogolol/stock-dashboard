@@ -216,12 +216,21 @@ def build():
     return data
 
 
-def render_html(data):
+def render_html(data, out_path=OUT_PATH, local=False):
     data_json = json.dumps(data, ensure_ascii=False)
     html = HTML_TEMPLATE.replace("__DATA_JSON__", data_json)
-    with open(OUT_PATH, "w", encoding="utf-8") as f:
+    if local:
+        plotly_path = "plotly.min.js"
+        if not os.path.exists(plotly_path):
+            raise FileNotFoundError("找不到 plotly.min.js，請先執行：\n  python -c \"import requests; open('plotly.min.js','wb').write(requests.get('https://cdn.plot.ly/plotly-2.27.0.min.js').content)\"")
+        plotly_js = open(plotly_path, encoding="utf-8").read()
+        html = html.replace(
+            '<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>',
+            f'<script>{plotly_js}</script>'
+        )
+    with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"已產出 {OUT_PATH}，雙擊它就能在瀏覽器打開(最新快照: {data['latest_date']})")
+    print(f"已產出 {out_path}，雙擊它就能在瀏覽器打開(最新快照: {data['latest_date']})")
 
 
 HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -794,5 +803,17 @@ init();
 """
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--local", action="store_true",
+                        help="產出離線版（Plotly 內嵌，存入 本地版/ 資料夾，不推 GitHub）")
+    args = parser.parse_args()
+
     data = build()
-    render_html(data)
+    render_html(data)                                          # 給 GitHub Pages 的版本
+
+    if args.local:
+        import pathlib
+        pathlib.Path("本地版").mkdir(exist_ok=True)
+        render_html(data, out_path="本地版/dashboard.html", local=True)
+        print("本地離線版已產出：本地版/dashboard.html")
