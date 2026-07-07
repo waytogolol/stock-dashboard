@@ -651,6 +651,10 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div id="moversChart" style="height:550px"></div>
   <h3 class="sec-title">資金輪動熱力圖（題材 × 時間）</h3>
   <div class="controls">
+    排序：<select id="hmSort" onchange="renderRotationHeatmap()">
+      <option value="pos" selected>位階優先(正在自己高點的在上)</option>
+      <option value="heat">熱度優先(錢最多的在上)</option>
+    </select>
     範圍：<select id="hmRange" onchange="renderRotationHeatmap()">
       <option value="8">近8週</option>
       <option value="13" selected>近13週(一季)</option>
@@ -663,7 +667,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     </select>
     <label><input type="checkbox" id="hmShowAll" onchange="renderRotationHeatmap()"> 顯示全部題材(預設前20)</label>
   </div>
-  <div class="hint">依最新熱度由高到低排序，列標籤附目前分數。「相對」模式看單一題材自己的節奏(小題材升溫也會轉紅，適合找潛力)；「絕對」模式看全市場資金層次(只有真正熱的會亮，適合看高低)。只含有台股公司的題材。滑鼠停留可看實際分數。</div>
+  <div class="hint">列標籤附「目前分數·自身位階%」(位階=目前分數在顯示範圍內自身高低的百分位)。建議配對：<b>位階排序+相對色階</b>=看錢往哪動(正在發動的在上)；<b>熱度排序+絕對色階</b>=看錢在哪(資金量層次)。只含有台股公司的題材，滑鼠停留可看實際分數。</div>
   <div class="heatmap-box" id="rotationHeatmap"></div>
   <div class="controls" style="margin-top:16px">
     選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
@@ -1434,13 +1438,24 @@ function renderRotationHeatmap() {
     return;
   }
   let themes = getVisibleThemes();
-  const latestScore = {};
+  const latestScore = {}, posMap = {};
   themes.forEach(function(g) {
-    const rows = DATA.theme_history[g] || [];
-    const last = rows.length ? rows[rows.length - 1] : null;
-    latestScore[g] = (last && last.snapshot_date === DATA.latest_date) ? last["熱度分數"] : 0;
+    const s = {};
+    (DATA.theme_history[g] || []).forEach(function(r) { s[r.snapshot_date] = r["熱度分數"]; });
+    latestScore[g] = s[DATA.latest_date] || 0;
+    let mn = Infinity, mx = -Infinity;
+    dates.forEach(function(d) { const v = s[d]; if (v !== undefined) { if (v < mn) mn = v; if (v > mx) mx = v; } });
+    posMap[g] = (mx > mn && latestScore[g] > 0) ? (latestScore[g] - mn) / (mx - mn) : 0;
   });
-  themes = themes.slice().sort(function(a, b) { return latestScore[b] - latestScore[a]; });
+  // 排序：位階優先(量化10級，同級再比熱度) 或 熱度優先
+  const sortMode = document.getElementById("hmSort").value;
+  themes = themes.slice().sort(function(a, b) {
+    if (sortMode === "pos") {
+      const pa = Math.round(posMap[a] * 10), pb = Math.round(posMap[b] * 10);
+      if (pb !== pa) return pb - pa;
+    }
+    return latestScore[b] - latestScore[a];
+  });
   const showAll = document.getElementById("hmShowAll").checked;
   if (!showAll) themes = themes.slice(0, 20);
   const mode = document.getElementById("hmColorMode").value;
@@ -1470,7 +1485,7 @@ function renderRotationHeatmap() {
     const vals = dates.map(function(d) { return byDate[d]; }).filter(function(v) { return v !== undefined; });
     if (!vals.length) return;
     const mx = Math.max.apply(null, vals), mn = Math.min.apply(null, vals);
-    html += "<tr><td class=\"hm-name\">" + g + " <span class=\"hm-score\">" + latestScore[g].toFixed(1) + "</span></td>";
+    html += "<tr><td class=\"hm-name\">" + g + " <span class=\"hm-score\">" + latestScore[g].toFixed(1) + "·位階" + Math.round(posMap[g] * 100) + "%</span></td>";
     dates.forEach(function(d) {
       const v = byDate[d];
       if (v === undefined) { html += "<td class=\"hm-cell hm-empty\"></td>"; return; }
