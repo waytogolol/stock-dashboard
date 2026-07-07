@@ -5,94 +5,214 @@
 <title>股市資金流向追蹤</title>
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 <style>
-  body { font-family: "Microsoft JhengHei", "PingFang TC", sans-serif; background:#1a1a1a; color:#e0e0e0; margin:0; padding:16px 24px; }
-  h1 { font-size: 22px; }
-  .caption { color:#999; margin-bottom: 16px; }
-  .tabs { display:flex; gap:8px; margin-bottom:12px; border-bottom:1px solid #444; }
-  .tab-btn { background:none; border:none; color:#aaa; padding:10px 16px; cursor:pointer; font-size:15px; }
-  .tab-btn.active { color:#fff; border-bottom:2px solid #4da3ff; font-weight:bold; }
-  .tab-content { display:none; }
-  .tab-content.active { display:block; }
-  table { border-collapse: collapse; width:100%; font-size:13px; margin-bottom: 16px; }
-  th, td { border:1px solid #444; padding:6px 10px; text-align:left; white-space:nowrap; }
-  th { background:#2a2a2a; cursor:pointer; position:sticky; top:0; user-select:none; }
-  th:hover { background:#3a3a3a; }
-  th .arrow { font-size: 11px; color:#4da3ff; }
-  tr:nth-child(even) { background:#222; }
-  select, input { background:#2a2a2a; color:#eee; border:1px solid #555; padding:6px; border-radius:4px; margin-right:8px; }
-  .tier-hot { background:#ff6b6b !important; color:#1a1a1a !important; }
-  .tier-mid { background:#ffd166 !important; color:#1a1a1a !important; }
-  .tier-edge { background:#fff9db !important; color:#1a1a1a !important; }
-  .scroll-box { max-height: 600px; overflow-y:auto; border:1px solid #444; }
-  .controls { margin-bottom: 12px; }
-  .hint { color:#888; font-size:12px; margin-bottom:8px; }
-  /* ── 法說會日曆 ── */
-  .cal-wrap { margin-bottom:16px; }
-  .cal-nav { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
-  .cal-nav button { background:#333; border:none; color:#e0e0e0; padding:4px 14px; cursor:pointer; border-radius:4px; font-size:15px; }
-  .cal-nav button:hover { background:#444; }
-  #calTitle { font-size:15px; font-weight:bold; color:#e0e0e0; }
-  .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:3px; }
-  .cal-head { text-align:center; color:#888; font-size:12px; padding:4px 0; font-weight:bold; }
-  .cal-head.sun { color:#e07070; } .cal-head.sat { color:#7090d0; }
-  .cal-cell { min-height:72px; background:#222; border-radius:5px; padding:5px; box-sizing:border-box; }
-  .cal-cell.today { background:#12283d; border:1px solid #4da3ff; }
-  .cal-cell.out { opacity:0.22; pointer-events:none; }
-  .cal-num { font-size:12px; color:#888; margin-bottom:3px; }
-  .cal-num.sun { color:#e07070; } .cal-num.sat { color:#7090d0; }
-  .cal-cell.today .cal-num { color:#4da3ff; font-weight:bold; font-size:13px; background:#1a4a70; display:inline-block; border-radius:50%; width:20px; height:20px; line-height:20px; text-align:center; margin-bottom:4px; }
-  .cal-evt { font-size:10px; border-radius:3px; padding:1px 4px; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:default; }
-  .cal-evt.tw { background:#4a1010; color:#ffaaaa; border-left:2px solid #ff6b6b; }
-  .cal-evt.us { background:#0a1f3a; color:#99ccff; border-left:2px solid #4da3ff; }
-  .cal-evt.fire { border-left-color:#ff2222; animation:pulse 1.2s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
-  /* ── 公司搜尋框 ── */
-  .search-wrap { display:inline-block; position:relative; width:300px; }
-  .search-wrap input { width:100%; box-sizing:border-box; margin:0; }
-  .search-dropdown { position:absolute; top:100%; left:0; right:0; background:#2a2a2a; border:1px solid #555; border-radius:4px; max-height:220px; overflow-y:auto; z-index:999; box-shadow:0 4px 12px rgba(0,0,0,.5); }
-  .search-item { padding:6px 10px; cursor:pointer; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .search-item:hover { background:#3a3a3a; color:#fff; }
-  /* ── 供應鏈頁籤 ── */
-  .sc-fresh-warn { background:#3a2a00; border:1px solid #cc8800; color:#ffcc55; padding:10px 14px; border-radius:6px; margin-bottom:14px; }
-  .sc-anchors { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
-  .anchor-btn { background:#2a2a2a; border:1px solid #555; color:#bbb; padding:7px 16px; cursor:pointer; border-radius:6px; font-size:13px; }
-  .anchor-btn.active { background:#1a3a5c; border-color:#4da3ff; color:#4da3ff; font-weight:bold; }
-  .anchor-btn:hover { background:#333; color:#fff; }
-  .sc-country-bar { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; }
-  .sc-country-chip { background:#2a2a2a; border:1px solid #444; padding:6px 14px; border-radius:20px; font-size:13px; }
-  .chip-hot { color:#ff6b6b; margin-left:4px; }
-  .sc-country-section { margin-bottom:24px; }
-  .sc-country-title { font-size:14px; font-weight:bold; color:#ccc; margin-bottom:10px; border-bottom:1px solid #333; padding-bottom:6px; }
-  .sc-cards-row { display:flex; flex-wrap:wrap; gap:10px; }
-  .sc-card { background:#222; border:1px solid #444; border-radius:8px; padding:12px 14px; width:220px; min-width:200px; box-sizing:border-box; }
-  .sc-card.card-hot { border-color:#cc4444; background:#2a1a1a; }
-  .sc-card.card-mid { border-color:#cc8800; background:#2a2210; }
-  .sc-card-header { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
-  .rank-badge { font-size:11px; padding:2px 8px; border-radius:10px; font-weight:bold; white-space:nowrap; }
-  .rank-badge.b-hot { background:#ff6b6b; color:#1a1a1a; }
-  .rank-badge.b-mid { background:#ffd166; color:#1a1a1a; }
-  .rank-badge.b-edge { background:#555; color:#eee; }
-  .rank-badge.b-none { background:#333; color:#777; }
-  .sc-code { font-size:11px; color:#888; }
-  .sc-name { font-size:14px; font-weight:bold; color:#e0e0e0; margin-bottom:4px; line-height:1.3; }
-  .sc-product { font-size:12px; color:#aaa; line-height:1.4; margin-bottom:4px; }
-  .sc-amount { font-size:12px; color:#4da3ff; }
-  @media (prefers-color-scheme:light), :root[data-theme="light"] {
-    .cal-cell { background:#f4f4f4; } .cal-cell.today { background:#dbeeff; border-color:#0066cc; }
-    .cal-cell.today .cal-num { color:#0066cc; background:#c0dcf8; }
-    .cal-num { color:#666; } #calTitle { color:#222; }
-    .cal-nav button { background:#ddd; color:#333; } .cal-nav button:hover { background:#bbb; }
-    .cal-head { color:#555; } .cal-head.sun { color:#cc3333; } .cal-head.sat { color:#3366cc; }
-    .cal-num.sun { color:#cc3333; } .cal-num.sat { color:#3366cc; }
-    .cal-evt.tw { background:#fde8e8; color:#aa0000; border-left-color:#cc2222; }
-    .cal-evt.us { background:#e8f0fe; color:#003399; border-left-color:#3366cc; }
-  }
+/* ── Design tokens ──────────────────────────────────────────────── */
+:root {
+  --bg:        #0c1118;
+  --sf:        #131c27;
+  --sf2:       #19253a;
+  --sfh:       #1e2f46;
+  --bd:        #1a2a3d;
+  --bdm:       #263c57;
+  --tx:        #d4dde8;
+  --tx2:       #7d95aa;
+  --tx3:       #435868;
+  --ac:        #3c8cf0;
+  --ac-bg:     rgba(60,140,240,.13);
+  --red:       #e84545;
+  --red-bg:    rgba(232,69,69,.11);
+  --amb:       #d49610;
+  --amb-bg:    rgba(212,150,16,.10);
+  --grn:       #34b87a;
+  --r:         8px;
+}
+@media (prefers-color-scheme:light) { :root {
+  --bg:#edf1f7; --sf:#ffffff; --sf2:#f3f6fb; --sfh:#e6ecf4;
+  --bd:#d6e0ec; --bdm:#b8c8da; --tx:#18253a; --tx2:#4e6278; --tx3:#8096a8;
+  --ac:#1a6ee0; --ac-bg:rgba(26,110,224,.10);
+  --red:#c93535; --red-bg:rgba(201,53,53,.08);
+  --amb:#a87208; --amb-bg:rgba(168,114,8,.08); --grn:#1d9058;
+}}
+:root[data-theme="dark"] {
+  --bg:#0c1118; --sf:#131c27; --sf2:#19253a; --sfh:#1e2f46;
+  --bd:#1a2a3d; --bdm:#263c57; --tx:#d4dde8; --tx2:#7d95aa; --tx3:#435868;
+  --ac:#3c8cf0; --ac-bg:rgba(60,140,240,.13);
+  --red:#e84545; --red-bg:rgba(232,69,69,.11);
+  --amb:#d49610; --amb-bg:rgba(212,150,16,.10); --grn:#34b87a;
+}
+:root[data-theme="light"] {
+  --bg:#edf1f7; --sf:#ffffff; --sf2:#f3f6fb; --sfh:#e6ecf4;
+  --bd:#d6e0ec; --bdm:#b8c8da; --tx:#18253a; --tx2:#4e6278; --tx3:#8096a8;
+  --ac:#1a6ee0; --ac-bg:rgba(26,110,224,.10);
+  --red:#c93535; --red-bg:rgba(201,53,53,.08);
+  --amb:#a87208; --amb-bg:rgba(168,114,8,.08); --grn:#1d9058;
+}
+
+/* ── Base ──────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: "Microsoft JhengHei","PingFang TC",system-ui,-apple-system,sans-serif;
+  background: var(--bg); color: var(--tx);
+  margin: 0; padding: 0; font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Page header (sticky) ──────────────────────────────────────── */
+.page-header {
+  padding: 14px 28px 0;
+  background: var(--sf);
+  border-bottom: 1px solid var(--bd);
+  position: sticky; top: 0; z-index: 50;
+}
+h1 { font-size: 15px; font-weight: 700; margin: 0 0 2px; letter-spacing: .02em; color: var(--tx); }
+.caption { font-size: 11px; color: var(--tx3); margin-bottom: 10px; line-height: 1.5; }
+
+/* ── Tabs ──────────────────────────────────────────────────────── */
+.tabs { display: flex; gap: 0; border-bottom: none; margin: 0; }
+.tab-btn {
+  background: none; border: none; color: var(--tx2);
+  padding: 9px 15px 10px; cursor: pointer;
+  font-size: 13px; font-family: inherit;
+  border-bottom: 2px solid transparent;
+  transition: color .15s, border-color .15s;
+  white-space: nowrap;
+}
+.tab-btn:hover { color: var(--tx); }
+.tab-btn.active { color: var(--ac); border-bottom-color: var(--ac); font-weight: 600; }
+
+/* ── Tab content ───────────────────────────────────────────────── */
+.tab-content { display: none; padding: 20px 28px; }
+.tab-content.active { display: block; }
+
+/* ── Tables ────────────────────────────────────────────────────── */
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th {
+  background: var(--sf); color: var(--tx3);
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .07em;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--bdm);
+  cursor: pointer; position: sticky; top: 0; user-select: none; white-space: nowrap;
+}
+th:hover { color: var(--tx2); }
+th .arrow { font-size: 9px; color: var(--ac); margin-left: 3px; }
+td {
+  padding: 7px 12px; border-bottom: 1px solid var(--bd);
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--sfh); }
+
+/* Tier rows — left stripe instead of full bright background */
+.tier-hot { background: var(--red-bg) !important; }
+.tier-hot td:first-child { border-left: 3px solid var(--red); }
+.tier-mid { background: var(--amb-bg) !important; }
+.tier-mid td:first-child { border-left: 3px solid var(--amb); }
+.tier-edge td:first-child { border-left: 3px solid var(--tx3); }
+
+/* ── Scroll box ────────────────────────────────────────────────── */
+.scroll-box {
+  max-height: 580px; overflow-y: auto;
+  border: 1px solid var(--bd); border-radius: var(--r);
+  background: var(--sf);
+}
+
+/* ── Controls / filters ────────────────────────────────────────── */
+.controls { margin-bottom: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.hint { color: var(--tx3); font-size: 12px; margin-bottom: 10px; line-height: 1.6; }
+select, input[type="text"], input:not([type="radio"]):not([type="checkbox"]) {
+  background: var(--sf); color: var(--tx);
+  border: 1px solid var(--bdm);
+  padding: 6px 10px; border-radius: 6px;
+  font-size: 13px; font-family: inherit;
+  transition: border-color .15s;
+}
+select:focus, input:focus { outline: none; border-color: var(--ac); }
+input[type="checkbox"] { accent-color: var(--ac); }
+input[type="radio"] { accent-color: var(--ac); }
+label { font-size: 13px; color: var(--tx2); }
+code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+
+/* ── Calendar ──────────────────────────────────────────────────── */
+.cal-wrap { margin-bottom: 16px; }
+.cal-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.cal-nav button {
+  background: var(--sf2); border: 1px solid var(--bd);
+  color: var(--tx2); padding: 4px 14px;
+  cursor: pointer; border-radius: 6px; font-size: 14px;
+}
+.cal-nav button:hover { background: var(--sfh); color: var(--tx); }
+#calTitle { font-size: 14px; font-weight: 600; color: var(--tx); }
+.cal-grid { display: grid; grid-template-columns: repeat(7,1fr); gap: 3px; }
+.cal-head { text-align: center; color: var(--tx3); font-size: 11px; font-weight: 700; letter-spacing: .05em; padding: 4px 0; }
+.cal-head.sun { color: #c05050; } .cal-head.sat { color: var(--ac); }
+.cal-cell { min-height: 72px; background: var(--sf); border: 1px solid var(--bd); border-radius: 6px; padding: 5px; box-sizing: border-box; }
+.cal-cell.today { background: var(--sf2); border-color: var(--ac); }
+.cal-cell.out { opacity: 0.2; pointer-events: none; }
+.cal-num { font-size: 12px; color: var(--tx3); margin-bottom: 3px; }
+.cal-num.sun { color: #c05050; } .cal-num.sat { color: var(--ac); }
+.cal-cell.today .cal-num { color: var(--ac); font-weight: 700; font-size: 13px; background: var(--ac-bg); display: inline-block; border-radius: 50%; width: 20px; height: 20px; line-height: 20px; text-align: center; margin-bottom: 4px; }
+.cal-evt { font-size: 10px; border-radius: 3px; padding: 1px 5px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.cal-evt.tw { background: var(--red-bg); color: var(--red); border-left: 2px solid var(--red); }
+.cal-evt.us { background: var(--ac-bg); color: var(--ac); border-left: 2px solid var(--ac); }
+.cal-evt.fire { animation: pulse 1.2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.55} }
+
+/* ── Search dropdown ───────────────────────────────────────────── */
+.search-wrap { display: inline-block; position: relative; width: 300px; }
+.search-wrap input { width: 100%; box-sizing: border-box; margin: 0; }
+.search-dropdown {
+  position: absolute; top: 100%; left: 0; right: 0;
+  background: var(--sf2); border: 1px solid var(--bdm);
+  border-radius: 6px; max-height: 220px; overflow-y: auto;
+  z-index: 999; box-shadow: 0 8px 24px rgba(0,0,0,.3);
+}
+.search-item { padding: 7px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--tx2); }
+.search-item:hover { background: var(--sfh); color: var(--tx); }
+
+/* ── Supply chain ──────────────────────────────────────────────── */
+.sc-fresh-warn {
+  background: var(--amb-bg); border: 1px solid var(--amb);
+  color: var(--amb); padding: 10px 14px; border-radius: var(--r);
+  margin-bottom: 14px; font-size: 13px;
+}
+.sc-anchors { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.anchor-btn {
+  background: var(--sf); border: 1px solid var(--bdm);
+  color: var(--tx2); padding: 6px 16px;
+  cursor: pointer; border-radius: 20px; font-size: 13px; font-family: inherit;
+  transition: all .15s;
+}
+.anchor-btn:hover { background: var(--sf2); color: var(--tx); }
+.anchor-btn.active { background: var(--ac-bg); border-color: var(--ac); color: var(--ac); font-weight: 600; }
+.sc-country-bar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+.sc-country-chip { background: var(--sf); border: 1px solid var(--bd); padding: 5px 14px; border-radius: 20px; font-size: 13px; color: var(--tx2); }
+.chip-hot { color: var(--red); margin-left: 4px; font-weight: 600; }
+.sc-country-section { margin-bottom: 24px; }
+.sc-country-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--tx3); margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--bd); }
+.sc-cards-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.sc-card {
+  background: var(--sf); border: 1px solid var(--bd); border-radius: var(--r);
+  padding: 12px 14px; width: 210px; min-width: 190px;
+  transition: border-color .15s, background .15s;
+}
+.sc-card:hover { border-color: var(--bdm); background: var(--sf2); }
+.sc-card.card-hot { border-left: 3px solid var(--red); }
+.sc-card.card-mid { border-left: 3px solid var(--amb); }
+.sc-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.rank-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rank-badge.b-hot { background: var(--red-bg); color: var(--red); }
+.rank-badge.b-mid { background: var(--amb-bg); color: var(--amb); }
+.rank-badge.b-edge, .rank-badge.b-none { background: var(--sf2); color: var(--tx3); }
+.sc-code { font-size: 11px; color: var(--tx3); }
+.sc-name { font-size: 13px; font-weight: 600; color: var(--tx); margin-bottom: 4px; line-height: 1.3; }
+.sc-product { font-size: 12px; color: var(--tx2); line-height: 1.5; margin-bottom: 4px; }
+.sc-amount { font-size: 12px; color: var(--ac); font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
+<div class="page-header">
 <h1>股市資金流向追蹤</h1>
-<div class="caption">台股(上市+上櫃) / 日股 / 韓股 / 陸股(滬深A股) / 美股，依成交金額排行，依族群/題材分類。最新快照日期：<span id="latestDate"></span></div>
-
+<div class="caption">台股(上市+上櫃) / 日股 / 韓股 / 陸股(滬深A股) / 美股，依成交金額排行，依族群/題材分類。最新快照：<span id="latestDate"></span></div>
 <div class="tabs">
   <button class="tab-btn active" onclick="showTab(0)">題材跨市場比較</button>
   <button class="tab-btn" onclick="showTab(1)">排行榜明細</button>
@@ -100,6 +220,7 @@
   <button class="tab-btn" onclick="showTab(3)">財報/法說會提醒</button>
   <button class="tab-btn" onclick="showTab(4)">新聞/目標價</button>
   <button class="tab-btn" onclick="showTab(5)">供應鏈</button>
+</div>
 </div>
 
 <div class="tab-content active" id="tab0">
@@ -306,7 +427,7 @@ function renderMoversChart() {
     marker: {color: uniqueMovers.map(m => m["熱度分數Δ"] >= 0 ? "#ff6b6b" : "#4da3ff")},
   }], {
     title: `本次熱度分數變化最大的題材(前10上升/前10下降，跟${DATA.previous_date}比較)`,
-    paper_bgcolor: "#1a1a1a", plot_bgcolor: "#1a1a1a", font: {color: "#e0e0e0"},
+    paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
     xaxis: {title: "熱度分數Δ"},
     yaxis: {automargin: true},
     margin: {l: 160},
@@ -400,7 +521,7 @@ function renderCompanyHistory() {
   }], {
     title: entry.label + " 排名變化(數字越小越熱)",
     yaxis: {autorange: "reversed", title: "排名"},
-    paper_bgcolor: "#1a1a1a", plot_bgcolor: "#1a1a1a", font: {color: "#e0e0e0"},
+    paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
   }, {responsive: true});
   const cols = [
     {key: "snapshot_date", label: "日期"}, {key: "rank", label: "排名", numeric: true},
@@ -424,7 +545,7 @@ function renderThemeHistory() {
   }], {
     title: g + " 熱度分數變化(數字越大資金越集中)",
     yaxis: {title: "熱度分數"},
-    paper_bgcolor: "#1a1a1a", plot_bgcolor: "#1a1a1a", font: {color: "#e0e0e0"},
+    paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
   }, {responsive: true});
   const cols = [
     {key: "snapshot_date", label: "日期"}, {key: "熱度分數", label: "熱度分數", numeric: true},
