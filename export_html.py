@@ -203,6 +203,7 @@ def build():
         "theme_detail": theme_detail,
         "theme_history": theme_history,
         "theme_list": sorted(theme_history.keys()),
+        "theme_list_thematic": sorted(g for g in theme_history.keys() if g not in BROAD_GROUPS),
         "full_records": full_records,
         "company_history": company_history,
         "company_list": sorted(
@@ -555,7 +556,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 }
 
 /* ── 資金輪動熱力圖 ───────────────────────────────────────────── */
-.heatmap-box { overflow-x: auto; border: 1px solid var(--bd); border-radius: var(--r); background: var(--sf); padding: 12px; }
+.heatmap-box { overflow-x: auto; overflow-y: auto; max-height: 640px; border: 1px solid var(--bd); border-radius: var(--r); background: var(--sf); padding: 12px; }
 .hm-table { border-collapse: separate; border-spacing: 3px; width: auto; }
 .hm-table th, .hm-table td { border: none; padding: 0; position: static; background: none; cursor: default; }
 .hm-table tr:hover td { background: none; }
@@ -636,7 +637,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div class="scroll-box"><table id="themePivotTable"></table></div>
   <div id="moversChart" style="height:550px"></div>
   <h3 class="sec-title">資金輪動熱力圖（題材 × 時間）</h3>
-  <div class="hint">取熱度前15大題材，每列依該題材自身歷史高低正規化：顏色越紅 = 該期資金集中度越接近自身高點。橫向看單一題材的節奏，縱向比較同一週誰在發動、誰在退潮。滑鼠停留可看實際分數。</div>
+  <div class="hint">顯示全部題材（排除金融/傳產等廣義分類），依目前熱度排序、可向下捲動。每列依該題材自身歷史高低正規化：顏色越紅 = 該期資金越接近自身高點——所以現在還小但正在升溫的題材照樣會轉紅，不會漏掉潛力股。滑鼠停留可看實際分數。</div>
   <div class="heatmap-box" id="rotationHeatmap"></div>
   <div class="controls" style="margin-top:16px">
     選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
@@ -1360,7 +1361,14 @@ function renderRotationHeatmap() {
     el.innerHTML = "<div class=\"hint\" style=\"margin:0\">需要至少兩個快照才能觀察輪動，之後每週更新會自動累積。</div>";
     return;
   }
-  const themes = DATA.theme_pivot_thematic.slice(0, 15).map(function(p) { return p.main_group; });
+  let themes = DATA.theme_list_thematic || DATA.theme_pivot_thematic.map(function(p) { return p.main_group; });
+  const latestScore = {};
+  themes.forEach(function(g) {
+    const rows = DATA.theme_history[g] || [];
+    const last = rows.length ? rows[rows.length - 1] : null;
+    latestScore[g] = (last && last.snapshot_date === DATA.latest_date) ? last["熱度分數"] : 0;
+  });
+  themes = themes.slice().sort(function(a, b) { return latestScore[b] - latestScore[a]; });
   let html = "<table class=\"hm-table\"><tr><th class=\"hm-name\"></th>";
   dates.forEach(function(d) { html += "<th class=\"hm-date\">" + d.slice(5) + "</th>"; });
   html += "</tr>";
