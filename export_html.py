@@ -226,39 +226,68 @@ def build():
         summary["new_count"] = sum(1 for r in full_records if r.get("排名Δ") == "新進榜")
     data["weekly_summary"] = summary
 
-    # 供應鏈資料
+    # 供應鏈/產業鏈共用：把公司補上最新排名、熱度、金額與排名Δ
+    latest_lookup = {(r["country"], r["code"]): r for _, r in latest.iterrows()}
+    prev_lookup = {}
+    if previous_date:
+        prev_snap = rankings[rankings["snapshot_date"] == previous_date]
+        prev_lookup = {(r["country"], r["code"]): r for _, r in prev_snap.iterrows()}
+
+    def enrich(code, country):
+        info = latest_lookup.get((country, code))
+        pinfo = prev_lookup.get((country, code))
+        rank_delta = None
+        if info is not None and pinfo is not None:
+            rank_delta = int(pinfo["rank"]) - int(info["rank"])  # 正值=排名上升(變熱)
+        return {
+            "supplier_name": info["中文名稱"] if info is not None else code,
+            "supplier_rank": int(info["rank"]) if info is not None else None,
+            "supplier_rank_delta": rank_delta,
+            "supplier_tier": info["熱度"] if info is not None else "",
+            "supplier_amount_yi": info["金額億台幣"] if info is not None else "",
+        }
+
+    # 供應鏈(錨點客戶)資料
     try:
         import supply_chain as sc
-        latest_lookup = {(r["country"], r["code"]): r for _, r in latest.iterrows()}
-        prev_lookup = {}
-        if previous_date:
-            prev_snap = rankings[rankings["snapshot_date"] == previous_date]
-            prev_lookup = {(r["country"], r["code"]): r for _, r in prev_snap.iterrows()}
         supply_links = []
         for sup_code, sup_country, cust_code, cust_country, product in sc.LINKS:
-            info = latest_lookup.get((sup_country, sup_code))
-            pinfo = prev_lookup.get((sup_country, sup_code))
-            rank_delta = None
-            if info is not None and pinfo is not None:
-                rank_delta = int(pinfo["rank"]) - int(info["rank"])  # 正值=排名上升(變熱)
-            supply_links.append({
+            rec = {
                 "supplier_code": sup_code,
                 "supplier_country": sup_country,
                 "customer_code": cust_code,
                 "customer_country": cust_country,
                 "product": product,
-                "supplier_name": info["中文名稱"] if info is not None else sup_code,
-                "supplier_rank": int(info["rank"]) if info is not None else None,
-                "supplier_rank_delta": rank_delta,
-                "supplier_tier": info["熱度"] if info is not None else "",
-                "supplier_amount_yi": info["金額億台幣"] if info is not None else "",
-            })
+            }
+            rec.update(enrich(sup_code, sup_country))
+            supply_links.append(rec)
         data["supply_links"] = supply_links
         data["supply_last_updated"] = sc.LAST_UPDATED
     except Exception as e:
         print(f"供應鏈資料載入失敗: {e}")
         data["supply_links"] = []
         data["supply_last_updated"] = None
+
+    # 產業鏈(橫向上中下游)資料
+    try:
+        import industry_chains as ic
+        chain_links = []
+        for chain, stage, code, country, role in ic.CHAIN_LINKS:
+            rec = {
+                "chain": chain,
+                "stage": stage,
+                "supplier_code": code,
+                "supplier_country": country,
+                "product": role,
+            }
+            rec.update(enrich(code, country))
+            chain_links.append(rec)
+        data["industry_chains"] = chain_links
+        data["industry_chain_list"] = ic.CHAINS
+    except Exception as e:
+        print(f"產業鏈資料載入失敗: {e}")
+        data["industry_chains"] = []
+        data["industry_chain_list"] = []
 
     return data
 
@@ -550,6 +579,26 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 }
 .chip-x { cursor: pointer; font-weight: 700; }
 .chip-x:hover { color: var(--red); }
+
+/* ── 供應鏈視圖切換 + 產業鏈上中下游 ─────────────────────────── */
+.sc-view-switch { display: flex; gap: 8px; margin-bottom: 16px; }
+.view-btn {
+  background: var(--sf); border: 1px solid var(--bdm); color: var(--tx2);
+  padding: 7px 18px; border-radius: 6px; cursor: pointer;
+  font-size: 13px; font-family: inherit; transition: all .15s;
+}
+.view-btn:hover { background: var(--sf2); color: var(--tx); }
+.view-btn.active { background: var(--ac-bg); border-color: var(--ac); color: var(--ac); font-weight: 600; }
+.chain-stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; align-items: start; }
+.stage-col { background: var(--sf2); border: 1px solid var(--bd); border-radius: var(--r); padding: 10px; }
+.stage-head {
+  font-size: 12px; font-weight: 700; color: var(--tx2);
+  text-transform: uppercase; letter-spacing: .06em;
+  margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--bd);
+}
+.stage-meta { color: var(--tx3); font-weight: 600; margin-left: 6px; }
+.stage-cards { display: flex; flex-direction: column; gap: 8px; }
+.stage-cards .sc-card { width: 100%; min-width: 0; }
 </style>
 </head>
 <body>
@@ -652,7 +701,12 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div id="scFreshWarn" class="sc-fresh-warn" style="display:none">
     ⚠️ 供應鏈資料已超過90天未更新（最後更新：<span id="scLastUpdated"></span>），部分關係可能已變動，建議重新執行 Gemini 審查流程
   </div>
-  <div class="hint">點選錨點客戶，查看各國一階直接供應商的資金流向熱度。資料來源：Gemini驗證後人工確認。最後更新：<span id="scLastUpdatedInline"></span></div>
+  <div class="hint">資料來源：Gemini驗證後人工確認，每筆代碼經資料庫核對。最後更新：<span id="scLastUpdatedInline"></span></div>
+  <div class="sc-view-switch">
+    <button class="view-btn active" id="viewAnchorBtn" onclick="switchSCView('anchor')">錨點客戶視圖</button>
+    <button class="view-btn" id="viewChainBtn" onclick="switchSCView('chain')">產業鏈視圖(上中下游)</button>
+  </div>
+  <div id="scAnchorView">
   <h3 class="sec-title">供應鏈生態系熱度排行</h3>
   <div class="hint">熱度分 = 🔥前50供應商×2 + 🟠前150供應商×1，直接點列可切換下方明細。▲▼ = 供應商中排名較上週上升/下降的家數。</div>
   <div id="scRanking" class="sc-ranking"></div>
@@ -671,6 +725,12 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   </div>
   <div id="scCountryBar"></div>
   <div id="scCards"></div>
+  </div>
+  <div id="scChainView" style="display:none">
+    <div class="hint">選一條產業鏈，看上游材料/設備 → 中游製造 → 下游應用的跨國全貌。卡片按資金流向排名排序，左色條=熱度(紅=前50、琥珀=前150)，▲▼=排名週變化。</div>
+    <div class="sc-anchors" id="chainBtns"></div>
+    <div class="chain-stages" id="chainStages"></div>
+  </div>
 </div>
 
 <script>
@@ -1108,6 +1168,80 @@ function selectAnchor(key) {
   renderSCCards();
 }
 
+function buildCardHTML(l, showCountry) {
+  const tier = l.supplier_tier || "";
+  let badgeCls = "b-edge", cardCls = "";
+  if (tier.indexOf("前50") >= 0)  { badgeCls = "b-hot";  cardCls = "card-hot"; }
+  else if (tier.indexOf("51-150") >= 0) { badgeCls = "b-mid"; cardCls = "card-mid"; }
+  const rankText = l.supplier_rank ? "#" + l.supplier_rank : "未上榜";
+  const badgeClass2 = l.supplier_rank ? badgeCls : "b-none";
+  const d = l.supplier_rank_delta;
+  let deltaHtml = "";
+  if (l.supplier_rank && d !== null && d !== undefined) {
+    if (d > 0) deltaHtml = "<span class=\"sc-delta up\" title=\"排名比上週上升" + d + "名\">▲" + d + "</span>";
+    else if (d < 0) deltaHtml = "<span class=\"sc-delta down\" title=\"排名比上週下降" + (-d) + "名\">▼" + (-d) + "</span>";
+    else deltaHtml = "<span class=\"sc-delta flat\">—</span>";
+  }
+  const countryHtml = showCountry ? "<span class=\"sc-code\">" + (COUNTRY_FLAG[l.supplier_country] || "") + l.supplier_country + "</span>" : "";
+  return "<div class=\"sc-card " + cardCls + "\">" +
+         "<div class=\"sc-card-header\"><span class=\"rank-badge " + badgeClass2 + "\">" + rankText + "</span>" +
+         deltaHtml + countryHtml +
+         "<span class=\"sc-code\">" + l.supplier_code + "</span></div>" +
+         "<div class=\"sc-name\">" + (l.supplier_name || l.supplier_code) + "</div>" +
+         "<div class=\"sc-product\">&#9658; " + l.product + "</div>" +
+         (l.supplier_amount_yi ? "<div class=\"sc-amount\">" + l.supplier_amount_yi + "</div>" : "") +
+         "</div>";
+}
+
+// ── 產業鏈視圖(上中下游) ─────────────────────────────────────────────
+let scView = "anchor";
+let currentChain = null;
+
+function switchSCView(v) {
+  scView = v;
+  document.getElementById("scAnchorView").style.display = v === "anchor" ? "" : "none";
+  document.getElementById("scChainView").style.display = v === "chain" ? "" : "none";
+  document.getElementById("viewAnchorBtn").classList.toggle("active", v === "anchor");
+  document.getElementById("viewChainBtn").classList.toggle("active", v === "chain");
+  if (v === "chain") renderChainView();
+}
+
+function selectChain(c) {
+  currentChain = c;
+  renderChainView();
+}
+
+function renderChainView() {
+  const chains = DATA.industry_chain_list || [];
+  const btnsEl = document.getElementById("chainBtns");
+  const stagesEl = document.getElementById("chainStages");
+  if (!chains.length) {
+    btnsEl.innerHTML = "";
+    stagesEl.innerHTML = "<div class=\"hint\">尚無產業鏈資料</div>";
+    return;
+  }
+  if (!currentChain || chains.indexOf(currentChain) < 0) currentChain = chains[0];
+  btnsEl.innerHTML = chains.map(function(c) {
+    return "<button class=\"anchor-btn" + (c === currentChain ? " active" : "") + "\" onclick=\"selectChain('" + c + "')\">" + c + "</button>";
+  }).join("");
+  const links = (DATA.industry_chains || []).filter(function(l) { return l.chain === currentChain; });
+  const stages = ["上游", "中游", "下游"];
+  const stageIcons = {上游: "⛏️", 中游: "🏭", 下游: "📦"};
+  let html = "";
+  stages.forEach(function(st) {
+    const items = links.filter(function(l) { return l.stage === st; });
+    if (!items.length) return;
+    items.sort(function(a, b) { return (a.supplier_rank || 9999) - (b.supplier_rank || 9999); });
+    const hot = items.filter(function(l) { return (l.supplier_tier || "").indexOf("前50") >= 0; }).length;
+    html += "<div class=\"stage-col\"><div class=\"stage-head\">" + stageIcons[st] + " " + st +
+            "<span class=\"stage-meta\">" + items.length + "家" + (hot ? " · 🔥" + hot : "") + "</span></div>" +
+            "<div class=\"stage-cards\">";
+    items.forEach(function(l) { html += buildCardHTML(l, true); });
+    html += "</div></div>";
+  });
+  stagesEl.innerHTML = html;
+}
+
 function renderSCRanking() {
   const rows = Object.keys(ANCHOR_DEFS).map(function(key) {
     const def = ANCHOR_DEFS[key];
@@ -1166,29 +1300,7 @@ function renderSCCards() {
     items.sort(function(a, b) { return (a.supplier_rank || 9999) - (b.supplier_rank || 9999); });
     html += "<div class=\"sc-country-section\"><div class=\"sc-country-title\">" +
             (COUNTRY_FLAG[c]||c) + " " + c + "股供應商（" + items.length + "家）</div><div class=\"sc-cards-row\">";
-    items.forEach(function(l) {
-      const tier = l.supplier_tier || "";
-      let badgeCls = "b-edge", cardCls = "";
-      if (tier.indexOf("前50") >= 0)  { badgeCls = "b-hot";  cardCls = "card-hot"; }
-      else if (tier.indexOf("51-150") >= 0) { badgeCls = "b-mid"; cardCls = "card-mid"; }
-      const rankText = l.supplier_rank ? "#" + l.supplier_rank : "未上榜";
-      const badgeClass2 = l.supplier_rank ? badgeCls : "b-none";
-      const d = l.supplier_rank_delta;
-      let deltaHtml = "";
-      if (l.supplier_rank && d !== null && d !== undefined) {
-        if (d > 0) deltaHtml = "<span class=\"sc-delta up\" title=\"排名比上週上升" + d + "名\">▲" + d + "</span>";
-        else if (d < 0) deltaHtml = "<span class=\"sc-delta down\" title=\"排名比上週下降" + (-d) + "名\">▼" + (-d) + "</span>";
-        else deltaHtml = "<span class=\"sc-delta flat\">—</span>";
-      }
-      html += "<div class=\"sc-card " + cardCls + "\">" +
-              "<div class=\"sc-card-header\"><span class=\"rank-badge " + badgeClass2 + "\">" + rankText + "</span>" +
-              deltaHtml +
-              "<span class=\"sc-code\">" + l.supplier_code + "</span></div>" +
-              "<div class=\"sc-name\">" + (l.supplier_name || l.supplier_code) + "</div>" +
-              "<div class=\"sc-product\">&#9658; " + l.product + "</div>" +
-              (l.supplier_amount_yi ? "<div class=\"sc-amount\">" + l.supplier_amount_yi + "</div>" : "") +
-              "</div>";
-    });
+    items.forEach(function(l) { html += buildCardHTML(l, false); });
     html += "</div></div>";
   });
   if (!html) html = "<div style=\"color:#888;padding:16px;\">此錨點暫無供應商資料</div>";
