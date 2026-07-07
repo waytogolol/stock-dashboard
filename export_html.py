@@ -604,7 +604,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 <body>
 <div class="page-header">
 <h1>股市資金流向追蹤</h1>
-<div class="caption">台股(上市+上櫃) / 日股 / 韓股 / 陸股(滬深A股) / 美股，依成交金額排行，依族群/題材分類。最新快照：<span id="latestDate"></span></div>
+<div class="caption">台股(上市+上櫃) / 日股 / 韓股 / 陸股(滬深A股) / 美股，依成交金額排行，依族群/題材分類。最新快照：<span id="latestDate"></span>。2026-06-21前的歷史快照為估算回補值(yfinance收盤×成交量，僅含現任成分股)。</div>
 <div id="weeklyBanner" class="week-banner" style="display:none"></div>
 <div class="tabs">
   <button class="tab-btn active" onclick="showTab(0)">題材跨市場比較</button>
