@@ -1,12 +1,22 @@
 # -*- coding: utf-8 -*-
-"""產業鏈(橫向)Gemini指令生成器 v2：修正關鍵字誤抓，生成可直接貼給Gemini的完整指令"""
+"""產業鏈(橫向)Gemini指令生成器 v3
+- 定義全部產業鏈的候選關鍵字；自動跳過 industry_chains.py 已完成的鏈
+- 每條鏈候選上限100家(按排名)；每個指令檔約180家以內，自動分批輸出
+- 從專案根目錄執行：python Gemini工具/gen_chain_prompt.py [--all 重生成全部]
+"""
+import os
+import sys
+
 import pandas as pd
+
+sys.path.insert(0, os.getcwd())
 
 df = pd.read_csv("all_classified.csv", dtype={"代碼": str})
 df["搜尋文字"] = (df["主族群"].fillna("") + "|" + df["細分產品"].fillna("") + "|" + df["產業地位"].fillna(""))
 
-# kws: 不分大小寫關鍵字；cs_kws: 區分大小寫(避免 SiC 誤抓 ASIC/ASICS、VC 誤抓 VCSEL)
+# kws: 不分大小寫；cs_kws: 區分大小寫(避免 SiC 誤抓 ASIC 之類)
 CHAINS = {
+    # ── 第一批(已完成) ────────────────────────────────────────────────
     "功率半導體": {
         "kws": ["功率", "MOSFET", "IGBT", "碳化矽", "氮化鎵", "二極體", "整流", "閘流", "PMIC", "電源管理"],
         "cs_kws": ["SiC", "GaN"],
@@ -32,22 +42,80 @@ CHAINS = {
         "cs_kws": ["ABF"],
         "stage_hint": "上游=電解銅箔、玻纖布、樹脂、CCL覆銅板、鑽針/設備/化學品；中游=PCB/HDI/軟板/IC載板製造；下游=(併入伺服器/手機等應用，不必列)",
     },
+    # ── 第二批 ───────────────────────────────────────────────────────
+    "記憶體": {
+        "kws": ["記憶體", "DRAM", "NAND", "HBM", "快閃", "SSD", "存儲", "儲存控制", "NOR", "利基型"],
+        "cs_kws": [],
+        "stage_hint": "上游=矽晶圓、記憶體專用設備/測試介面、封裝材料；中游=DRAM/NAND/NOR製造IDM；下游=記憶體模組、SSD、控制IC、通路",
+    },
+    "先進封裝/封測": {
+        "kws": ["先進封裝", "封測", "封裝設備", "凸塊", "打線", "切割", "黏晶", "固晶", "測試分類機", "探針", "測試介面", "重佈線"],
+        "cs_kws": ["CoWoS", "SoIC", "FOPLP", "TGV"],
+        "stage_hint": "上游=封裝設備(切割/黏晶/打線/檢測)、封裝材料、測試介面(探針卡/測試座)；中游=封測代工OSAT、CoWoS產能；下游=(晶片客戶，不必列)",
+    },
+    "半導體設備/零組件": {
+        "kws": ["半導體設備", "蝕刻", "沉積", "曝光", "顯影", "清洗設備", "量測", "檢測設備", "離子注入", "爐管", "閥件", "石英", "陶瓷零組件", "腔體", "真空", "幫浦", "傳載", "光罩"],
+        "cs_kws": ["ALD", "CVD", "PVD", "EUV", "CMP"],
+        "stage_hint": "上游=精密零組件(腔體/石英件/陶瓷件/閥件/真空幫浦/傳載盒)；中游=製程設備整機商；下游=(晶圓廠，不必列)",
+    },
+    "電力設備/重電": {
+        "kws": ["重電", "變壓器", "電力設備", "開關設備", "電網", "輸電", "配電", "變電", "電線電纜", "電纜", "智慧電表", "馬達", "發電機"],
+        "cs_kws": ["GIS"],
+        "stage_hint": "上游=電磁鋼片、線材、絕緣材料、零組件；中游=變壓器/開關設備/電纜/馬達製造；下游=電網工程、電力公司、資料中心電力設施",
+    },
+    "AI伺服器": {
+        "kws": ["伺服器", "資料中心", "機櫃", "滑軌", "電源供應器", "準系統", "主機板"],
+        "cs_kws": ["BMC", "ODM"],
+        "stage_hint": "上游=關鍵零組件(電源/滑軌/機殼/主機板/BMC/連接器)；中游=整機組裝ODM/系統整合；下游=雲端服務商、品牌伺服器",
+    },
+    "電池/儲能": {
+        "kws": ["電池", "儲能", "鋰電", "正極", "負極", "隔膜", "電解液", "電芯", "充電樁", "燃料電池", "固態電池"],
+        "cs_kws": ["BMS", "LFP"],
+        "stage_hint": "上游=正極/負極/隔膜/電解液/銅箔/結構件材料；中游=電芯與電池包製造；下游=儲能系統、充電基礎設施、車廠應用",
+    },
+    "機器人/自動化": {
+        "kws": ["機器人", "自動化", "減速機", "伺服馬達", "諧波", "滑軌", "滾珠螺桿", "工控", "機械手臂", "人形", "機器視覺"],
+        "cs_kws": ["PLC"],
+        "stage_hint": "上游=減速機/伺服馬達/線性滑軌/感測器/控制器；中游=機器人本體與自動化設備製造；下游=系統整合與應用",
+    },
 }
+
+BATCH_LIMIT = 180    # 每個指令檔的候選家數上限
+PER_CHAIN_CAP = 100  # 每條鏈候選上限
+
 
 def match(text, kws, cs_kws):
     low = text.lower()
     return any(k.lower() in low for k in kws) or any(k in text for k in cs_kws)
 
-blocks = []
-for chain, cfg in CHAINS.items():
-    mask = df["搜尋文字"].apply(lambda t: match(t, cfg["kws"], cfg["cs_kws"]))
-    sub = df[mask].drop_duplicates(subset=["國家", "代碼"]).sort_values(["國家", "排名"])
-    print(f"{chain}: {len(sub)}家", dict(sub['國家'].value_counts()))
-    lines = "\n".join(f"{r['國家']} {r['代碼']} {r['公司']}｜{r['細分產品']}" for _, r in sub.iterrows())
-    blocks.append(f"■ 產業鏈「{chain}」候選名單（{len(sub)}家）\n階段定義提示：{cfg['stage_hint']}\n{lines}")
 
-prompt = f"""你是全球電子產業鏈分析師。
-我要建立五個「橫向產業鏈」的上中下游結構圖，涵蓋台/日/韓/陸/美五個市場。
+def main():
+    done = set()
+    if "--all" not in sys.argv:
+        try:
+            import industry_chains
+            done = set(industry_chains.CHAINS)
+        except Exception:
+            pass
+
+    todo = [c for c in CHAINS if c not in done]
+    if not todo:
+        print("所有產業鏈都已完成，若要重新生成請加 --all")
+        return
+    print(f"已完成跳過: {sorted(done)}")
+
+    blocks = []
+    for chain in todo:
+        cfg = CHAINS[chain]
+        mask = df["搜尋文字"].apply(lambda t: match(t, cfg["kws"], cfg["cs_kws"]))
+        sub = df[mask].drop_duplicates(subset=["國家", "代碼"]).sort_values("排名").head(PER_CHAIN_CAP)
+        sub = sub.sort_values(["國家", "排名"])
+        print(f"{chain}: {len(sub)}家")
+        lines = "\n".join(f"{r['國家']} {r['代碼']} {r['公司']}｜{r['細分產品']}" for _, r in sub.iterrows())
+        blocks.append((chain, len(sub), f"■ 產業鏈「{chain}」候選名單（{len(sub)}家）\n階段定義提示：{cfg['stage_hint']}\n{lines}"))
+
+    header = """你是全球電子產業鏈分析師。
+我要建立「橫向產業鏈」的上中下游結構圖，涵蓋台/日/韓/陸/美五個市場。
 以下每條產業鏈都附上我資料庫的候選公司名單（國別 代碼 公司名｜細分產品）。
 候選名單是用關鍵字粗篩的，可能混入不屬於該鏈的公司。
 
@@ -56,22 +124,38 @@ prompt = f"""你是全球電子產業鏈分析師。
 規則（非常重要）：
 1. 只能從候選名單中挑選，不能自行新增公司
 2. 不屬於該產業鏈的候選公司直接略過，不要硬塞
-3. 角色描述要具體（例如「SiC 6吋基板」而不是「半導體材料」）
+3. 角色描述要具體（例如「HBM3e高頻寬記憶體」而不是「半導體」）
 4. 不確定的直接略過，不能猜
-5. 同一家公司可以出現在多條產業鏈（例如台積電同時在CPO鏈）
+5. 同一家公司可以出現在多條產業鏈
 
 輸出格式（每行一筆）：
 產業鏈 | 階段(上游/中游/下游) | 代碼 | 國別 | 具體角色（一句話）
 
 範例：
-功率半導體 | 上游 | sh688234 | 陸 | 全球前三大SiC碳化矽基板供應商
-功率半導體 | 中游 | 6963 | 日 | SiC功率元件與車用IGBT大廠(ROHM)
-CPO/光通訊 | 中游 | sz300308 | 陸 | 全球800G光收發模組出貨龍頭(旭創)
+記憶體 | 中游 | 000660 | 韓 | HBM與DRAM製造IDM巨頭
+記憶體 | 下游 | 8299 | 台 | NAND快閃記憶體控制IC與模組廠
 
 ---
-{chr(10).join(blocks)}
 """
 
-with open("tmp_gemini_chain_prompt.txt", "w", encoding="utf-8") as f:
-    f.write(prompt)
-print("\n完整指令已存 tmp_gemini_chain_prompt.txt")
+    # 依候選數自動分批
+    batches, cur, cur_n = [], [], 0
+    for chain, cnt, block in blocks:
+        if cur and cur_n + cnt > BATCH_LIMIT:
+            batches.append(cur)
+            cur, cur_n = [], 0
+        cur.append(block)
+        cur_n += cnt
+    if cur:
+        batches.append(cur)
+
+    for i, batch in enumerate(batches, 1):
+        fname = f"tmp_gemini_chain_prompt_batch{i}.txt"
+        with open(fname, "w", encoding="utf-8") as f:
+            f.write(header + "\n".join(batch) + "\n")
+        print(f"-> {fname}")
+    print(f"\n共 {len(batches)} 個指令檔，請依序貼給 Gemini；全部結果合併存成一個檔後執行 parse_chain_result.py")
+
+
+if __name__ == "__main__":
+    main()
