@@ -563,6 +563,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 .hm-table tr:hover td.hm-empty { background: var(--sf2); }
 .hm-date { font-size: 10px; color: var(--tx3); font-weight: 600; padding: 0 2px 4px; text-align: center; }
 .hm-name { font-size: 12px; color: var(--tx2); padding-right: 10px; text-align: right; white-space: nowrap; }
+.hm-score { font-size: 10px; color: var(--tx3); font-variant-numeric: tabular-nums; }
 .hm-cell { width: 36px; min-width: 36px; height: 22px; border-radius: 4px; }
 .hm-cell.hm-empty { background: var(--sf2); }
 
@@ -648,7 +649,14 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   </div>
   <div id="moversChart" style="height:550px"></div>
   <h3 class="sec-title">資金輪動熱力圖（題材 × 時間）</h3>
-  <div class="hint">只顯示「至少有一家台股公司」的題材，依目前熱度排序、可向下捲動。每列依該題材自身歷史高低正規化：顏色越紅 = 該期資金越接近自身高點——現在還小但正在升溫的題材照樣會轉紅，不會漏掉潛力股。金融/傳產等廣義分類預設保留（升溫=資金轉防禦訊號），可用上方勾選框排除。滑鼠停留可看實際分數。</div>
+  <div class="controls">
+    色階：<select id="hmColorMode" onchange="renderRotationHeatmap()">
+      <option value="rel" selected>相對(每列自身節奏)</option>
+      <option value="abs">絕對(全題材同一把尺)</option>
+    </select>
+    <label><input type="checkbox" id="hmShowAll" onchange="renderRotationHeatmap()"> 顯示全部題材(預設前20)</label>
+  </div>
+  <div class="hint">依最新熱度由高到低排序，列標籤附目前分數。「相對」模式看單一題材自己的節奏(小題材升溫也會轉紅，適合找潛力)；「絕對」模式看全市場資金層次(只有真正熱的會亮，適合看高低)。只含有台股公司的題材。滑鼠停留可看實際分數。</div>
   <div class="heatmap-box" id="rotationHeatmap"></div>
   <div class="controls" style="margin-top:16px">
     選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
@@ -1421,8 +1429,24 @@ function renderRotationHeatmap() {
     latestScore[g] = (last && last.snapshot_date === DATA.latest_date) ? last["熱度分數"] : 0;
   });
   themes = themes.slice().sort(function(a, b) { return latestScore[b] - latestScore[a]; });
+  const showAll = document.getElementById("hmShowAll").checked;
+  if (!showAll) themes = themes.slice(0, 20);
+  const mode = document.getElementById("hmColorMode").value;
+
+  // 絕對模式：全部顯示題材共用同一個最大值
+  let gMax = 0;
+  if (mode === "abs") {
+    themes.forEach(function(g) {
+      (DATA.theme_history[g] || []).forEach(function(r) { if (r["熱度分數"] > gMax) gMax = r["熱度分數"]; });
+    });
+    if (!gMax) gMax = 1;
+  }
+
   let html = "<table class=\"hm-table\"><tr><th class=\"hm-name\"></th>";
-  dates.forEach(function(d) { html += "<th class=\"hm-date\">" + d.slice(5) + "</th>"; });
+  dates.forEach(function(d, i) {
+    const cur = i === dates.length - 1 ? " style=\"color:var(--ac);font-weight:700\"" : "";
+    html += "<th class=\"hm-date\"" + cur + ">" + d.slice(5) + "</th>";
+  });
   html += "</tr>";
   themes.forEach(function(g) {
     const byDate = {};
@@ -1430,12 +1454,17 @@ function renderRotationHeatmap() {
     const vals = dates.map(function(d) { return byDate[d]; }).filter(function(v) { return v !== undefined; });
     if (!vals.length) return;
     const mx = Math.max.apply(null, vals), mn = Math.min.apply(null, vals);
-    html += "<tr><td class=\"hm-name\">" + g + "</td>";
+    html += "<tr><td class=\"hm-name\">" + g + " <span class=\"hm-score\">" + latestScore[g].toFixed(1) + "</span></td>";
     dates.forEach(function(d) {
       const v = byDate[d];
       if (v === undefined) { html += "<td class=\"hm-cell hm-empty\"></td>"; return; }
-      const t = mx > mn ? (v - mn) / (mx - mn) : 0.5;
-      const alpha = (0.08 + t * 0.82).toFixed(2);
+      let t;
+      if (mode === "abs") {
+        t = Math.sqrt(v / gMax);                       // 開根號讓中低值仍可辨識
+      } else {
+        t = mx > mn ? (v - mn) / (mx - mn) : 0.5;
+      }
+      const alpha = (0.05 + t * 0.85).toFixed(2);
       html += "<td class=\"hm-cell\" style=\"background:rgba(232,69,69," + alpha + ")\" title=\"" + g + " " + d + "：" + v + "\"></td>";
     });
     html += "</tr>";
