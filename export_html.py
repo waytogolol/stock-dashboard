@@ -233,6 +233,13 @@ def build():
         prev_snap = rankings[rankings["snapshot_date"] == previous_date]
         prev_lookup = {(r["country"], r["code"]): r for _, r in prev_snap.iterrows()}
 
+    # 產業地位描述(取分類表第一筆非空值)
+    pos_lookup = {}
+    for _, r in classification.iterrows():
+        key = (r["country"], r["code"])
+        if key not in pos_lookup and pd.notna(r["position_note"]) and r["position_note"]:
+            pos_lookup[key] = r["position_note"]
+
     def enrich(code, country):
         info = latest_lookup.get((country, code))
         pinfo = prev_lookup.get((country, code))
@@ -240,6 +247,7 @@ def build():
         if info is not None and pinfo is not None:
             rank_delta = int(pinfo["rank"]) - int(info["rank"])  # 正值=排名上升(變熱)
         return {
+            "position_note": pos_lookup.get((country, code), ""),
             "supplier_name": info["中文名稱"] if info is not None else code,
             "supplier_rank": int(info["rank"]) if info is not None else None,
             "supplier_rank_delta": rank_delta,
@@ -518,6 +526,9 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 .sc-name { font-size: 13px; font-weight: 600; color: var(--tx); margin-bottom: 4px; line-height: 1.3; }
 .sc-product { font-size: 12px; color: var(--tx2); line-height: 1.5; margin-bottom: 4px; }
 .sc-amount { font-size: 12px; color: var(--ac); font-variant-numeric: tabular-nums; }
+.pos-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 700; white-space: nowrap; vertical-align: middle; margin-left: 4px; }
+.pos-badge.crown { background: var(--amb-bg); color: var(--amb); border: 1px solid var(--amb); }
+.pos-badge.star { background: var(--ac-bg); color: var(--ac); }
 .sc-delta { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .sc-delta.up { color: var(--grn); }
 .sc-delta.down { color: var(--red); }
@@ -1183,11 +1194,16 @@ function buildCardHTML(l, showCountry) {
     else deltaHtml = "<span class=\"sc-delta flat\">—</span>";
   }
   const countryHtml = showCountry ? "<span class=\"sc-code\">" + (COUNTRY_FLAG[l.supplier_country] || "") + l.supplier_country + "</span>" : "";
-  return "<div class=\"sc-card " + cardCls + "\">" +
+  const posText = (l.position_note || "") + "|" + (l.product || "");
+  let posBadge = "";
+  if (/世界第一|全球第一|絕對霸主|絕對龍頭|獨家|壟斷|絕對巨頭/.test(posText)) posBadge = "<span class=\"pos-badge crown\">👑 全球第一</span>";
+  else if (/龍頭|霸主|巨頭|世界級|全球最大/.test(posText)) posBadge = "<span class=\"pos-badge star\">⭐ 龍頭</span>";
+  const tooltip = l.position_note ? " title=\"" + l.position_note.replace(/"/g, "&quot;") + "\"" : "";
+  return "<div class=\"sc-card " + cardCls + "\"" + tooltip + ">" +
          "<div class=\"sc-card-header\"><span class=\"rank-badge " + badgeClass2 + "\">" + rankText + "</span>" +
          deltaHtml + countryHtml +
          "<span class=\"sc-code\">" + l.supplier_code + "</span></div>" +
-         "<div class=\"sc-name\">" + (l.supplier_name || l.supplier_code) + "</div>" +
+         "<div class=\"sc-name\">" + (l.supplier_name || l.supplier_code) + posBadge + "</div>" +
          "<div class=\"sc-product\">&#9658; " + l.product + "</div>" +
          (l.supplier_amount_yi ? "<div class=\"sc-amount\">" + l.supplier_amount_yi + "</div>" : "") +
          "</div>";
