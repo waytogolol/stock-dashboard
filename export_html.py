@@ -213,6 +213,32 @@ def build():
         "tw_earnings": load_earnings_csv("tw_earnings_watch.csv"),
         "theme_news": pd.read_csv("theme_news.csv").to_dict("records") if os.path.exists("theme_news.csv") else [],
     }
+
+    # 供應鏈資料
+    try:
+        import supply_chain as sc
+        latest_lookup = {(r["country"], r["code"]): r for _, r in latest.iterrows()}
+        supply_links = []
+        for sup_code, sup_country, cust_code, cust_country, product in sc.LINKS:
+            info = latest_lookup.get((sup_country, sup_code))
+            supply_links.append({
+                "supplier_code": sup_code,
+                "supplier_country": sup_country,
+                "customer_code": cust_code,
+                "customer_country": cust_country,
+                "product": product,
+                "supplier_name": info["中文名稱"] if info is not None else sup_code,
+                "supplier_rank": int(info["rank"]) if info is not None else None,
+                "supplier_tier": info["熱度"] if info is not None else "",
+                "supplier_amount_yi": info["金額億台幣"] if info is not None else "",
+            })
+        data["supply_links"] = supply_links
+        data["supply_last_updated"] = sc.LAST_UPDATED
+    except Exception as e:
+        print(f"供應鏈資料載入失敗: {e}")
+        data["supply_links"] = []
+        data["supply_last_updated"] = None
+
     return data
 
 
@@ -287,6 +313,31 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .search-dropdown { position:absolute; top:100%; left:0; right:0; background:#2a2a2a; border:1px solid #555; border-radius:4px; max-height:220px; overflow-y:auto; z-index:999; box-shadow:0 4px 12px rgba(0,0,0,.5); }
   .search-item { padding:6px 10px; cursor:pointer; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .search-item:hover { background:#3a3a3a; color:#fff; }
+  /* ── 供應鏈頁籤 ── */
+  .sc-fresh-warn { background:#3a2a00; border:1px solid #cc8800; color:#ffcc55; padding:10px 14px; border-radius:6px; margin-bottom:14px; }
+  .sc-anchors { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+  .anchor-btn { background:#2a2a2a; border:1px solid #555; color:#bbb; padding:7px 16px; cursor:pointer; border-radius:6px; font-size:13px; }
+  .anchor-btn.active { background:#1a3a5c; border-color:#4da3ff; color:#4da3ff; font-weight:bold; }
+  .anchor-btn:hover { background:#333; color:#fff; }
+  .sc-country-bar { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; }
+  .sc-country-chip { background:#2a2a2a; border:1px solid #444; padding:6px 14px; border-radius:20px; font-size:13px; }
+  .chip-hot { color:#ff6b6b; margin-left:4px; }
+  .sc-country-section { margin-bottom:24px; }
+  .sc-country-title { font-size:14px; font-weight:bold; color:#ccc; margin-bottom:10px; border-bottom:1px solid #333; padding-bottom:6px; }
+  .sc-cards-row { display:flex; flex-wrap:wrap; gap:10px; }
+  .sc-card { background:#222; border:1px solid #444; border-radius:8px; padding:12px 14px; width:220px; min-width:200px; box-sizing:border-box; }
+  .sc-card.card-hot { border-color:#cc4444; background:#2a1a1a; }
+  .sc-card.card-mid { border-color:#cc8800; background:#2a2210; }
+  .sc-card-header { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+  .rank-badge { font-size:11px; padding:2px 8px; border-radius:10px; font-weight:bold; white-space:nowrap; }
+  .rank-badge.b-hot { background:#ff6b6b; color:#1a1a1a; }
+  .rank-badge.b-mid { background:#ffd166; color:#1a1a1a; }
+  .rank-badge.b-edge { background:#555; color:#eee; }
+  .rank-badge.b-none { background:#333; color:#777; }
+  .sc-code { font-size:11px; color:#888; }
+  .sc-name { font-size:14px; font-weight:bold; color:#e0e0e0; margin-bottom:4px; line-height:1.3; }
+  .sc-product { font-size:12px; color:#aaa; line-height:1.4; margin-bottom:4px; }
+  .sc-amount { font-size:12px; color:#4da3ff; }
   @media (prefers-color-scheme:light), :root[data-theme="light"] {
     .cal-cell { background:#f4f4f4; } .cal-cell.today { background:#dbeeff; border-color:#0066cc; }
     .cal-cell.today .cal-num { color:#0066cc; background:#c0dcf8; }
@@ -309,6 +360,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <button class="tab-btn" onclick="showTab(2)">公司歷史趨勢</button>
   <button class="tab-btn" onclick="showTab(3)">財報/法說會提醒</button>
   <button class="tab-btn" onclick="showTab(4)">新聞/目標價</button>
+  <button class="tab-btn" onclick="showTab(5)">供應鏈</button>
 </div>
 
 <div class="tab-content active" id="tab0">
@@ -386,6 +438,27 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     類型：<select id="newsTypeFilter" multiple size="2" onchange="renderNewsTable()"></select>
   </div>
   <div class="scroll-box"><table id="newsTable"></table></div>
+</div>
+
+<div class="tab-content" id="tab5">
+  <div id="scFreshWarn" class="sc-fresh-warn" style="display:none">
+    ⚠️ 供應鏈資料已超過90天未更新（最後更新：<span id="scLastUpdated"></span>），部分關係可能已變動，建議重新執行 Gemini 審查流程
+  </div>
+  <div class="hint">點選錨點客戶，查看各國一階直接供應商的資金流向熱度。資料來源：Gemini驗證後人工確認。最後更新：<span id="scLastUpdatedInline"></span></div>
+  <div class="sc-anchors">
+    <button class="anchor-btn active" onclick="selectAnchor('NVDA')">🔵 NVIDIA</button>
+    <button class="anchor-btn" onclick="selectAnchor('CLOUD')">☁️ 雲端三巨頭</button>
+    <button class="anchor-btn" onclick="selectAnchor('AAPL')">🍎 Apple</button>
+    <button class="anchor-btn" onclick="selectAnchor('TSLA')">⚡ Tesla</button>
+    <button class="anchor-btn" onclick="selectAnchor('TSMC')">🏭 台積電(上游)</button>
+    <button class="anchor-btn" onclick="selectAnchor('HK_AUTO')">🚗 現代起亞</button>
+    <button class="anchor-btn" onclick="selectAnchor('KR_MEM')">🧠 三星/SK海力士</button>
+    <button class="anchor-btn" onclick="selectAnchor('BABA')">🛒 阿里巴巴</button>
+    <button class="anchor-btn" onclick="selectAnchor('TENCENT')">🎮 騰訊</button>
+    <button class="anchor-btn" onclick="selectAnchor('HUAWEI')">📡 華為</button>
+  </div>
+  <div id="scCountryBar"></div>
+  <div id="scCards"></div>
 </div>
 
 <script>
@@ -756,6 +829,97 @@ function renderNewsTable() {
   buildTable(document.getElementById("newsTable"), cols, rows);
 }
 
+// ── 供應鏈頁籤 ────────────────────────────────────────────────────────
+const ANCHOR_DEFS = {
+  "NVDA":    {label:"NVIDIA",          codes:["NVDA"]},
+  "CLOUD":   {label:"雲端三巨頭",       codes:["MSFT","GOOGL","AMZN"]},
+  "AAPL":    {label:"Apple",           codes:["AAPL"]},
+  "TSLA":    {label:"Tesla",           codes:["TSLA"]},
+  "TSMC":    {label:"台積電(上游)",     codes:["2330"]},
+  "HK_AUTO": {label:"現代起亞",        codes:["005380","000270"]},
+  "KR_MEM":  {label:"三星/SK海力士",   codes:["005930","000660"]},
+  "BABA":    {label:"阿里巴巴",        codes:["BABA"]},
+  "TENCENT": {label:"騰訊",            codes:["TENCENT"]},
+  "HUAWEI":  {label:"華為",            codes:["HUAWEI"]},
+};
+const COUNTRY_FLAG = {台:"🇹🇼", 日:"🇯🇵", 韓:"🇰🇷", 陸:"🇨🇳", 美:"🇺🇸", 港:"🇭🇰"};
+const SC_COUNTRIES = ["台","日","韓","陸","美"];
+let scCurrentAnchor = "NVDA";
+
+function selectAnchor(key) {
+  scCurrentAnchor = key;
+  document.querySelectorAll(".anchor-btn").forEach(function(b) {
+    b.classList.toggle("active", b.getAttribute("onclick") === "selectAnchor('" + key + "')");
+  });
+  renderSCCards();
+}
+
+function renderSCCards() {
+  const def = ANCHOR_DEFS[scCurrentAnchor];
+  if (!def) return;
+  const links = (DATA.supply_links || []).filter(function(l) { return def.codes.indexOf(l.customer_code) >= 0; });
+
+  // Group by supplier country
+  const byCountry = {};
+  SC_COUNTRIES.forEach(function(c) { byCountry[c] = []; });
+  links.forEach(function(l) {
+    if (!byCountry[l.supplier_country]) byCountry[l.supplier_country] = [];
+    byCountry[l.supplier_country].push(l);
+  });
+
+  // Country summary bar
+  let barHtml = "";
+  SC_COUNTRIES.forEach(function(c) {
+    const items = byCountry[c];
+    if (!items.length) return;
+    const hot = items.filter(function(l) { return l.supplier_tier && l.supplier_tier.indexOf("前50") >= 0; }).length;
+    barHtml += "<span class=\"sc-country-chip\">" + (COUNTRY_FLAG[c]||c) + " " + c + " <b>" + items.length + "家</b>" +
+               (hot > 0 ? " <span class=\"chip-hot\">🔥" + hot + "</span>" : "") + "</span>";
+  });
+  document.getElementById("scCountryBar").innerHTML = "<div class=\"sc-country-bar\">" + barHtml + "</div>";
+
+  // Cards
+  let html = "";
+  SC_COUNTRIES.forEach(function(c) {
+    const items = byCountry[c];
+    if (!items.length) return;
+    items.sort(function(a, b) { return (a.supplier_rank || 9999) - (b.supplier_rank || 9999); });
+    html += "<div class=\"sc-country-section\"><div class=\"sc-country-title\">" +
+            (COUNTRY_FLAG[c]||c) + " " + c + "股供應商（" + items.length + "家）</div><div class=\"sc-cards-row\">";
+    items.forEach(function(l) {
+      const tier = l.supplier_tier || "";
+      let badgeCls = "b-edge", cardCls = "";
+      if (tier.indexOf("前50") >= 0)  { badgeCls = "b-hot";  cardCls = "card-hot"; }
+      else if (tier.indexOf("51-150") >= 0) { badgeCls = "b-mid"; cardCls = "card-mid"; }
+      const rankText = l.supplier_rank ? "#" + l.supplier_rank : "未上榜";
+      const badgeClass2 = l.supplier_rank ? badgeCls : "b-none";
+      html += "<div class=\"sc-card " + cardCls + "\">" +
+              "<div class=\"sc-card-header\"><span class=\"rank-badge " + badgeClass2 + "\">" + rankText + "</span>" +
+              "<span class=\"sc-code\">" + l.supplier_code + "</span></div>" +
+              "<div class=\"sc-name\">" + (l.supplier_name || l.supplier_code) + "</div>" +
+              "<div class=\"sc-product\">&#9658; " + l.product + "</div>" +
+              (l.supplier_amount_yi ? "<div class=\"sc-amount\">" + l.supplier_amount_yi + "</div>" : "") +
+              "</div>";
+    });
+    html += "</div></div>";
+  });
+  if (!html) html = "<div style=\"color:#888;padding:16px;\">此錨點暫無供應商資料</div>";
+  document.getElementById("scCards").innerHTML = html;
+}
+
+function initSupplyChain() {
+  const lu = DATA.supply_last_updated || "";
+  if (lu) {
+    const els = document.querySelectorAll("#scLastUpdated, #scLastUpdatedInline");
+    els.forEach(function(el) { el.textContent = lu; });
+    const days = Math.floor((new Date(DATA.latest_date) - new Date(lu)) / 86400000);
+    if (days > 90) document.getElementById("scFreshWarn").style.display = "block";
+  } else {
+    document.getElementById("scLastUpdatedInline").textContent = "—";
+  }
+  renderSCCards();
+}
+
 function init() {
   document.getElementById("latestDate").textContent = DATA.latest_date;
   if (DATA.previous_date) {
@@ -793,6 +957,7 @@ function init() {
   renderFullTable();
   renderEarningsTab();
   renderNewsTable();
+  initSupplyChain();
   if (DATA.company_list.length) renderCompanyHistory();
   if (DATA.theme_list.length) renderThemeHistory();
 }
