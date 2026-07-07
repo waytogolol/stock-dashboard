@@ -778,6 +778,12 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 
 <div class="tab-content" id="tab6">
   <div class="controls">
+    顯示：<select id="radarShow" onchange="renderRadar()">
+      <option value="hot15" selected>熱度前15</option>
+      <option value="mover15">動能前15(變化最大)</option>
+      <option value="up">領漲+轉強(動能為正)</option>
+      <option value="all">全部題材</option>
+    </select>
     動能期間：<select id="radarPeriod" onchange="renderRadar()">
       <option value="1">1週</option>
       <option value="2" selected>2週</option>
@@ -789,7 +795,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     <input type="range" id="radarSlider" style="width:220px" oninput="onRadarSlide()">
     <span id="radarDate" style="font-size:12px;color:var(--tx2);font-variant-numeric:tabular-nums"></span>
   </div>
-  <div class="hint">X軸=熱度分數(對數尺度，越右越強)，Y軸=選定期間的熱度變化(越上越加速)。按▶播放或拖曳時間軸，可看題材在象限間的移動軌跡——順時針繞行即資金輪動。虛線=全題材中位數與零軸，分四象限：右上<b>領漲</b>(續抱)、左上<b>轉強</b>(進場甜蜜點)、右下<b>退潮</b>(減碼)、左下<b>弱勢</b>(避開)。灰色尾巴=最近4週軌跡，順時針轉動即教科書式輪動。只標注重點題材名稱，全部題材滑鼠停留可見。</div>
+  <div class="hint">X軸=熱度分數(對數尺度，越右越強)，Y軸=選定期間的熱度變化(越上越加速)。用「顯示」篩選聚焦：熱度前15看主戰場、動能前15看正在動的、領漲+轉強只看多方。點少於18個時全部標名。下方訊號表永遠含全部題材不受篩選影響。按▶播放或拖曳時間軸，可看題材在象限間的移動軌跡——順時針繞行即資金輪動。虛線=全題材中位數與零軸，分四象限：右上<b>領漲</b>(續抱)、左上<b>轉強</b>(進場甜蜜點)、右下<b>退潮</b>(減碼)、左下<b>弱勢</b>(避開)。灰色尾巴=最近4週軌跡，順時針轉動即教科書式輪動。只標注重點題材名稱，全部題材滑鼠停留可見。</div>
   <div id="radarChart" style="height:640px"></div>
   <h3 class="sec-title">動能訊號表</h3>
   <div class="hint">加速度=本期Δ−上期Δ(正值代表越漲越快)。連漲/連跌=週快照連續上升/下降次數。廣度=題材內個股排名較上週上升▲/下降▼家數(全市場)。階段規則：Δ>0且處自身高檔=主升段、Δ>0連漲2週+=發動、高檔轉弱=位階高但Δ轉負、連跌2週+=退潮。點欄位可排序。</div>
@@ -1619,7 +1625,15 @@ function drawRadarFrame(ei, withTable) {
   });
 
   // 象限圖（X軸對數尺度展開；軸界與象限分界取全期間固定值，播放時畫面不跳動）
-  const chartRows = rows.filter(function(r) { return r.score > 0; });
+  let chartRows = rows.filter(function(r) { return r.score > 0; });
+  const showMode = document.getElementById("radarShow").value;
+  if (showMode === "hot15") {
+    chartRows = chartRows.slice().sort(function(a, b) { return b.score - a.score; }).slice(0, 15);
+  } else if (showMode === "mover15") {
+    chartRows = chartRows.slice().sort(function(a, b) { return Math.abs(b.delta) - Math.abs(a.delta); }).slice(0, 15);
+  } else if (showMode === "up") {
+    chartRows = chartRows.filter(function(r) { return r.delta > 0; });
+  }
   let gMaxY = 0.5, gMaxX = 1, gMinX = Infinity;
   const latestScores = [];
   themes.forEach(function(g) {
@@ -1641,8 +1655,15 @@ function drawRadarFrame(ei, withTable) {
   latestScores.sort(function(a, b) { return a - b; });
   const medX = latestScores.length ? latestScores[Math.floor(latestScores.length / 2)] : 1;
   const labelSet = {};
-  chartRows.slice().sort(function(a, b) { return b.score - a.score; }).slice(0, 10).forEach(function(r) { labelSet[r.g] = true; });
-  chartRows.slice().sort(function(a, b) { return Math.abs(b.delta) - Math.abs(a.delta); }).slice(0, 4).forEach(function(r) { labelSet[r.g] = true; });
+  if (chartRows.length <= 18) {
+    chartRows.forEach(function(r) { labelSet[r.g] = true; });   // 點少時全部標名
+  } else {
+    chartRows.slice().sort(function(a, b) { return b.score - a.score; }).slice(0, 10).forEach(function(r) { labelSet[r.g] = true; });
+    chartRows.slice().sort(function(a, b) { return Math.abs(b.delta) - Math.abs(a.delta); }).slice(0, 4).forEach(function(r) { labelSet[r.g] = true; });
+  }
+  const trailSet = {};
+  chartRows.slice().sort(function(a, b) { return b.score - a.score; }).slice(0, 6).forEach(function(r) { trailSet[r.g] = true; });
+  chartRows.slice().sort(function(a, b) { return Math.abs(b.delta) - Math.abs(a.delta); }).slice(0, 3).forEach(function(r) { trailSet[r.g] = true; });
 
   const Q = {
     lead: "#e84545", improve: "#d49610", fade: "#3c8cf0", weak: "#6b7f91",
@@ -1661,7 +1682,7 @@ function drawRadarFrame(ei, withTable) {
 
   const traces = [];
   chartRows.forEach(function(r) {
-    if (labelSet[r.g] && r.trailX.length > 1) {
+    if (trailSet[r.g] && r.trailX.length > 1) {
       traces.push({x: r.trailX, y: r.trailY, mode: "lines",
         line: {color: Q[qKey(r) + "T"], width: 1.5, shape: "spline"},
         hoverinfo: "skip", showlegend: false});
@@ -1687,7 +1708,13 @@ function drawRadarFrame(ei, withTable) {
     y: labeled.map(function(r) { return r.delta; }),
     mode: "text",
     text: labeled.map(function(r) { return r.g; }),
-    textposition: labeled.map(function(r) { return r.delta >= 0 ? "top center" : "bottom center"; }),
+    textposition: labeled.map(function(r, i) {
+      const up = r.delta >= 0;
+      const cyc = i % 3;
+      if (cyc === 0) return up ? "top center" : "bottom center";
+      if (cyc === 1) return up ? "top right" : "bottom right";
+      return up ? "top left" : "bottom left";
+    }),
     textfont: {size: 10.5, color: "#b8c8d8"},
     hoverinfo: "skip",
     showlegend: false,
