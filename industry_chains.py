@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """橫向產業鏈上中下游結構表
-由 Gemini 整理、tmp_parse_chain.py 驗證每筆代碼存在於資料庫後生成
+由 Gemini 整理、Gemini工具/parse_chain_result.py 驗證每筆代碼存在於資料庫後生成
 格式：(產業鏈, 階段, 代碼, 國別, 具體角色)
 """
 

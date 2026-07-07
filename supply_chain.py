@@ -4,7 +4,7 @@
 格式：(供應商代碼, 供應商國別, 客戶代碼, 客戶國別, 供應品項)
 國別代碼：台 / 日 / 韓 / 陸 / 美 / 港
 特殊錨點(非五市場上市)：HUAWEI(陸,私有) / TENCENT(港,HK上市)
-更新方式：手動每季審查，執行 tmp_sc_prompt_gen.py 生成新 Gemini 指令
+更新方式：手動每季審查，執行 python Gemini工具/gen_sc_prompt.py 生成新 Gemini 指令
 """
 
 LAST_UPDATED = "2026-07-06"

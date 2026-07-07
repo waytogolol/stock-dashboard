@@ -1,16 +1,9 @@
 本地版/
+封存/
+Gemini紀錄/
 plotly.min.js
 __pycache__/
 *.pyc
-streamlit.log
-# 暫存/偵錯檔
-debug_psc.html
-debug_psc2.html
-debug_result.txt
-api_search.txt
-mops_out.txt
-mops_t05sr01.txt
-chunk*.txt
-c143933.txt
-theme_rank.json
 *.log
+tmp_*
+theme_rank.json
