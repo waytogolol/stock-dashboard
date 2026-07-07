@@ -635,9 +635,19 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   </div>
   <div class="hint" id="hintTheme">熱度分數 = 該題材在每個國家的「台幣金額 ÷ 該國全部上榜公司台幣金額總和」百分比，五國加總而成。分數越高表示資金集中度越高，不是只看公司數量。點欄位標題可排序。</div>
   <div class="scroll-box"><table id="themePivotTable"></table></div>
+  <div class="controls" style="margin-top:12px">
+    對比期間：<select id="moverPeriod" onchange="renderMoversChart()">
+      <option value="1" selected>上一次快照</option>
+      <option value="2">2週前</option>
+      <option value="4">4週前(月)</option>
+      <option value="8">8週前</option>
+      <option value="12">12週前(季)</option>
+    </select>
+    <label><input type="checkbox" id="hmIncludeBroad" checked onchange="renderMoversChart(); renderRotationHeatmap()"> 含金融/傳產等廣義分類(觀察避險資金)</label>
+  </div>
   <div id="moversChart" style="height:550px"></div>
   <h3 class="sec-title">資金輪動熱力圖（題材 × 時間）</h3>
-  <div class="hint">顯示全部題材（排除金融/傳產等廣義分類），依目前熱度排序、可向下捲動。每列依該題材自身歷史高低正規化：顏色越紅 = 該期資金越接近自身高點——所以現在還小但正在升溫的題材照樣會轉紅，不會漏掉潛力股。滑鼠停留可看實際分數。</div>
+  <div class="hint">只顯示「至少有一家台股公司」的題材，依目前熱度排序、可向下捲動。每列依該題材自身歷史高低正規化：顏色越紅 = 該期資金越接近自身高點——現在還小但正在升溫的題材照樣會轉紅，不會漏掉潛力股。金融/傳產等廣義分類預設保留（升溫=資金轉防禦訊號），可用上方勾選框排除。滑鼠停留可看實際分數。</div>
   <div class="heatmap-box" id="rotationHeatmap"></div>
   <div class="controls" style="margin-top:16px">
     選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
@@ -834,24 +844,48 @@ function renderThemePivot() {
   renderMoversChart();
 }
 
+function getVisibleThemes() {
+  // 只留「至少有一家台股公司」的題材；廣義分類依勾選框決定
+  const includeBroad = document.getElementById("hmIncludeBroad").checked;
+  const twCount = {};
+  DATA.theme_pivot_all.forEach(function(p) { twCount[p.main_group] = p["台"] || 0; });
+  const thematicSet = {};
+  (DATA.theme_list_thematic || []).forEach(function(g) { thematicSet[g] = true; });
+  return Object.keys(DATA.theme_history).filter(function(g) {
+    if (!twCount[g]) return false;
+    if (!includeBroad && !thematicSet[g]) return false;
+    return true;
+  });
+}
+
 function renderMoversChart() {
   const el = document.getElementById("moversChart");
-  if (!DATA.previous_date) { el.innerHTML = ""; return; }
-  const thematic = DATA.theme_pivot_thematic.filter(p => p["熱度分數Δ"] !== null && p["熱度分數Δ"] !== undefined);
-  const sorted = thematic.slice().sort((a, b) => b["熱度分數Δ"] - a["熱度分數Δ"]);
-  const topUp = sorted.slice(0, 10);
-  const topDown = sorted.slice(-10).reverse();
-  const movers = topDown.concat(topUp);
-  const seen = new Set();
-  const uniqueMovers = movers.filter(m => !seen.has(m.main_group) && seen.add(m.main_group));
-  uniqueMovers.sort((a, b) => a["熱度分數Δ"] - b["熱度分數Δ"]);
+  const dates = DATA.snapshot_dates;
+  if (!dates || dates.length < 2) { el.innerHTML = ""; return; }
+  let n = parseInt(document.getElementById("moverPeriod").value, 10) || 1;
+  if (n > dates.length - 1) n = dates.length - 1;
+  const curDate = dates[dates.length - 1];
+  const baseDate = dates[dates.length - 1 - n];
+  const movers = [];
+  getVisibleThemes().forEach(function(g) {
+    const byDate = {};
+    (DATA.theme_history[g] || []).forEach(function(r) { byDate[r.snapshot_date] = r["熱度分數"]; });
+    if (byDate[curDate] === undefined || byDate[baseDate] === undefined) return;
+    movers.push({g: g, d: +(byDate[curDate] - byDate[baseDate]).toFixed(2)});
+  });
+  movers.sort(function(a, b) { return b.d - a.d; });
+  const seen = {};
+  const uniq = movers.slice(0, 10).concat(movers.slice(-10)).filter(function(m) {
+    if (seen[m.g]) return false; seen[m.g] = true; return true;
+  });
+  uniq.sort(function(a, b) { return a.d - b.d; });
   Plotly.newPlot(el.id, [{
-    x: uniqueMovers.map(m => m["熱度分數Δ"]),
-    y: uniqueMovers.map(m => m.main_group),
+    x: uniq.map(function(m) { return m.d; }),
+    y: uniq.map(function(m) { return m.g; }),
     type: "bar", orientation: "h",
-    marker: {color: uniqueMovers.map(m => m["熱度分數Δ"] >= 0 ? "#ff6b6b" : "#4da3ff")},
+    marker: {color: uniq.map(function(m) { return m.d >= 0 ? "#ff6b6b" : "#4da3ff"; })},
   }], {
-    title: `本次熱度分數變化最大的題材(前10上升/前10下降，跟${DATA.previous_date}比較)`,
+    title: "熱度分數變化 前10上升/前10下降（" + baseDate + " → " + curDate + "）",
     paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
     xaxis: {title: "熱度分數Δ"},
     yaxis: {automargin: true},
@@ -1361,7 +1395,7 @@ function renderRotationHeatmap() {
     el.innerHTML = "<div class=\"hint\" style=\"margin:0\">需要至少兩個快照才能觀察輪動，之後每週更新會自動累積。</div>";
     return;
   }
-  let themes = DATA.theme_list_thematic || DATA.theme_pivot_thematic.map(function(p) { return p.main_group; });
+  let themes = getVisibleThemes();
   const latestScore = {};
   themes.forEach(function(g) {
     const rows = DATA.theme_history[g] || [];
