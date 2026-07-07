@@ -214,13 +214,33 @@ def build():
         "theme_news": pd.read_csv("theme_news.csv").to_dict("records") if os.path.exists("theme_news.csv") else [],
     }
 
+    # 本週摘要橫幅：最熱/最退潮題材 + 新進榜檔數
+    summary = {}
+    if previous_date:
+        th = [p for p in theme_pivot_thematic if p.get("熱度分數Δ") is not None]
+        if th:
+            up = max(th, key=lambda p: p["熱度分數Δ"])
+            down = min(th, key=lambda p: p["熱度分數Δ"])
+            summary["up"] = {"g": up["main_group"], "d": up["熱度分數Δ"]}
+            summary["down"] = {"g": down["main_group"], "d": down["熱度分數Δ"]}
+        summary["new_count"] = sum(1 for r in full_records if r.get("排名Δ") == "新進榜")
+    data["weekly_summary"] = summary
+
     # 供應鏈資料
     try:
         import supply_chain as sc
         latest_lookup = {(r["country"], r["code"]): r for _, r in latest.iterrows()}
+        prev_lookup = {}
+        if previous_date:
+            prev_snap = rankings[rankings["snapshot_date"] == previous_date]
+            prev_lookup = {(r["country"], r["code"]): r for _, r in prev_snap.iterrows()}
         supply_links = []
         for sup_code, sup_country, cust_code, cust_country, product in sc.LINKS:
             info = latest_lookup.get((sup_country, sup_code))
+            pinfo = prev_lookup.get((sup_country, sup_code))
+            rank_delta = None
+            if info is not None and pinfo is not None:
+                rank_delta = int(pinfo["rank"]) - int(info["rank"])  # 正值=排名上升(變熱)
             supply_links.append({
                 "supplier_code": sup_code,
                 "supplier_country": sup_country,
@@ -229,6 +249,7 @@ def build():
                 "product": product,
                 "supplier_name": info["中文名稱"] if info is not None else sup_code,
                 "supplier_rank": int(info["rank"]) if info is not None else None,
+                "supplier_rank_delta": rank_delta,
                 "supplier_tier": info["熱度"] if info is not None else "",
                 "supplier_amount_yi": info["金額億台幣"] if info is not None else "",
             })
@@ -468,12 +489,74 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 .sc-name { font-size: 13px; font-weight: 600; color: var(--tx); margin-bottom: 4px; line-height: 1.3; }
 .sc-product { font-size: 12px; color: var(--tx2); line-height: 1.5; margin-bottom: 4px; }
 .sc-amount { font-size: 12px; color: var(--ac); font-variant-numeric: tabular-nums; }
+.sc-delta { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sc-delta.up { color: var(--grn); }
+.sc-delta.down { color: var(--red); }
+.sc-delta.flat { color: var(--tx3); }
+
+/* ── 本週摘要橫幅 ──────────────────────────────────────────────── */
+.week-banner {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--tx2);
+  padding: 6px 12px; margin-bottom: 10px;
+  background: var(--sf2); border: 1px solid var(--bd); border-radius: 6px;
+}
+.week-banner b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.wb-up { color: var(--red); }
+.wb-down { color: var(--ac); }
+.wb-sep { color: var(--tx3); }
+
+/* ── 區段標題 ─────────────────────────────────────────────────── */
+.sec-title {
+  font-size: 12px; font-weight: 700; color: var(--tx2);
+  text-transform: uppercase; letter-spacing: .07em;
+  margin: 24px 0 6px;
+}
+
+/* ── 資金輪動熱力圖 ───────────────────────────────────────────── */
+.heatmap-box { overflow-x: auto; border: 1px solid var(--bd); border-radius: var(--r); background: var(--sf); padding: 12px; }
+.hm-table { border-collapse: separate; border-spacing: 3px; width: auto; }
+.hm-table th, .hm-table td { border: none; padding: 0; position: static; background: none; cursor: default; }
+.hm-table tr:hover td { background: none; }
+.hm-table tr:hover td.hm-empty { background: var(--sf2); }
+.hm-date { font-size: 10px; color: var(--tx3); font-weight: 600; padding: 0 2px 4px; text-align: center; }
+.hm-name { font-size: 12px; color: var(--tx2); padding-right: 10px; text-align: right; white-space: nowrap; }
+.hm-cell { width: 36px; min-width: 36px; height: 22px; border-radius: 4px; }
+.hm-cell.hm-empty { background: var(--sf2); }
+
+/* ── 供應鏈生態系排行 ─────────────────────────────────────────── */
+.sc-ranking { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.scr-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px; font-size: 13px;
+  background: var(--sf); border: 1px solid var(--bd); border-radius: 6px;
+  cursor: pointer; transition: background .15s, border-color .15s;
+}
+.scr-row:hover { background: var(--sf2); }
+.scr-row.active { border-color: var(--ac); background: var(--ac-bg); }
+.scr-rank { font-weight: 700; color: var(--tx3); width: 18px; text-align: right; font-variant-numeric: tabular-nums; }
+.scr-label { width: 130px; font-weight: 600; color: var(--tx); white-space: nowrap; }
+.scr-bar-wrap { flex: 1; height: 8px; background: var(--sf2); border-radius: 4px; overflow: hidden; min-width: 60px; }
+.scr-bar { display: block; height: 100%; background: linear-gradient(90deg, var(--ac), var(--red)); border-radius: 4px; }
+.scr-stats { color: var(--tx2); white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 12px; }
+.scr-updown { color: var(--tx3); font-size: 11px; margin-left: 4px; }
+
+/* ── 對比 chips ───────────────────────────────────────────────── */
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--ac-bg); border: 1px solid var(--ac); color: var(--ac);
+  border-radius: 14px; padding: 3px 10px; font-size: 12px;
+}
+.chip-x { cursor: pointer; font-weight: 700; }
+.chip-x:hover { color: var(--red); }
 </style>
 </head>
 <body>
 <div class="page-header">
 <h1>股市資金流向追蹤</h1>
 <div class="caption">台股(上市+上櫃) / 日股 / 韓股 / 陸股(滬深A股) / 美股，依成交金額排行，依族群/題材分類。最新快照：<span id="latestDate"></span></div>
+<div id="weeklyBanner" class="week-banner" style="display:none"></div>
 <div class="tabs">
   <button class="tab-btn active" onclick="showTab(0)">題材跨市場比較</button>
   <button class="tab-btn" onclick="showTab(1)">排行榜明細</button>
@@ -491,7 +574,10 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div class="hint" id="hintTheme">熱度分數 = 該題材在每個國家的「台幣金額 ÷ 該國全部上榜公司台幣金額總和」百分比，五國加總而成。分數越高表示資金集中度越高，不是只看公司數量。點欄位標題可排序。</div>
   <div class="scroll-box"><table id="themePivotTable"></table></div>
   <div id="moversChart" style="height:550px"></div>
-  <div class="controls">
+  <h3 class="sec-title">資金輪動熱力圖（題材 × 時間）</h3>
+  <div class="hint">取熱度前15大題材，每列依該題材自身歷史高低正規化：顏色越紅 = 該期資金集中度越接近自身高點。橫向看單一題材的節奏，縱向比較同一週誰在發動、誰在退潮。滑鼠停留可看實際分數。</div>
+  <div class="heatmap-box" id="rotationHeatmap"></div>
+  <div class="controls" style="margin-top:16px">
     選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
   </div>
   <div class="scroll-box"><table id="themeDetailTable"></table></div>
@@ -517,13 +603,14 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     <label><input type="radio" name="histMode" value="theme" onchange="onHistModeChange()"> 主族群(題材)</label>
   </div>
   <div class="controls" id="companyPickWrap">
-    選擇公司：
+    加入公司(可多選對比，最多6家)：
     <div class="search-wrap">
       <input type="text" id="companySearch" placeholder="輸入代碼或公司名稱…" autocomplete="off">
       <div class="search-dropdown" id="companyDropdown" style="display:none"></div>
     </div>
     <input type="hidden" id="companyPick">
   </div>
+  <div id="companyChips" class="chip-row"></div>
   <div class="controls" id="themeHistPickWrap" style="display:none">
     選擇主族群：
     <div class="search-wrap">
@@ -566,6 +653,10 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     ⚠️ 供應鏈資料已超過90天未更新（最後更新：<span id="scLastUpdated"></span>），部分關係可能已變動，建議重新執行 Gemini 審查流程
   </div>
   <div class="hint">點選錨點客戶，查看各國一階直接供應商的資金流向熱度。資料來源：Gemini驗證後人工確認。最後更新：<span id="scLastUpdatedInline"></span></div>
+  <h3 class="sec-title">供應鏈生態系熱度排行</h3>
+  <div class="hint">熱度分 = 🔥前50供應商×2 + 🟠前150供應商×1，直接點列可切換下方明細。▲▼ = 供應商中排名較上週上升/下降的家數。</div>
+  <div id="scRanking" class="sc-ranking"></div>
+  <h3 class="sec-title">錨點客戶明細</h3>
   <div class="sc-anchors">
     <button class="anchor-btn active" onclick="selectAnchor('NVDA')">🔵 NVIDIA</button>
     <button class="anchor-btn" onclick="selectAnchor('CLOUD')">☁️ 雲端三巨頭</button>
@@ -772,23 +863,64 @@ function initSearchBox(inputId, dropdownId, hiddenId, items, onSelect) {
   });
 }
 
-function renderCompanyHistory() {
+// ── 多公司排名對比 ───────────────────────────────────────────────────
+const COMPARE_COLORS = ["#3c8cf0", "#e84545", "#34b87a", "#d49610", "#a06ee0", "#4dc3d0"];
+let histCompanies = [];
+
+function addHistCompany() {
   const key = document.getElementById("companyPick").value;
-  const entry = DATA.company_history[key];
-  if (!entry) return;
-  const rows = entry.rows;
-  Plotly.newPlot("historyChart", [{
-    x: rows.map(r => r.snapshot_date), y: rows.map(r => r.rank), mode: "lines+markers", line: {color: "#4da3ff"},
-  }], {
-    title: entry.label + " 排名變化(數字越小越熱)",
+  if (!key || !DATA.company_history[key]) return;
+  if (histCompanies.indexOf(key) < 0) {
+    histCompanies.push(key);
+    if (histCompanies.length > 6) histCompanies.shift();
+  }
+  renderCompanyChips();
+  renderCompanyHistory();
+}
+
+function removeHistCompany(key) {
+  histCompanies = histCompanies.filter(k => k !== key);
+  renderCompanyChips();
+  renderCompanyHistory();
+}
+
+function renderCompanyChips() {
+  const el = document.getElementById("companyChips");
+  el.innerHTML = histCompanies.map(k => {
+    const e = DATA.company_history[k];
+    return `<span class="chip">${e ? e.label : k}<span class="chip-x" onclick="removeHistCompany('${k}')">×</span></span>`;
+  }).join("");
+}
+
+function renderCompanyHistory() {
+  if (!histCompanies.length) {
+    const key = document.getElementById("companyPick").value;
+    if (!key || !DATA.company_history[key]) { Plotly.purge("historyChart"); document.getElementById("historyTable").innerHTML = ""; return; }
+    histCompanies.push(key);
+    renderCompanyChips();
+  }
+  const traces = histCompanies.map((k, i) => {
+    const e = DATA.company_history[k];
+    if (!e) return null;
+    return {
+      x: e.rows.map(r => r.snapshot_date), y: e.rows.map(r => r.rank),
+      mode: "lines+markers", name: e.label,
+      line: {color: COMPARE_COLORS[i % COMPARE_COLORS.length], width: 2},
+    };
+  }).filter(Boolean);
+  const single = histCompanies.length === 1 ? DATA.company_history[histCompanies[0]] : null;
+  Plotly.newPlot("historyChart", traces, {
+    title: single ? single.label + " 排名變化(數字越小越熱)" : "多公司排名對比(數字越小越熱)",
     yaxis: {autorange: "reversed", title: "排名"},
     paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
+    legend: {orientation: "h", y: -0.25},
   }, {responsive: true});
+  const last = DATA.company_history[histCompanies[histCompanies.length - 1]];
   const cols = [
     {key: "snapshot_date", label: "日期"}, {key: "rank", label: "排名", numeric: true},
     {key: "金額億", label: "金額(億)"}, {key: "金額億台幣", label: "金額(億台幣)", numeric: true, sortKey: "金額億台幣_num"},
   ];
-  buildTable(document.getElementById("historyTable"), cols, rows);
+  buildTable(document.getElementById("historyTable"), cols, last ? last.rows : []);
 }
 
 function onHistModeChange() {
@@ -972,7 +1104,34 @@ function selectAnchor(key) {
   document.querySelectorAll(".anchor-btn").forEach(function(b) {
     b.classList.toggle("active", b.getAttribute("onclick") === "selectAnchor('" + key + "')");
   });
+  renderSCRanking();
   renderSCCards();
+}
+
+function renderSCRanking() {
+  const rows = Object.keys(ANCHOR_DEFS).map(function(key) {
+    const def = ANCHOR_DEFS[key];
+    const links = (DATA.supply_links || []).filter(function(l) { return def.codes.indexOf(l.customer_code) >= 0; });
+    const hot = links.filter(function(l) { return (l.supplier_tier || "").indexOf("前50") >= 0; }).length;
+    const mid = links.filter(function(l) { return (l.supplier_tier || "").indexOf("51-150") >= 0; }).length;
+    const up = links.filter(function(l) { return (l.supplier_rank_delta || 0) > 0; }).length;
+    const down = links.filter(function(l) { return (l.supplier_rank_delta || 0) < 0; }).length;
+    return {key: key, label: def.label, n: links.length, hot: hot, mid: mid, score: hot * 2 + mid, up: up, down: down};
+  }).filter(function(r) { return r.n > 0; });
+  rows.sort(function(a, b) { return b.score - a.score || b.hot - a.hot; });
+  const maxScore = Math.max.apply(null, rows.map(function(r) { return r.score; }).concat([1]));
+  let html = "";
+  rows.forEach(function(r, i) {
+    const pct = Math.round(r.score / maxScore * 100);
+    html += "<div class=\"scr-row" + (r.key === scCurrentAnchor ? " active" : "") + "\" onclick=\"selectAnchor('" + r.key + "')\">" +
+      "<span class=\"scr-rank\">" + (i + 1) + "</span>" +
+      "<span class=\"scr-label\">" + r.label + "</span>" +
+      "<span class=\"scr-bar-wrap\"><span class=\"scr-bar\" style=\"width:" + pct + "%\"></span></span>" +
+      "<span class=\"scr-stats\">🔥" + r.hot + " 🟠" + r.mid + " / " + r.n + "家" +
+      (r.up || r.down ? "<span class=\"scr-updown\">▲" + r.up + " ▼" + r.down + "</span>" : "") + "</span>" +
+      "</div>";
+  });
+  document.getElementById("scRanking").innerHTML = html;
 }
 
 function renderSCCards() {
@@ -1014,8 +1173,16 @@ function renderSCCards() {
       else if (tier.indexOf("51-150") >= 0) { badgeCls = "b-mid"; cardCls = "card-mid"; }
       const rankText = l.supplier_rank ? "#" + l.supplier_rank : "未上榜";
       const badgeClass2 = l.supplier_rank ? badgeCls : "b-none";
+      const d = l.supplier_rank_delta;
+      let deltaHtml = "";
+      if (l.supplier_rank && d !== null && d !== undefined) {
+        if (d > 0) deltaHtml = "<span class=\"sc-delta up\" title=\"排名比上週上升" + d + "名\">▲" + d + "</span>";
+        else if (d < 0) deltaHtml = "<span class=\"sc-delta down\" title=\"排名比上週下降" + (-d) + "名\">▼" + (-d) + "</span>";
+        else deltaHtml = "<span class=\"sc-delta flat\">—</span>";
+      }
       html += "<div class=\"sc-card " + cardCls + "\">" +
               "<div class=\"sc-card-header\"><span class=\"rank-badge " + badgeClass2 + "\">" + rankText + "</span>" +
+              deltaHtml +
               "<span class=\"sc-code\">" + l.supplier_code + "</span></div>" +
               "<div class=\"sc-name\">" + (l.supplier_name || l.supplier_code) + "</div>" +
               "<div class=\"sc-product\">&#9658; " + l.product + "</div>" +
@@ -1038,7 +1205,53 @@ function initSupplyChain() {
   } else {
     document.getElementById("scLastUpdatedInline").textContent = "—";
   }
+  renderSCRanking();
   renderSCCards();
+}
+
+// ── 本週摘要橫幅 ──────────────────────────────────────────────────────
+function renderBanner() {
+  const s = DATA.weekly_summary || {};
+  if (!s.up && !s.down && !s.new_count) return;
+  const parts = [];
+  if (s.up) parts.push("本週最熱 <b class=\"wb-up\">" + s.up.g + " +" + s.up.d.toFixed(2) + "</b>");
+  if (s.down) parts.push("最退潮 <b class=\"wb-down\">" + s.down.g + " " + s.down.d.toFixed(2) + "</b>");
+  if (s.new_count) parts.push("新進榜 <b>" + s.new_count + "</b> 檔");
+  const el = document.getElementById("weeklyBanner");
+  el.innerHTML = "📌 " + parts.join("<span class=\"wb-sep\"> · </span>");
+  el.style.display = "flex";
+}
+
+// ── 資金輪動熱力圖 ────────────────────────────────────────────────────
+function renderRotationHeatmap() {
+  const el = document.getElementById("rotationHeatmap");
+  const dates = DATA.snapshot_dates;
+  if (!dates || dates.length < 2) {
+    el.innerHTML = "<div class=\"hint\" style=\"margin:0\">需要至少兩個快照才能觀察輪動，之後每週更新會自動累積。</div>";
+    return;
+  }
+  const themes = DATA.theme_pivot_thematic.slice(0, 15).map(function(p) { return p.main_group; });
+  let html = "<table class=\"hm-table\"><tr><th class=\"hm-name\"></th>";
+  dates.forEach(function(d) { html += "<th class=\"hm-date\">" + d.slice(5) + "</th>"; });
+  html += "</tr>";
+  themes.forEach(function(g) {
+    const byDate = {};
+    (DATA.theme_history[g] || []).forEach(function(r) { byDate[r.snapshot_date] = r["熱度分數"]; });
+    const vals = dates.map(function(d) { return byDate[d]; }).filter(function(v) { return v !== undefined; });
+    if (!vals.length) return;
+    const mx = Math.max.apply(null, vals), mn = Math.min.apply(null, vals);
+    html += "<tr><td class=\"hm-name\">" + g + "</td>";
+    dates.forEach(function(d) {
+      const v = byDate[d];
+      if (v === undefined) { html += "<td class=\"hm-cell hm-empty\"></td>"; return; }
+      const t = mx > mn ? (v - mn) / (mx - mn) : 0.5;
+      const alpha = (0.08 + t * 0.82).toFixed(2);
+      html += "<td class=\"hm-cell\" style=\"background:rgba(232,69,69," + alpha + ")\" title=\"" + g + " " + d + "：" + v + "\"></td>";
+    });
+    html += "</tr>";
+  });
+  html += "</table>";
+  el.innerHTML = html;
 }
 
 function init() {
@@ -1055,7 +1268,7 @@ function init() {
   });
   initSearchBox("companySearch", "companyDropdown", "companyPick",
     DATA.company_list.map(c => ({value: c.key, label: c.label})),
-    renderCompanyHistory);
+    addHistCompany);
   initSearchBox("themeHistSearch", "themeHistDropdown", "themeHistPick",
     DATA.theme_list.map(g => ({value: g, label: g})),
     renderThemeHistory);
@@ -1074,13 +1287,14 @@ function init() {
     const opt = document.createElement("option"); opt.value = t; opt.textContent = t; newsTypeSel.appendChild(opt);
   });
 
+  renderBanner();
   renderThemePivot();
+  renderRotationHeatmap();
   renderFullTable();
   renderEarningsTab();
   renderNewsTable();
   initSupplyChain();
   if (DATA.company_list.length) renderCompanyHistory();
-  if (DATA.theme_list.length) renderThemeHistory();
 }
 init();
 </script>
