@@ -651,6 +651,12 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div id="moversChart" style="height:550px"></div>
   <h3 class="sec-title">資金輪動熱力圖（題材 × 時間）</h3>
   <div class="controls">
+    範圍：<select id="hmRange" onchange="renderRotationHeatmap()">
+      <option value="8">近8週</option>
+      <option value="13" selected>近13週(一季)</option>
+      <option value="26">近26週(半年)</option>
+      <option value="all">全部</option>
+    </select>
     色階：<select id="hmColorMode" onchange="renderRotationHeatmap()">
       <option value="rel" selected>相對(每列自身節奏)</option>
       <option value="abs">絕對(全題材同一把尺)</option>
@@ -1420,7 +1426,9 @@ function renderBanner() {
 // ── 資金輪動熱力圖 ────────────────────────────────────────────────────
 function renderRotationHeatmap() {
   const el = document.getElementById("rotationHeatmap");
-  const dates = DATA.snapshot_dates;
+  let dates = DATA.snapshot_dates;
+  const rng = document.getElementById("hmRange").value;
+  if (rng !== "all") dates = dates.slice(-parseInt(rng, 10));
   if (!dates || dates.length < 2) {
     el.innerHTML = "<div class=\"hint\" style=\"margin:0\">需要至少兩個快照才能觀察輪動，之後每週更新會自動累積。</div>";
     return;
@@ -1437,11 +1445,15 @@ function renderRotationHeatmap() {
   if (!showAll) themes = themes.slice(0, 20);
   const mode = document.getElementById("hmColorMode").value;
 
-  // 絕對模式：全部顯示題材共用同一個最大值
+  // 絕對模式：顯示範圍內全部題材共用同一個最大值
   let gMax = 0;
   if (mode === "abs") {
+    const dateSet = {};
+    dates.forEach(function(d) { dateSet[d] = true; });
     themes.forEach(function(g) {
-      (DATA.theme_history[g] || []).forEach(function(r) { if (r["熱度分數"] > gMax) gMax = r["熱度分數"]; });
+      (DATA.theme_history[g] || []).forEach(function(r) {
+        if (dateSet[r.snapshot_date] && r["熱度分數"] > gMax) gMax = r["熱度分數"];
+      });
     });
     if (!gMax) gMax = 1;
   }
