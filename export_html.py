@@ -626,6 +626,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <button class="tab-btn" onclick="showTab(3)">財報/法說會提醒</button>
   <button class="tab-btn" onclick="showTab(4)">新聞/目標價</button>
   <button class="tab-btn" onclick="showTab(5)">供應鏈</button>
+  <button class="tab-btn" onclick="showTab(6)">動能雷達</button>
 </div>
 </div>
 
@@ -756,6 +757,23 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   </div>
 </div>
 
+<div class="tab-content" id="tab6">
+  <div class="controls">
+    動能期間：<select id="radarPeriod" onchange="renderRadar()">
+      <option value="1">1週</option>
+      <option value="2" selected>2週</option>
+      <option value="4">4週(月)</option>
+      <option value="8">8週</option>
+    </select>
+    <label><input type="checkbox" id="radarIncludeBroad" checked onchange="renderRadar()"> 含金融/傳產等廣義分類</label>
+  </div>
+  <div class="hint">X軸=目前熱度分數(越右越強)，Y軸=選定期間的熱度變化(越上越加速)。虛線=全題材中位數與零軸，分四象限：右上<b>領漲</b>(續抱)、左上<b>轉強</b>(進場甜蜜點)、右下<b>退潮</b>(減碼)、左下<b>弱勢</b>(避開)。灰色尾巴=最近4週軌跡，順時針轉動即教科書式輪動。只標注重點題材名稱，全部題材滑鼠停留可見。</div>
+  <div id="radarChart" style="height:640px"></div>
+  <h3 class="sec-title">動能訊號表</h3>
+  <div class="hint">加速度=本期Δ−上期Δ(正值代表越漲越快)。連漲/連跌=週快照連續上升/下降次數。廣度=題材內個股排名較上週上升▲/下降▼家數(全市場)。階段規則：Δ>0且處自身高檔=主升段、Δ>0連漲2週+=發動、高檔轉弱=位階高但Δ轉負、連跌2週+=退潮。點欄位可排序。</div>
+  <div class="scroll-box"><table id="momentumTable"></table></div>
+</div>
+
 <script>
 const DATA = __DATA_JSON__;
 
@@ -844,9 +862,9 @@ function renderThemePivot() {
   renderMoversChart();
 }
 
-function getVisibleThemes() {
-  // 只留「至少有一家台股公司」的題材；廣義分類依勾選框決定
-  const includeBroad = document.getElementById("hmIncludeBroad").checked;
+function getVisibleThemes(includeBroad) {
+  // 只留「至少有一家台股公司」的題材；廣義分類依參數決定
+  if (includeBroad === undefined) includeBroad = document.getElementById("hmIncludeBroad").checked;
   const twCount = {};
   DATA.theme_pivot_all.forEach(function(p) { twCount[p.main_group] = p["台"] || 0; });
   const thematicSet = {};
@@ -1426,6 +1444,156 @@ function renderRotationHeatmap() {
   el.innerHTML = html;
 }
 
+// ── 動能雷達：RRG象限圖 + 動能訊號表 ────────────────────────────────
+function renderRadar() {
+  const dates = DATA.snapshot_dates;
+  const chartEl = document.getElementById("radarChart");
+  if (!dates || dates.length < 3) { chartEl.innerHTML = "<div class=\"hint\">快照數不足，累積三週後可用。</div>"; return; }
+  let n = parseInt(document.getElementById("radarPeriod").value, 10) || 2;
+  if (n > dates.length - 2) n = dates.length - 2;
+  const includeBroad = document.getElementById("radarIncludeBroad").checked;
+  const themes = getVisibleThemes(includeBroad);
+  const L = dates.length;
+  const cur = dates[L - 1];
+
+  // 廣度：題材內個股排名較上週上升/下降家數(全市場)
+  const bUp = {}, bDown = {};
+  (DATA.full_records || []).forEach(function(r) {
+    const d = r["排名Δ_num"];
+    if (d === undefined || d === null) return;
+    String(r.main_groups || "").split(", ").forEach(function(g) {
+      if (d > 0) bUp[g] = (bUp[g] || 0) + 1;
+      else if (d < 0) bDown[g] = (bDown[g] || 0) + 1;
+    });
+  });
+  const twCount = {};
+  DATA.theme_pivot_all.forEach(function(p) { twCount[p.main_group] = p["台"] || 0; });
+
+  const rows = [];
+  themes.forEach(function(g) {
+    const s = {};
+    (DATA.theme_history[g] || []).forEach(function(r) { s[r.snapshot_date] = r["熱度分數"]; });
+    const score = s[cur];
+    const base = s[dates[L - 1 - n]];
+    if (score === undefined || base === undefined) return;
+    const delta = score - base;
+    const prevBase = (L - 1 - 2 * n >= 0) ? s[dates[L - 1 - 2 * n]] : undefined;
+    const accel = (prevBase !== undefined) ? (delta - (base - prevBase)) : null;
+    let up = 0, down = 0;
+    for (let i = L - 1; i > 0; i--) {
+      const a = s[dates[i]], b = s[dates[i - 1]];
+      if (a === undefined || b === undefined) break;
+      if (a > b && down === 0) up++;
+      else if (a < b && up === 0) down++;
+      else break;
+    }
+    let mn = Infinity, mx = -Infinity;
+    dates.forEach(function(d0) { const v = s[d0]; if (v !== undefined) { if (v < mn) mn = v; if (v > mx) mx = v; } });
+    const pos = mx > mn ? (score - mn) / (mx - mn) : 0.5;
+    let stage;
+    if (delta > 0 && pos >= 0.6) stage = "🚀 主升段";
+    else if (delta > 0 && up >= 2) stage = "🔥 發動";
+    else if (delta > 0) stage = "↗ 回溫";
+    else if (delta < 0 && pos >= 0.7) stage = "⚠ 高檔轉弱";
+    else if (delta < 0 && down >= 2) stage = "↘ 退潮";
+    else if (delta < 0) stage = "▽ 回檔";
+    else stage = "— 盤整";
+    const trailX = [], trailY = [];
+    for (let k = 3; k >= 0; k--) {
+      const i = L - 1 - k;
+      if (i - n < 0) continue;
+      const v = s[dates[i]], vb = s[dates[i - n]];
+      if (v === undefined || vb === undefined) continue;
+      trailX.push(v); trailY.push(v - vb);
+    }
+    rows.push({
+      g: g, score: +score.toFixed(2), delta: +delta.toFixed(2),
+      accel: accel === null ? null : +accel.toFixed(2),
+      up: up, down: down, stage: stage,
+      bUp: bUp[g] || 0, bDown: bDown[g] || 0, tw: twCount[g] || 0,
+      trailX: trailX, trailY: trailY,
+    });
+  });
+
+  // 象限圖
+  const scoresSorted = rows.map(function(r) { return r.score; }).sort(function(a, b) { return a - b; });
+  const medX = scoresSorted.length ? scoresSorted[Math.floor(scoresSorted.length / 2)] : 0;
+  const labelSet = {};
+  rows.slice().sort(function(a, b) { return b.score - a.score; }).slice(0, 14).forEach(function(r) { labelSet[r.g] = true; });
+  rows.slice().sort(function(a, b) { return Math.abs(b.delta) - Math.abs(a.delta); }).slice(0, 6).forEach(function(r) { labelSet[r.g] = true; });
+
+  function qColor(r) {
+    if (r.delta >= 0 && r.score >= medX) return "#e84545";
+    if (r.delta >= 0) return "#d49610";
+    if (r.score >= medX) return "#3c8cf0";
+    return "#5c6f80";
+  }
+
+  const traces = [];
+  rows.forEach(function(r) {
+    if (labelSet[r.g] && r.trailX.length > 1) {
+      traces.push({x: r.trailX, y: r.trailY, mode: "lines", line: {color: "rgba(125,149,170,.35)", width: 1}, hoverinfo: "skip", showlegend: false});
+    }
+  });
+  traces.push({
+    x: rows.map(function(r) { return r.score; }),
+    y: rows.map(function(r) { return r.delta; }),
+    mode: "markers",
+    marker: {size: 8, color: rows.map(qColor)},
+    text: rows.map(function(r) { return r.g + "<br>分數 " + r.score + "｜Δ " + r.delta + "<br>" + r.stage; }),
+    hoverinfo: "text",
+    showlegend: false,
+  });
+  const labeled = rows.filter(function(r) { return labelSet[r.g]; });
+  traces.push({
+    x: labeled.map(function(r) { return r.score; }),
+    y: labeled.map(function(r) { return r.delta; }),
+    mode: "text",
+    text: labeled.map(function(r) { return r.g; }),
+    textposition: "top center",
+    textfont: {size: 10, color: "#9fb2c4"},
+    hoverinfo: "skip",
+    showlegend: false,
+  });
+
+  const maxY = Math.max.apply(null, rows.map(function(r) { return Math.abs(r.delta); }).concat([1])) * 1.25;
+  const maxX = Math.max.apply(null, rows.map(function(r) { return r.score; }).concat([1])) * 1.08;
+  Plotly.newPlot("radarChart", traces, {
+    title: "題材輪動象限(RRG)：" + dates[L - 1 - n] + " → " + cur,
+    paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
+    xaxis: {title: "熱度分數(強度)", range: [0, maxX], zeroline: false},
+    yaxis: {title: n + "週熱度變化(動能)", range: [-maxY, maxY], zeroline: false},
+    shapes: [
+      {type: "line", x0: medX, x1: medX, y0: -maxY, y1: maxY, line: {color: "#435868", width: 1, dash: "dot"}},
+      {type: "line", x0: 0, x1: maxX, y0: 0, y1: 0, line: {color: "#435868", width: 1, dash: "dot"}},
+    ],
+    annotations: [
+      {x: maxX * 0.98, y: maxY * 0.93, text: "領漲", showarrow: false, font: {color: "#e84545", size: 13}, xanchor: "right"},
+      {x: maxX * 0.02, y: maxY * 0.93, text: "轉強", showarrow: false, font: {color: "#d49610", size: 13}, xanchor: "left"},
+      {x: maxX * 0.98, y: -maxY * 0.93, text: "退潮", showarrow: false, font: {color: "#3c8cf0", size: 13}, xanchor: "right"},
+      {x: maxX * 0.02, y: -maxY * 0.93, text: "弱勢", showarrow: false, font: {color: "#5c6f80", size: 13}, xanchor: "left"},
+    ],
+    margin: {t: 50},
+  }, {responsive: true});
+
+  // 訊號表
+  const cols = [
+    {key: "g", label: "題材"},
+    {key: "stage", label: "階段"},
+    {key: "score", label: "熱度分數", numeric: true},
+    {key: "delta", label: "Δ" + n + "週", numeric: true},
+    {key: "accel", label: "加速度", numeric: true},
+    {key: "up", label: "連漲週", numeric: true},
+    {key: "down", label: "連跌週", numeric: true},
+    {key: "bUp", label: "廣度▲", numeric: true},
+    {key: "bDown", label: "廣度▼", numeric: true},
+    {key: "tw", label: "台股家數", numeric: true},
+  ];
+  const tableEl = document.getElementById("momentumTable");
+  tableEl._sortState = {colIndex: 3, dir: -1};
+  buildTable(tableEl, cols, rows);
+}
+
 function init() {
   document.getElementById("latestDate").textContent = DATA.latest_date;
   if (DATA.previous_date) {
@@ -1466,6 +1634,7 @@ function init() {
   renderEarningsTab();
   renderNewsTable();
   initSupplyChain();
+  renderRadar();
   if (DATA.company_list.length) renderCompanyHistory();
 }
 init();
