@@ -529,6 +529,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 .pos-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 700; white-space: nowrap; vertical-align: middle; margin-left: 4px; }
 .pos-badge.crown { background: var(--amb-bg); color: var(--amb); border: 1px solid var(--amb); }
 .pos-badge.star { background: var(--ac-bg); color: var(--ac); }
+.pos-badge.silver { background: var(--sf2); color: var(--tx2); border: 1px solid var(--bdm); }
 .sc-delta { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .sc-delta.up { color: var(--grn); }
 .sc-delta.down { color: var(--red); }
@@ -1196,8 +1197,9 @@ function buildCardHTML(l, showCountry) {
   const countryHtml = showCountry ? "<span class=\"sc-code\">" + (COUNTRY_FLAG[l.supplier_country] || "") + l.supplier_country + "</span>" : "";
   const posText = (l.position_note || "") + "|" + (l.product || "");
   let posBadge = "";
-  if (/世界第一|全球第一|絕對霸主|絕對龍頭|獨家|壟斷|絕對巨頭/.test(posText)) posBadge = "<span class=\"pos-badge crown\">👑 全球第一</span>";
-  else if (/龍頭|霸主|巨頭|世界級|全球最大/.test(posText)) posBadge = "<span class=\"pos-badge star\">⭐ 龍頭</span>";
+  if (/世界第一|全球第一|絕對霸主|絕對龍頭|獨家|壟斷|絕對巨頭|市佔第一|出貨量第一|全球最大/.test(posText)) posBadge = "<span class=\"pos-badge crown\">👑 全球第一</span>";
+  else if (/第二大|第三大|前三大|前兩大|全球前三|雙雄/.test(posText)) posBadge = "<span class=\"pos-badge silver\">🥈 全球前三</span>";
+  else if (/龍頭|霸主|巨頭|世界級/.test(posText)) posBadge = "<span class=\"pos-badge star\">⭐ 龍頭</span>";
   const tooltip = l.position_note ? " title=\"" + l.position_note.replace(/"/g, "&quot;") + "\"" : "";
   return "<div class=\"sc-card " + cardCls + "\"" + tooltip + ">" +
          "<div class=\"sc-card-header\"><span class=\"rank-badge " + badgeClass2 + "\">" + rankText + "</span>" +
