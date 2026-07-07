@@ -795,7 +795,8 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     <input type="range" id="radarSlider" style="width:220px" oninput="onRadarSlide()">
     <span id="radarDate" style="font-size:12px;color:var(--tx2);font-variant-numeric:tabular-nums"></span>
   </div>
-  <div class="hint">X軸=熱度分數(對數尺度，越右越強)，Y軸=選定期間的熱度變化(越上越加速)。用「顯示」篩選聚焦：熱度前15看主戰場、動能前15看正在動的、領漲+轉強只看多方。點少於18個時全部標名。下方訊號表永遠含全部題材不受篩選影響。按▶播放或拖曳時間軸，可看題材在象限間的移動軌跡——順時針繞行即資金輪動。虛線=全題材中位數與零軸，分四象限：右上<b>領漲</b>(續抱)、左上<b>轉強</b>(進場甜蜜點)、右下<b>退潮</b>(減碼)、左下<b>弱勢</b>(避開)。灰色尾巴=最近4週軌跡，順時針轉動即教科書式輪動。只標注重點題材名稱，全部題材滑鼠停留可見。</div>
+  <div id="radarFocusChips" class="chip-row"></div>
+  <div class="hint">X軸=熱度分數(對數尺度，越右越強)，Y軸=選定期間的熱度變化(越上越加速)。用「顯示」篩選聚焦：熱度前15看主戰場、動能前15看正在動的、領漲+轉強只看多方。<b>點擊圓點可聚焦該題材(其他變暗)，可連點複選，再點一次取消</b>——聚焦後按▶播放即為單題材聚光燈動畫。點少於18個時全部標名。下方訊號表永遠含全部題材不受篩選影響。按▶播放或拖曳時間軸，可看題材在象限間的移動軌跡——順時針繞行即資金輪動。虛線=全題材中位數與零軸，分四象限：右上<b>領漲</b>(續抱)、左上<b>轉強</b>(進場甜蜜點)、右下<b>退潮</b>(減碼)、左下<b>弱勢</b>(避開)。灰色尾巴=最近4週軌跡，順時針轉動即教科書式輪動。只標注重點題材名稱，全部題材滑鼠停留可見。</div>
   <div id="radarChart" style="height:640px"></div>
   <h3 class="sec-title">動能訊號表</h3>
   <div class="hint">加速度=本期Δ−上期Δ(正值代表越漲越快)。連漲/連跌=週快照連續上升/下降次數。廣度=題材內個股排名較上週上升▲/下降▼家數(全市場)。階段規則：Δ>0且處自身高檔=主升段、Δ>0連漲2週+=發動、高檔轉弱=位階高但Δ轉負、連跌2週+=退潮。點欄位可排序。</div>
@@ -1512,6 +1513,35 @@ function renderRotationHeatmap() {
 
 // ── 動能雷達：RRG象限圖 + 動能訊號表（含時間軸播放）─────────────────
 let radarTimer = null;
+let radarFocus = {};          // 點擊聚焦的題材集合(可複選)
+let radarClickBound = false;
+
+function radarRedraw() {
+  const slider = document.getElementById("radarSlider");
+  drawRadarFrame(parseInt(slider.value, 10), false);
+}
+
+function radarUnfocus(g) {
+  delete radarFocus[g];
+  updateRadarFocusChips();
+  radarRedraw();
+}
+
+function radarClearFocus() {
+  radarFocus = {};
+  updateRadarFocusChips();
+  radarRedraw();
+}
+
+function updateRadarFocusChips() {
+  const el = document.getElementById("radarFocusChips");
+  const keys = Object.keys(radarFocus);
+  let html = keys.map(function(g) {
+    return "<span class=\"chip\">" + g + "<span class=\"chip-x\" onclick=\"radarUnfocus('" + g + "')\">×</span></span>";
+  }).join("");
+  if (keys.length) html += "<span class=\"chip\" style=\"cursor:pointer\" onclick=\"radarClearFocus()\">全部清除</span>";
+  el.innerHTML = html;
+}
 
 function stopRadarPlay() {
   if (radarTimer) { clearInterval(radarTimer); radarTimer = null; }
@@ -1634,6 +1664,13 @@ function drawRadarFrame(ei, withTable) {
   } else if (showMode === "up") {
     chartRows = chartRows.filter(function(r) { return r.delta > 0; });
   }
+  // 聚焦中的題材強制入圖(即使被顯示模式篩掉)
+  const hasFocus = Object.keys(radarFocus).length > 0;
+  if (hasFocus) {
+    const present = {};
+    chartRows.forEach(function(r) { present[r.g] = true; });
+    rows.forEach(function(r) { if (radarFocus[r.g] && !present[r.g] && r.score > 0) chartRows.push(r); });
+  }
   let gMaxY = 0.5, gMaxX = 1, gMinX = Infinity;
   const latestScores = [];
   themes.forEach(function(g) {
@@ -1682,9 +1719,11 @@ function drawRadarFrame(ei, withTable) {
 
   const traces = [];
   chartRows.forEach(function(r) {
-    if (trailSet[r.g] && r.trailX.length > 1) {
+    const showTrail = hasFocus ? radarFocus[r.g] : trailSet[r.g];
+    if (showTrail && r.trailX.length > 1) {
       traces.push({x: r.trailX, y: r.trailY, mode: "lines",
-        line: {color: Q[qKey(r) + "T"], width: 1.5, shape: "spline"},
+        line: {color: hasFocus ? Q[qKey(r)] : Q[qKey(r) + "T"], width: hasFocus ? 2 : 1.5, shape: "spline"},
+        opacity: hasFocus ? 0.55 : 1,
         hoverinfo: "skip", showlegend: false});
     }
   });
@@ -1692,17 +1731,18 @@ function drawRadarFrame(ei, withTable) {
     x: chartRows.map(function(r) { return r.score; }),
     y: chartRows.map(function(r) { return r.delta; }),
     mode: "markers",
+    customdata: chartRows.map(function(r) { return r.g; }),
     marker: {
       size: chartRows.map(function(r) { return Math.min(19, 6 + Math.sqrt(r.score) * 2.2); }),
       color: chartRows.map(function(r) { return Q[qKey(r)]; }),
       line: {color: "#0c1118", width: 1.5},
-      opacity: 0.92,
+      opacity: hasFocus ? chartRows.map(function(r) { return radarFocus[r.g] ? 0.95 : 0.15; }) : 0.92,
     },
     text: chartRows.map(function(r) { return "<b>" + r.g + "</b><br>熱度 " + r.score + "｜Δ" + n + "週 " + r.delta + "<br>" + r.stage; }),
     hoverinfo: "text",
     showlegend: false,
   });
-  const labeled = chartRows.filter(function(r) { return labelSet[r.g]; });
+  const labeled = chartRows.filter(function(r) { return hasFocus ? radarFocus[r.g] : labelSet[r.g]; });
   traces.push({
     x: labeled.map(function(r) { return r.score; }),
     y: labeled.map(function(r) { return r.delta; }),
@@ -1747,6 +1787,20 @@ function drawRadarFrame(ei, withTable) {
     ],
     margin: {t: 46, l: 60, r: 20},
   }, {responsive: true});
+
+  // 點擊圓點聚焦/取消(可複選)
+  const gd = document.getElementById("radarChart");
+  if (!radarClickBound && gd.on) {
+    gd.on("plotly_click", function(ev) {
+      const pt = ev.points && ev.points[0];
+      if (!pt || pt.customdata === undefined) return;
+      const g = pt.customdata;
+      if (radarFocus[g]) delete radarFocus[g]; else radarFocus[g] = true;
+      updateRadarFocusChips();
+      radarRedraw();
+    });
+    radarClickBound = true;
+  }
 
   // 訊號表(只在時間軸停在最新時更新)
   if (withTable) {
