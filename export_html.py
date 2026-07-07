@@ -449,6 +449,7 @@ select, input[type="text"], input:not([type="radio"]):not([type="checkbox"]) {
 select:focus, input:focus { outline: none; border-color: var(--ac); }
 input[type="checkbox"] { accent-color: var(--ac); }
 input[type="radio"] { accent-color: var(--ac); }
+input[type="range"] { border: none !important; padding: 0 !important; background: transparent !important; accent-color: var(--ac); vertical-align: middle; }
 label { font-size: 13px; color: var(--tx2); }
 code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
 
@@ -774,8 +775,11 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
       <option value="8">8週</option>
     </select>
     <label><input type="checkbox" id="radarIncludeBroad" checked onchange="renderRadar()"> 含金融/傳產等廣義分類</label>
+    <button class="view-btn" id="radarPlayBtn" onclick="toggleRadarPlay()">▶ 播放</button>
+    <input type="range" id="radarSlider" style="width:220px" oninput="onRadarSlide()">
+    <span id="radarDate" style="font-size:12px;color:var(--tx2);font-variant-numeric:tabular-nums"></span>
   </div>
-  <div class="hint">X軸=目前熱度分數(越右越強)，Y軸=選定期間的熱度變化(越上越加速)。虛線=全題材中位數與零軸，分四象限：右上<b>領漲</b>(續抱)、左上<b>轉強</b>(進場甜蜜點)、右下<b>退潮</b>(減碼)、左下<b>弱勢</b>(避開)。灰色尾巴=最近4週軌跡，順時針轉動即教科書式輪動。只標注重點題材名稱，全部題材滑鼠停留可見。</div>
+  <div class="hint">X軸=熱度分數(對數尺度，越右越強)，Y軸=選定期間的熱度變化(越上越加速)。按▶播放或拖曳時間軸，可看題材在象限間的移動軌跡——順時針繞行即資金輪動。虛線=全題材中位數與零軸，分四象限：右上<b>領漲</b>(續抱)、左上<b>轉強</b>(進場甜蜜點)、右下<b>退潮</b>(減碼)、左下<b>弱勢</b>(避開)。灰色尾巴=最近4週軌跡，順時針轉動即教科書式輪動。只標注重點題材名稱，全部題材滑鼠停留可見。</div>
   <div id="radarChart" style="height:640px"></div>
   <h3 class="sec-title">動能訊號表</h3>
   <div class="hint">加速度=本期Δ−上期Δ(正值代表越漲越快)。連漲/連跌=週快照連續上升/下降次數。廣度=題材內個股排名較上週上升▲/下降▼家數(全市場)。階段規則：Δ>0且處自身高檔=主升段、Δ>0連漲2週+=發動、高檔轉弱=位階高但Δ轉負、連跌2週+=退潮。點欄位可排序。</div>
@@ -1473,17 +1477,60 @@ function renderRotationHeatmap() {
   el.innerHTML = html;
 }
 
-// ── 動能雷達：RRG象限圖 + 動能訊號表 ────────────────────────────────
+// ── 動能雷達：RRG象限圖 + 動能訊號表（含時間軸播放）─────────────────
+let radarTimer = null;
+
+function stopRadarPlay() {
+  if (radarTimer) { clearInterval(radarTimer); radarTimer = null; }
+  const b = document.getElementById("radarPlayBtn");
+  if (b) b.textContent = "▶ 播放";
+}
+
+function toggleRadarPlay() {
+  if (radarTimer) { stopRadarPlay(); return; }
+  const slider = document.getElementById("radarSlider");
+  const maxI = parseInt(slider.max, 10);
+  let i = parseInt(slider.value, 10);
+  if (i >= maxI) i = parseInt(slider.min, 10);
+  document.getElementById("radarPlayBtn").textContent = "⏸ 暫停";
+  radarTimer = setInterval(function() {
+    if (i > maxI) { stopRadarPlay(); return; }
+    slider.value = i;
+    drawRadarFrame(i, i === maxI);
+    i++;
+  }, 650);
+}
+
+function onRadarSlide() {
+  stopRadarPlay();
+  const slider = document.getElementById("radarSlider");
+  drawRadarFrame(parseInt(slider.value, 10), slider.value === slider.max);
+}
+
 function renderRadar() {
+  stopRadarPlay();
   const dates = DATA.snapshot_dates;
   const chartEl = document.getElementById("radarChart");
   if (!dates || dates.length < 3) { chartEl.innerHTML = "<div class=\"hint\">快照數不足，累積三週後可用。</div>"; return; }
   let n = parseInt(document.getElementById("radarPeriod").value, 10) || 2;
   if (n > dates.length - 2) n = dates.length - 2;
+  const slider = document.getElementById("radarSlider");
+  slider.min = Math.min(n, dates.length - 1);
+  slider.max = dates.length - 1;
+  slider.value = dates.length - 1;
+  drawRadarFrame(dates.length - 1, true);
+}
+
+function drawRadarFrame(ei, withTable) {
+  const dates = DATA.snapshot_dates;
+  let n = parseInt(document.getElementById("radarPeriod").value, 10) || 2;
+  if (n > dates.length - 2) n = dates.length - 2;
+  if (ei - n < 0) ei = n;
   const includeBroad = document.getElementById("radarIncludeBroad").checked;
   const themes = getVisibleThemes(includeBroad);
-  const L = dates.length;
-  const cur = dates[L - 1];
+  const L = ei + 1;                 // 只使用到 ei 為止的歷史(播放時不偷看未來)
+  const cur = dates[ei];
+  document.getElementById("radarDate").textContent = cur;
 
   // 廣度：題材內個股排名較上週上升/下降家數(全市場)
   const bUp = {}, bDown = {};
@@ -1517,7 +1564,7 @@ function renderRadar() {
       else break;
     }
     let mn = Infinity, mx = -Infinity;
-    dates.forEach(function(d0) { const v = s[d0]; if (v !== undefined) { if (v < mn) mn = v; if (v > mx) mx = v; } });
+    dates.slice(0, L).forEach(function(d0) { const v = s[d0]; if (v !== undefined) { if (v < mn) mn = v; if (v > mx) mx = v; } });
     const pos = mx > mn ? (score - mn) / (mx - mn) : 0.5;
     let stage;
     if (delta > 0 && pos >= 0.6) stage = "🚀 主升段";
@@ -1544,83 +1591,127 @@ function renderRadar() {
     });
   });
 
-  // 象限圖
-  const scoresSorted = rows.map(function(r) { return r.score; }).sort(function(a, b) { return a - b; });
-  const medX = scoresSorted.length ? scoresSorted[Math.floor(scoresSorted.length / 2)] : 0;
+  // 象限圖（X軸對數尺度展開；軸界與象限分界取全期間固定值，播放時畫面不跳動）
+  const chartRows = rows.filter(function(r) { return r.score > 0; });
+  let gMaxY = 0.5, gMaxX = 1, gMinX = Infinity;
+  const latestScores = [];
+  themes.forEach(function(g) {
+    const s = {};
+    (DATA.theme_history[g] || []).forEach(function(r) { s[r.snapshot_date] = r["熱度分數"]; });
+    dates.forEach(function(d, i) {
+      const v = s[d];
+      if (v === undefined) return;
+      if (v > gMaxX) gMaxX = v;
+      if (v > 0 && v < gMinX) gMinX = v;
+      if (i - n >= 0 && s[dates[i - n]] !== undefined) {
+        const dd = Math.abs(v - s[dates[i - n]]);
+        if (dd > gMaxY) gMaxY = dd;
+      }
+    });
+    const lv = s[DATA.latest_date];
+    if (lv !== undefined && lv > 0) latestScores.push(lv);
+  });
+  latestScores.sort(function(a, b) { return a - b; });
+  const medX = latestScores.length ? latestScores[Math.floor(latestScores.length / 2)] : 1;
   const labelSet = {};
-  rows.slice().sort(function(a, b) { return b.score - a.score; }).slice(0, 14).forEach(function(r) { labelSet[r.g] = true; });
-  rows.slice().sort(function(a, b) { return Math.abs(b.delta) - Math.abs(a.delta); }).slice(0, 6).forEach(function(r) { labelSet[r.g] = true; });
+  chartRows.slice().sort(function(a, b) { return b.score - a.score; }).slice(0, 10).forEach(function(r) { labelSet[r.g] = true; });
+  chartRows.slice().sort(function(a, b) { return Math.abs(b.delta) - Math.abs(a.delta); }).slice(0, 4).forEach(function(r) { labelSet[r.g] = true; });
 
-  function qColor(r) {
-    if (r.delta >= 0 && r.score >= medX) return "#e84545";
-    if (r.delta >= 0) return "#d49610";
-    if (r.score >= medX) return "#3c8cf0";
-    return "#5c6f80";
+  const Q = {
+    lead: "#e84545", improve: "#d49610", fade: "#3c8cf0", weak: "#6b7f91",
+    leadT: "rgba(232,69,69,.25)", improveT: "rgba(212,150,16,.25)",
+    fadeT: "rgba(60,140,240,.25)", weakT: "rgba(107,127,145,.2)",
+  };
+  function qKey(r) {
+    if (r.delta >= 0) return r.score >= medX ? "lead" : "improve";
+    return r.score >= medX ? "fade" : "weak";
   }
 
+  const maxY = gMaxY * 1.15;
+  const maxX = gMaxX * 1.3;
+  const minX = Math.max(0.04, (gMinX === Infinity ? 1 : gMinX) * 0.7);
+  const lg = Math.log10;
+
   const traces = [];
-  rows.forEach(function(r) {
+  chartRows.forEach(function(r) {
     if (labelSet[r.g] && r.trailX.length > 1) {
-      traces.push({x: r.trailX, y: r.trailY, mode: "lines", line: {color: "rgba(125,149,170,.35)", width: 1}, hoverinfo: "skip", showlegend: false});
+      traces.push({x: r.trailX, y: r.trailY, mode: "lines",
+        line: {color: Q[qKey(r) + "T"], width: 1.5, shape: "spline"},
+        hoverinfo: "skip", showlegend: false});
     }
   });
   traces.push({
-    x: rows.map(function(r) { return r.score; }),
-    y: rows.map(function(r) { return r.delta; }),
+    x: chartRows.map(function(r) { return r.score; }),
+    y: chartRows.map(function(r) { return r.delta; }),
     mode: "markers",
-    marker: {size: 8, color: rows.map(qColor)},
-    text: rows.map(function(r) { return r.g + "<br>分數 " + r.score + "｜Δ " + r.delta + "<br>" + r.stage; }),
+    marker: {
+      size: chartRows.map(function(r) { return Math.min(19, 6 + Math.sqrt(r.score) * 2.2); }),
+      color: chartRows.map(function(r) { return Q[qKey(r)]; }),
+      line: {color: "#0c1118", width: 1.5},
+      opacity: 0.92,
+    },
+    text: chartRows.map(function(r) { return "<b>" + r.g + "</b><br>熱度 " + r.score + "｜Δ" + n + "週 " + r.delta + "<br>" + r.stage; }),
     hoverinfo: "text",
     showlegend: false,
   });
-  const labeled = rows.filter(function(r) { return labelSet[r.g]; });
+  const labeled = chartRows.filter(function(r) { return labelSet[r.g]; });
   traces.push({
     x: labeled.map(function(r) { return r.score; }),
     y: labeled.map(function(r) { return r.delta; }),
     mode: "text",
     text: labeled.map(function(r) { return r.g; }),
-    textposition: "top center",
-    textfont: {size: 10, color: "#9fb2c4"},
+    textposition: labeled.map(function(r) { return r.delta >= 0 ? "top center" : "bottom center"; }),
+    textfont: {size: 10.5, color: "#b8c8d8"},
     hoverinfo: "skip",
     showlegend: false,
   });
 
-  const maxY = Math.max.apply(null, rows.map(function(r) { return Math.abs(r.delta); }).concat([1])) * 1.25;
-  const maxX = Math.max.apply(null, rows.map(function(r) { return r.score; }).concat([1])) * 1.08;
-  Plotly.newPlot("radarChart", traces, {
-    title: "題材輪動象限(RRG)：" + dates[L - 1 - n] + " → " + cur,
-    paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
-    xaxis: {title: "熱度分數(強度)", range: [0, maxX], zeroline: false},
-    yaxis: {title: n + "週熱度變化(動能)", range: [-maxY, maxY], zeroline: false},
+  function qrect(x0, x1, y0, y1, color) {
+    return {type: "rect", x0: lg(x0), x1: lg(x1), y0: y0, y1: y1,
+            fillcolor: color, line: {width: 0}, layer: "below"};
+  }
+  Plotly.react("radarChart", traces, {
+    title: {text: "題材輪動象限(RRG)　" + dates[L - 1 - n] + " → " + cur, font: {size: 15}},
+    paper_bgcolor: "#0c1118", plot_bgcolor: "#10161f", font: {color: "#d4dde8"},
+    xaxis: {title: "熱度分數(強度，對數尺度)", type: "log", range: [lg(minX), lg(maxX)],
+            zeroline: false, gridcolor: "rgba(38,60,87,.35)"},
+    yaxis: {title: n + "週熱度變化(動能)", range: [-maxY, maxY],
+            zeroline: false, gridcolor: "rgba(38,60,87,.35)"},
     shapes: [
-      {type: "line", x0: medX, x1: medX, y0: -maxY, y1: maxY, line: {color: "#435868", width: 1, dash: "dot"}},
-      {type: "line", x0: 0, x1: maxX, y0: 0, y1: 0, line: {color: "#435868", width: 1, dash: "dot"}},
+      qrect(medX, maxX, 0, maxY, "rgba(232,69,69,.07)"),
+      qrect(minX, medX, 0, maxY, "rgba(212,150,16,.055)"),
+      qrect(medX, maxX, -maxY, 0, "rgba(60,140,240,.055)"),
+      qrect(minX, medX, -maxY, 0, "rgba(107,127,145,.045)"),
+      {type: "line", x0: lg(medX), x1: lg(medX), y0: -maxY, y1: maxY, line: {color: "rgba(125,149,170,.5)", width: 1, dash: "dot"}},
+      {type: "line", x0: lg(minX), x1: lg(maxX), y0: 0, y1: 0, line: {color: "rgba(125,149,170,.5)", width: 1, dash: "dot"}},
     ],
     annotations: [
-      {x: maxX * 0.98, y: maxY * 0.93, text: "領漲", showarrow: false, font: {color: "#e84545", size: 13}, xanchor: "right"},
-      {x: maxX * 0.02, y: maxY * 0.93, text: "轉強", showarrow: false, font: {color: "#d49610", size: 13}, xanchor: "left"},
-      {x: maxX * 0.98, y: -maxY * 0.93, text: "退潮", showarrow: false, font: {color: "#3c8cf0", size: 13}, xanchor: "right"},
-      {x: maxX * 0.02, y: -maxY * 0.93, text: "弱勢", showarrow: false, font: {color: "#5c6f80", size: 13}, xanchor: "left"},
+      {x: lg(maxX * 0.92), y: maxY * 0.92, text: "領 漲", showarrow: false, font: {color: "rgba(232,69,69,.55)", size: 17}, xanchor: "right"},
+      {x: lg(minX * 1.15), y: maxY * 0.92, text: "轉 強", showarrow: false, font: {color: "rgba(212,150,16,.55)", size: 17}, xanchor: "left"},
+      {x: lg(maxX * 0.92), y: -maxY * 0.92, text: "退 潮", showarrow: false, font: {color: "rgba(60,140,240,.55)", size: 17}, xanchor: "right"},
+      {x: lg(minX * 1.15), y: -maxY * 0.92, text: "弱 勢", showarrow: false, font: {color: "rgba(107,127,145,.55)", size: 17}, xanchor: "left"},
     ],
-    margin: {t: 50},
+    margin: {t: 46, l: 60, r: 20},
   }, {responsive: true});
 
-  // 訊號表
-  const cols = [
-    {key: "g", label: "題材"},
-    {key: "stage", label: "階段"},
-    {key: "score", label: "熱度分數", numeric: true},
-    {key: "delta", label: "Δ" + n + "週", numeric: true},
-    {key: "accel", label: "加速度", numeric: true},
-    {key: "up", label: "連漲週", numeric: true},
-    {key: "down", label: "連跌週", numeric: true},
-    {key: "bUp", label: "廣度▲", numeric: true},
-    {key: "bDown", label: "廣度▼", numeric: true},
-    {key: "tw", label: "台股家數", numeric: true},
-  ];
-  const tableEl = document.getElementById("momentumTable");
-  tableEl._sortState = {colIndex: 3, dir: -1};
-  buildTable(tableEl, cols, rows);
+  // 訊號表(只在時間軸停在最新時更新)
+  if (withTable) {
+    const cols = [
+      {key: "g", label: "題材"},
+      {key: "stage", label: "階段"},
+      {key: "score", label: "熱度分數", numeric: true},
+      {key: "delta", label: "Δ" + n + "週", numeric: true},
+      {key: "accel", label: "加速度", numeric: true},
+      {key: "up", label: "連漲週", numeric: true},
+      {key: "down", label: "連跌週", numeric: true},
+      {key: "bUp", label: "廣度▲", numeric: true},
+      {key: "bDown", label: "廣度▼", numeric: true},
+      {key: "tw", label: "台股家數", numeric: true},
+    ];
+    const tableEl = document.getElementById("momentumTable");
+    tableEl._sortState = {colIndex: 3, dir: -1};
+    buildTable(tableEl, cols, rows);
+  }
 }
 
 function init() {
