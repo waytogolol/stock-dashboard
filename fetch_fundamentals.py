@@ -48,6 +48,9 @@ def main():
     consec_fail = 0
     for i, (country, code) in enumerate(members):
         key = f"{country}|{code}"
+        # 舊快取只有gm/rg，缺pb的一律重抓；None(查無)與新格式跳過
+        if key in cache and cache[key] is not None and "pb" not in cache[key]:
+            del cache[key]
         if key in cache:
             continue
         result = None
@@ -55,9 +58,12 @@ def main():
             try:
                 info = yf.Ticker(v).info
                 gm = info.get("grossMargins")
-                rg = info.get("revenueGrowth")
-                if gm is not None or rg is not None:
-                    result = {"gm": gm, "rg": rg}
+                rg = info.get("revenueGrowth")   # 最新一季營收YoY
+                pb = info.get("priceToBook")
+                if gm is not None or rg is not None or pb is not None:
+                    result = {"gm": gm, "rg": rg, "pb": pb,
+                              "eps_ttm": info.get("trailingEps"),
+                              "eps_fwd": info.get("forwardEps")}
                     consec_fail = 0
                     break
             except Exception:
@@ -77,8 +83,10 @@ def main():
     save_cache(cache)
 
     conn = sqlite3.connect(DB)
-    conn.execute("""CREATE TABLE IF NOT EXISTS fundamentals (
+    conn.execute("DROP TABLE IF EXISTS fundamentals")
+    conn.execute("""CREATE TABLE fundamentals (
         country TEXT, code TEXT, gross_margin REAL, revenue_growth REAL,
+        pb REAL, eps_ttm REAL, eps_fwd REAL,
         updated TEXT, PRIMARY KEY (country, code))""")
     rows = []
     today = str(date.today())
@@ -86,8 +94,8 @@ def main():
         if not v:
             continue
         country, code = key.split("|", 1)
-        rows.append((country, code, v["gm"], v["rg"], today))
-    conn.executemany("INSERT OR REPLACE INTO fundamentals (country,code,gross_margin,revenue_growth,updated) VALUES (?,?,?,?,?)", rows)
+        rows.append((country, code, v["gm"], v["rg"], v.get("pb"), v.get("eps_ttm"), v.get("eps_fwd"), today))
+    conn.executemany("INSERT OR REPLACE INTO fundamentals (country,code,gross_margin,revenue_growth,pb,eps_ttm,eps_fwd,updated) VALUES (?,?,?,?,?,?,?,?)", rows)
     conn.commit()
     conn.close()
     print(f"完成：{len(rows)} 檔寫入 fundamentals 表")

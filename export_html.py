@@ -238,12 +238,17 @@ def build():
     fund_lookup = {}
     try:
         conn_f = sqlite3.connect(DB_PATH)
-        fund = pd.read_sql("SELECT country, code, gross_margin, revenue_growth FROM fundamentals", conn_f)
+        fund = pd.read_sql("SELECT * FROM fundamentals", conn_f)
         conn_f.close()
         for _, r in fund.iterrows():
-            gm = round(r["gross_margin"] * 100, 1) if pd.notna(r["gross_margin"]) else None
-            rg = round(r["revenue_growth"] * 100, 1) if pd.notna(r["revenue_growth"]) else None
-            fund_lookup[(r["country"], r["code"])] = (gm, rg)
+            pb = r.get("pb")
+            fund_lookup[(r["country"], r["code"])] = {
+                "gross_margin": round(r["gross_margin"] * 100, 1) if pd.notna(r["gross_margin"]) else None,
+                "revenue_growth": round(r["revenue_growth"] * 100, 1) if pd.notna(r["revenue_growth"]) else None,
+                "pb": round(pb, 2) if pd.notna(pb) and 0 < pb < 100 else None,
+                "eps_ttm": round(r["eps_ttm"], 2) if pd.notna(r.get("eps_ttm")) else None,
+                "eps_fwd": round(r["eps_fwd"], 2) if pd.notna(r.get("eps_fwd")) else None,
+            }
     except Exception as e:
         print(f"基本面資料未載入(可先跑 fetch_fundamentals.py): {e}")
 
@@ -292,6 +297,54 @@ def build():
         print(f"供應鏈資料載入失敗: {e}")
         data["supply_links"] = []
         data["supply_last_updated"] = None
+
+    # 進場訊號：套用檢查清單規則(源自記憶體案例研究)，每次匯出時重算
+    try:
+        from case_study_theme import COUNTRIES as SIG_C
+        from case_study_theme import add_signals, load as sig_load, theme_series
+        from scan_signals import BROAD as SIG_BROAD
+        from scan_signals import find_triggers
+        sig_rank, sig_cls = sig_load()
+        tw_groups = set(sig_cls[sig_cls["country"] == "台"]["main_group"].unique())
+        cnts = sig_cls.groupby("main_group")["code"].count()
+        sig_themes = sorted(g for g in sig_cls["main_group"].unique()
+                            if g in tw_groups and cnts.get(g, 0) >= 3 and g not in SIG_BROAD)
+        sig_current, sig_history = [], []
+        for th in sig_themes:
+            sdf = add_signals(theme_series(sig_rank, sig_cls, th))
+            for t in find_triggers(sdf):
+                t["theme"] = th
+                sig_history.append(t)
+            r = sdf.iloc[-1]
+            rp = sdf.iloc[-2] if len(sdf) > 1 else None
+            rising = sum(1 for c in SIG_C if rp is not None and (r[f"sub_{c}"] - rp[f"sub_{c}"]) > 0)
+            max_share = max(r[f"sub_{c}"] for c in SIG_C) / r["score"] * 100 if r["score"] > 0 else 0
+            b_ok = (pd.notna(r["breadth_up"]) and r["breadth_up"] >= 50
+                    and rp is not None and pd.notna(rp["breadth_up"]) and rp["breadth_up"] >= 50)
+            chk = {
+                "theme": th, "score": round(float(r["score"]), 2),
+                "streak": int(r["連漲週"]), "streak_ok": bool(r["連漲週"] >= 2),
+                "breadth": int(r["breadth_up"]) if pd.notna(r["breadth_up"]) else None,
+                "breadth_prev": int(rp["breadth_up"]) if rp is not None and pd.notna(rp["breadth_up"]) else None,
+                "breadth_ok": bool(b_ok),
+                "rising": int(rising), "rising_ok": bool(rising >= 3),
+                "max_share": int(max_share), "share_ok": bool(max_share < 80),
+                "pos": int(r["位階"] * 100), "stage": r["階段"],
+            }
+            chk["n_ok"] = sum([chk["streak_ok"], chk["breadth_ok"], chk["rising_ok"], chk["share_ok"]])
+            if chk["n_ok"] == 4:
+                chk["verdict"] = "🟢 黃金訊號" if chk["pos"] < 70 else "🟡 觸發(高位階慎追)"
+            else:
+                chk["verdict"] = ""
+            sig_current.append(chk)
+        sig_current.sort(key=lambda x: (-x["n_ok"], -x["score"]))
+        sig_history.sort(key=lambda x: x["date"], reverse=True)
+        data["signal_current"] = sig_current
+        data["signal_history"] = sig_history
+    except Exception as e:
+        print(f"進場訊號計算失敗: {e}")
+        data["signal_current"] = []
+        data["signal_history"] = []
 
     # 產業鏈(橫向上中下游)資料
     try:
@@ -547,6 +600,12 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 .sc-fund { font-size: 11px; color: var(--tx3); margin-top: 2px; font-variant-numeric: tabular-nums; }
 .fund-up { color: var(--grn); }
 .fund-down { color: var(--red); }
+
+/* ── 進場訊號頁 ───────────────────────────────────────────────── */
+.rule-card { background: var(--sf); border: 1px solid var(--bd); border-radius: var(--r); padding: 14px 18px; margin-bottom: 8px; }
+.rule-item { font-size: 13px; color: var(--tx2); line-height: 1.8; }
+.sig-pass { color: var(--grn); font-weight: 700; }
+.sig-fail { color: var(--tx3); }
 .pos-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 700; white-space: nowrap; vertical-align: middle; margin-left: 4px; }
 .pos-badge.crown { background: var(--amb-bg); color: var(--amb); border: 1px solid var(--amb); }
 .pos-badge.star { background: var(--ac-bg); color: var(--ac); }
@@ -648,6 +707,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <button class="tab-btn" onclick="showTab(4)">新聞/目標價</button>
   <button class="tab-btn" onclick="showTab(5)">供應鏈</button>
   <button class="tab-btn" onclick="showTab(6)">動能雷達</button>
+  <button class="tab-btn" id="signalTabBtn" onclick="showTab(7)">進場訊號</button>
 </div>
 </div>
 
@@ -817,9 +877,27 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div id="radarFocusChips" class="chip-row"></div>
   <div class="hint">X軸=熱度分數(對數尺度，越右越強)，Y軸=選定期間的熱度變化(越上越加速)。用「顯示」篩選聚焦：熱度前15看主戰場、動能前15看正在動的、領漲+轉強只看多方。<b>點擊圓點可聚焦該題材(其他變暗)，可連點複選，再點一次取消</b>——聚焦後按▶播放即為單題材聚光燈動畫。點少於18個時全部標名。下方訊號表永遠含全部題材不受篩選影響。按▶播放或拖曳時間軸，可看題材在象限間的移動軌跡——順時針繞行即資金輪動。虛線=全題材中位數與零軸，分四象限：右上<b>領漲</b>(續抱)、左上<b>轉強</b>(進場甜蜜點)、右下<b>退潮</b>(減碼)、左下<b>弱勢</b>(避開)。灰色尾巴=最近4週軌跡，順時針轉動即教科書式輪動。只標注重點題材名稱，全部題材滑鼠停留可見。</div>
   <div id="radarChart" style="height:640px"></div>
-  <h3 class="sec-title">動能訊號表</h3>
+  <h3 class="sec-title">動能訊號表(雷達)</h3>
   <div class="hint">加速度=本期Δ−上期Δ(正值代表越漲越快)。連漲/連跌=週快照連續上升/下降次數。廣度=題材內個股排名較上週上升▲/下降▼家數(全市場)。階段規則：Δ>0且處自身高檔=主升段、Δ>0連漲2週+=發動、高檔轉弱=位階高但Δ轉負、連跌2週+=退潮。點欄位可排序。</div>
   <div class="scroll-box"><table id="momentumTable"></table></div>
+</div>
+
+<div class="tab-content" id="tab7">
+  <h3 class="sec-title">檢查清單規則（源自記憶體2025/9案例研究，勿刪）</h3>
+  <div class="rule-card">
+    <div class="rule-item">① <b>連漲 ≥2 週</b>——熱度分數連續上升，排除單週噪音</div>
+    <div class="rule-item">② <b>廣度 ≥50% 且連續兩週</b>——題材內過半個股排名上升，全族群行情而非一兩檔獨秀</div>
+    <div class="rule-item">③ <b>≥3 國子分數同步上升</b>——跨市場共振（記憶體9月真起漲=4國齊升）</div>
+    <div class="rule-item">④ <b>最大單國佔比 &lt;80%</b>——排除單國獨撐假訊號（2025年5-8月記憶體假訊號=韓國佔85%+）</div>
+    <div class="rule-item">⑤ 四條全過後看位階：<b>位階 &lt;70% = 🟢 黃金訊號</b>（歷史勝率~6成、所有大倍率案例都在這組）；<b>位階 ≥70% = 🟡 慎追</b>（勝率~3成半，要求廣度連3週等更嚴確認）</div>
+    <div class="rule-item" style="color:var(--tx3)">回測基礎：2025-04~2026-07共43次觸發，+8週熱度上漲比例42.5%，賺賠比不對稱（贏1.5-3.9x/輸0.7-0.9x）。倍率為熱度分數非股價。台股跟隨美韓約5週：「美韓子分數高檔+台股低檔」=預備窗。</div>
+  </div>
+  <h3 class="sec-title">本週檢查表（每次資料更新自動重算）</h3>
+  <div class="hint">依通過條數排序。✓/✗ 對應規則①~④；觸發中的題材可去「產業鏈視圖」看上中下游誰先動、動能雷達看象限位置。</div>
+  <div class="scroll-box"><table id="signalNowTable"></table></div>
+  <h3 class="sec-title">歷史訊號紀錄</h3>
+  <div class="hint">+8週/13週最大 = 觸發後熱度分數倍率(非股價)。對照概念股名單見專案資料夾 tmp_scan_members.txt。</div>
+  <div class="scroll-box"><table id="signalHistTable"></table></div>
 </div>
 
 <script>
@@ -1454,14 +1532,68 @@ function initSupplyChain() {
 // ── 本週摘要橫幅 ──────────────────────────────────────────────────────
 function renderBanner() {
   const s = DATA.weekly_summary || {};
-  if (!s.up && !s.down && !s.new_count) return;
   const parts = [];
   if (s.up) parts.push("本週最熱 <b class=\"wb-up\">" + s.up.g + " +" + s.up.d.toFixed(2) + "</b>");
   if (s.down) parts.push("最退潮 <b class=\"wb-down\">" + s.down.g + " " + s.down.d.toFixed(2) + "</b>");
   if (s.new_count) parts.push("新進榜 <b>" + s.new_count + "</b> 檔");
+  const sigs = (DATA.signal_current || []).filter(function(c) { return c.verdict; });
+  if (sigs.length) {
+    parts.push("🔔 進場訊號 <b class=\"wb-up\">" + sigs.map(function(c) { return c.theme + (c.pos < 70 ? "🟢" : "🟡"); }).join("、") + "</b>");
+  }
+  if (!parts.length) return;
   const el = document.getElementById("weeklyBanner");
   el.innerHTML = "📌 " + parts.join("<span class=\"wb-sep\"> · </span>");
   el.style.display = "flex";
+}
+
+// ── 進場訊號頁籤 ──────────────────────────────────────────────────────
+function renderSignalTab() {
+  const cur = DATA.signal_current || [];
+  const nSig = cur.filter(function(c) { return c.verdict; }).length;
+  const btn = document.getElementById("signalTabBtn");
+  if (btn && nSig) btn.innerHTML = "進場訊號 🔔" + nSig;
+
+  function pf(ok, text) {
+    return ok ? "<span class=\"sig-pass\">✓ " + text + "</span>" : "<span class=\"sig-fail\">✗ " + text + "</span>";
+  }
+  const rows = cur.map(function(c) {
+    return {
+      "題材": c.theme,
+      "判定": c.verdict || (c.n_ok + "/4"),
+      "n_ok": c.n_ok,
+      "①連漲": pf(c.streak_ok, c.streak + "週"),
+      "②廣度": pf(c.breadth_ok, (c.breadth === null ? "-" : c.breadth + "%") + "/" + (c.breadth_prev === null ? "-" : c.breadth_prev + "%")),
+      "③升國": pf(c.rising_ok, c.rising + "國"),
+      "④單國佔比": pf(c.share_ok, c.max_share + "%"),
+      "位階": c.pos,
+      "熱度分數": c.score,
+      "階段": c.stage,
+    };
+  });
+  const cols = [
+    {key: "題材", label: "題材"}, {key: "判定", label: "判定", sortKey: "n_ok", numeric: true},
+    {key: "①連漲", label: "①連漲≥2週"}, {key: "②廣度", label: "②廣度≥50%×2週"},
+    {key: "③升國", label: "③≥3國同升"}, {key: "④單國佔比", label: "④單國<80%"},
+    {key: "位階", label: "位階%", numeric: true}, {key: "熱度分數", label: "熱度分數", numeric: true},
+    {key: "階段", label: "階段"},
+  ];
+  const nowEl = document.getElementById("signalNowTable");
+  nowEl._sortState = {colIndex: 1, dir: -1};
+  buildTable(nowEl, cols, rows);
+
+  const hist = (DATA.signal_history || []).map(function(h) {
+    return {"日期": h.date, "題材": h.theme, "分數": h.score, "位階%": h.pos,
+            "廣度%": h.breadth, "升國": h.rising,
+            "+8週倍率": h.fwd8x, "13週最大": h.max13x,
+            "評價": h.pos < 70 ? "🟢低中位階" : "🟡高位階"};
+  });
+  const hcols = [
+    {key: "日期", label: "日期"}, {key: "題材", label: "題材"}, {key: "評價", label: "評價"},
+    {key: "分數", label: "分數", numeric: true}, {key: "位階%", label: "位階%", numeric: true},
+    {key: "廣度%", label: "廣度%", numeric: true}, {key: "升國", label: "升國", numeric: true},
+    {key: "+8週倍率", label: "+8週倍率", numeric: true}, {key: "13週最大", label: "13週最大", numeric: true},
+  ];
+  buildTable(document.getElementById("signalHistTable"), hcols, hist);
 }
 
 // ── 資金輪動熱力圖 ────────────────────────────────────────────────────
@@ -1893,6 +2025,7 @@ function init() {
   renderNewsTable();
   initSupplyChain();
   renderRadar();
+  renderSignalTab();
   if (DATA.company_list.length) renderCompanyHistory();
 }
 init();
