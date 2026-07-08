@@ -234,6 +234,19 @@ def build():
         prev_snap = rankings[rankings["snapshot_date"] == previous_date]
         prev_lookup = {(r["country"], r["code"]): r for _, r in prev_snap.iterrows()}
 
+    # 基本面(毛利率/營收YoY，由 fetch_fundamentals.py 每季更新)
+    fund_lookup = {}
+    try:
+        conn_f = sqlite3.connect(DB_PATH)
+        fund = pd.read_sql("SELECT country, code, gross_margin, revenue_growth FROM fundamentals", conn_f)
+        conn_f.close()
+        for _, r in fund.iterrows():
+            gm = round(r["gross_margin"] * 100, 1) if pd.notna(r["gross_margin"]) else None
+            rg = round(r["revenue_growth"] * 100, 1) if pd.notna(r["revenue_growth"]) else None
+            fund_lookup[(r["country"], r["code"])] = (gm, rg)
+    except Exception as e:
+        print(f"基本面資料未載入(可先跑 fetch_fundamentals.py): {e}")
+
     # 產業地位描述(取分類表第一筆非空值)
     pos_lookup = {}
     for _, r in classification.iterrows():
@@ -247,7 +260,10 @@ def build():
         rank_delta = None
         if info is not None and pinfo is not None:
             rank_delta = int(pinfo["rank"]) - int(info["rank"])  # 正值=排名上升(變熱)
+        gm_rg = fund_lookup.get((country, code), (None, None))
         return {
+            "gross_margin": gm_rg[0],
+            "revenue_growth": gm_rg[1],
             "position_note": pos_lookup.get((country, code), ""),
             "supplier_name": info["中文名稱"] if info is not None else code,
             "supplier_rank": int(info["rank"]) if info is not None else None,
@@ -528,6 +544,9 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 .sc-name { font-size: 13px; font-weight: 600; color: var(--tx); margin-bottom: 4px; line-height: 1.3; }
 .sc-product { font-size: 12px; color: var(--tx2); line-height: 1.5; margin-bottom: 4px; }
 .sc-amount { font-size: 12px; color: var(--ac); font-variant-numeric: tabular-nums; }
+.sc-fund { font-size: 11px; color: var(--tx3); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.fund-up { color: var(--grn); }
+.fund-down { color: var(--red); }
 .pos-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 700; white-space: nowrap; vertical-align: middle; margin-left: 4px; }
 .pos-badge.crown { background: var(--amb-bg); color: var(--amb); border: 1px solid var(--amb); }
 .pos-badge.star { background: var(--ac-bg); color: var(--ac); }
@@ -1290,7 +1309,18 @@ function buildCardHTML(l, showCountry) {
          "<div class=\"sc-name\">" + (l.supplier_name || l.supplier_code) + posBadge + "</div>" +
          "<div class=\"sc-product\">&#9658; " + l.product + "</div>" +
          (l.supplier_amount_yi ? "<div class=\"sc-amount\">" + l.supplier_amount_yi + "</div>" : "") +
+         buildFundHTML(l) +
          "</div>";
+}
+
+function buildFundHTML(l) {
+  if (l.gross_margin === null || l.gross_margin === undefined) return "";
+  let rg = "";
+  if (l.revenue_growth !== null && l.revenue_growth !== undefined) {
+    const cls = l.revenue_growth >= 0 ? "fund-up" : "fund-down";
+    rg = "｜營收<span class=\"" + cls + "\">" + (l.revenue_growth >= 0 ? "+" : "") + l.revenue_growth + "%</span>";
+  }
+  return "<div class=\"sc-fund\">毛利 " + l.gross_margin + "%" + rg + "</div>";
 }
 
 // ── 產業鏈視圖(上中下游) ─────────────────────────────────────────────
