@@ -334,6 +334,24 @@ def build():
                 "max_share": int(max_share), "share_ok": bool(max_share < 80),
                 "pos": int(r["位階"] * 100), "stage": r["階段"],
             }
+            # 基本面確認：題材成員中 EPS預估上修 與 季營收YoY為正 的比例
+            mem = sig_cls[sig_cls["main_group"] == th][["country", "code"]].drop_duplicates()
+            eps_up = eps_tot = rg_up = rg_tot = 0
+            for _, mr in mem.iterrows():
+                fv = fund_lookup.get((mr["country"], mr["code"]))
+                if not fv:
+                    continue
+                et, ef = fv.get("eps_ttm"), fv.get("eps_fwd")
+                if et is not None and ef is not None:
+                    eps_tot += 1
+                    if (et <= 0 and ef > 0) or (et > 0 and ef / et >= 1.05):
+                        eps_up += 1
+                if fv.get("revenue_growth") is not None:
+                    rg_tot += 1
+                    if fv["revenue_growth"] > 0:
+                        rg_up += 1
+            chk["eps_up_pct"] = int(eps_up / eps_tot * 100) if eps_tot else None
+            chk["rg_up_pct"] = int(rg_up / rg_tot * 100) if rg_tot else None
             chk["n_ok"] = sum([chk["streak_ok"], chk["breadth_ok"], chk["rising_ok"], chk["share_ok"]])
             if chk["n_ok"] == 4:
                 chk["verdict"] = "🟢 黃金訊號" if chk["pos"] < 70 else "🟡 觸發(高位階慎追)"
@@ -893,7 +911,8 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     <div class="rule-item">③ <b>≥3 國子分數同步上升</b>——跨市場共振（記憶體9月真起漲=4國齊升）</div>
     <div class="rule-item">④ <b>最大單國佔比 &lt;80%</b>——排除單國獨撐假訊號（2025年5-8月記憶體假訊號=韓國佔85%+）</div>
     <div class="rule-item">⑤ 四條全過後看位階：<b>位階 &lt;70% = 🟢 黃金訊號</b>（歷史勝率~6成、所有大倍率案例都在這組）；<b>位階 ≥70% = 🟡 慎追</b>（勝率~3成半，要求廣度連3週等更嚴確認）</div>
-    <div class="rule-item" style="color:var(--tx3)">回測基礎：2025-04~2026-07共43次觸發，+8週熱度上漲比例42.5%，賺賠比不對稱（贏1.5-3.9x/輸0.7-0.9x）。倍率為熱度分數非股價。台股跟隨美韓約5週：「美韓子分數高檔+台股低檔」=預備窗。</div>
+    <div class="rule-item">⑥ <b>基本面確認（加分項）</b>——訊號觸發時看題材成員「EPS預估上修比例」與「季營收YoY為正比例」：兩者過半=資金與基本面共振，信心加級；資金熱但基本面比例低=純題材炒作，減碼心態。注意：此欄為當下快照，無法回測（歷史預估值不可得），僅供前瞻參考</div>
+    <div class="rule-item" style="color:var(--tx3)">回測基礎：2025-04~2026-07共43次觸發，+8週熱度上漲比例42.5%，賺賠比不對稱（贏1.5-3.9x/輸0.7-0.9x）。倍率為熱度分數非股價。台股跟隨美韓約5週：「美韓子分數高檔+台股低檔」=預備窗。已知盲點：微題材（ABF載板/導線架等細分產品層級）的脈衝式行情會被規則①②漏接，微題材專用規則開發中。</div>
   </div>
   <h3 class="sec-title">本週檢查表（每次資料更新自動重算）</h3>
   <div class="hint">依通過條數排序。✓/✗ 對應規則①~④；觸發中的題材可去「產業鏈視圖」看上中下游誰先動、動能雷達看象限位置。</div>
@@ -1587,6 +1606,8 @@ function renderSignalTab() {
       "位階": c.pos,
       "熱度分數": c.score,
       "階段": c.stage,
+      "基本面": (c.eps_up_pct === null ? "—" : "EPS↗" + c.eps_up_pct + "%") + "｜" + (c.rg_up_pct === null ? "—" : "營收+" + c.rg_up_pct + "%"),
+      "eps_up_pct": c.eps_up_pct,
     };
   });
   const cols = [
@@ -1594,6 +1615,7 @@ function renderSignalTab() {
     {key: "①連漲", label: "①連漲≥2週"}, {key: "②廣度", label: "②廣度≥50%×2週"},
     {key: "③升國", label: "③≥3國同升"}, {key: "④單國佔比", label: "④單國<80%"},
     {key: "位階", label: "位階%", numeric: true}, {key: "熱度分數", label: "熱度分數", numeric: true},
+    {key: "基本面", label: "⑥基本面確認", sortKey: "eps_up_pct", numeric: true},
     {key: "階段", label: "階段"},
   ];
   const nowEl = document.getElementById("signalNowTable");
