@@ -265,10 +265,13 @@ def build():
         rank_delta = None
         if info is not None and pinfo is not None:
             rank_delta = int(pinfo["rank"]) - int(info["rank"])  # 正值=排名上升(變熱)
-        gm_rg = fund_lookup.get((country, code), (None, None))
+        f = fund_lookup.get((country, code), {})
         return {
-            "gross_margin": gm_rg[0],
-            "revenue_growth": gm_rg[1],
+            "gross_margin": f.get("gross_margin"),
+            "revenue_growth": f.get("revenue_growth"),
+            "pb": f.get("pb"),
+            "eps_ttm": f.get("eps_ttm"),
+            "eps_fwd": f.get("eps_fwd"),
             "position_note": pos_lookup.get((country, code), ""),
             "supplier_name": info["中文名稱"] if info is not None else code,
             "supplier_rank": int(info["rank"]) if info is not None else None,
@@ -849,7 +852,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div id="scCards"></div>
   </div>
   <div id="scChainView" style="display:none">
-    <div class="hint">選一條產業鏈，看上游材料/設備 → 中游製造 → 下游應用的跨國全貌。卡片按資金流向排名排序，左色條=熱度(紅=前50、琥珀=前150)，▲▼=排名週變化。</div>
+    <div class="hint">選一條產業鏈，看上游材料/設備 → 中游製造 → 下游應用的跨國全貌。卡片按資金流向排名排序，左色條=熱度(紅=前50、琥珀=前150)，▲▼=排名週變化。基本面欄(yfinance季度值，每季更新)：毛利率、<b>季營收YoY</b>(最新季vs去年同季，非台股月營收)、PB股價淨值比(循環股位置參考)、EPS預估方向(forward vs trailing，↗=分析師預估成長)。</div>
     <div class="sc-anchors" id="chainBtns"></div>
     <div class="chain-stages" id="chainStages"></div>
   </div>
@@ -1392,13 +1395,29 @@ function buildCardHTML(l, showCountry) {
 }
 
 function buildFundHTML(l) {
-  if (l.gross_margin === null || l.gross_margin === undefined) return "";
-  let rg = "";
+  const line1 = [], line2 = [];
+  if (l.gross_margin !== null && l.gross_margin !== undefined) line1.push("毛利 " + l.gross_margin + "%");
   if (l.revenue_growth !== null && l.revenue_growth !== undefined) {
     const cls = l.revenue_growth >= 0 ? "fund-up" : "fund-down";
-    rg = "｜營收<span class=\"" + cls + "\">" + (l.revenue_growth >= 0 ? "+" : "") + l.revenue_growth + "%</span>";
+    line1.push("季營收YoY<span class=\"" + cls + "\">" + (l.revenue_growth >= 0 ? "+" : "") + l.revenue_growth + "%</span>");
   }
-  return "<div class=\"sc-fund\">毛利 " + l.gross_margin + "%" + rg + "</div>";
+  if (l.pb !== null && l.pb !== undefined) line2.push("PB " + l.pb);
+  if (l.eps_ttm !== null && l.eps_ttm !== undefined && l.eps_fwd !== null && l.eps_fwd !== undefined) {
+    let label = "", cls = "fund-up";
+    if (l.eps_ttm <= 0 && l.eps_fwd > 0) label = "EPS轉盈↗";
+    else if (l.eps_ttm <= 0) { label = "EPS預估仍虧"; cls = "fund-down"; }
+    else {
+      const g = Math.round((l.eps_fwd / l.eps_ttm - 1) * 100);
+      if (g >= 5) label = "EPS預估↗+" + g + "%";
+      else if (g <= -5) { label = "EPS預估↘" + g + "%"; cls = "fund-down"; }
+      else { label = "EPS預估→持平"; cls = ""; }
+    }
+    line2.push(cls ? "<span class=\"" + cls + "\">" + label + "</span>" : label);
+  }
+  let html = "";
+  if (line1.length) html += "<div class=\"sc-fund\">" + line1.join("｜") + "</div>";
+  if (line2.length) html += "<div class=\"sc-fund\">" + line2.join("｜") + "</div>";
+  return html;
 }
 
 // ── 產業鏈視圖(上中下游) ─────────────────────────────────────────────
