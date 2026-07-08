@@ -165,15 +165,21 @@ def build():
         full_table_out["金額Δ億台幣"] = (full_table_out["金額億台幣_num"] - full_table_out["prev_amt"]).round(0)
     full_records = full_table_out.sort_values(["country", "rank"]).to_dict("records")
 
-    history_cols = ["snapshot_date", "country", "code", "中文名稱", "rank", "金額億", "金額億台幣", "金額億台幣_num"]
+    # 緊湊格式省空間：rows = [[快照索引, 排名, 金額億(原幣整數), 金額億台幣(整數或null)], ...]
+    # 格式化(單位/千分位)由前端渲染時處理
+    date_idx = {d: i for i, d in enumerate(all_dates)}
+    history_cols = ["snapshot_date", "country", "code", "中文名稱", "rank", "金額億_num", "金額億台幣_num"]
     history = rankings[history_cols].sort_values(["country", "code", "snapshot_date"])
     company_history = {}
     for (country, code), g in history.groupby(["country", "code"]):
         key = f"{country}|{code}"
-        company_history[key] = {
-            "label": f"{country} {code} {g['中文名稱'].iloc[0]}",
-            "rows": g[["snapshot_date", "rank", "金額億", "金額億台幣", "金額億台幣_num"]].to_dict("records"),
-        }
+        rows = []
+        for _, r in g.iterrows():
+            twd = r["金額億台幣_num"]
+            rows.append([date_idx[r["snapshot_date"]], int(r["rank"]),
+                         int(round(r["金額億_num"])),
+                         int(round(twd)) if twd is not None and pd.notna(twd) else None])
+        company_history[key] = {"label": f"{country} {code} {g['中文名稱'].iloc[0]}", "rows": rows}
 
     # 族群(題材)隨時間變化的歷史，每個歷史snapshot都重算一次熱度分數
     theme_history = {}
@@ -1176,7 +1182,7 @@ function renderCompanyHistory() {
     const e = DATA.company_history[k];
     if (!e) return null;
     return {
-      x: e.rows.map(r => r.snapshot_date), y: e.rows.map(r => r.rank),
+      x: e.rows.map(r => DATA.snapshot_dates[r[0]]), y: e.rows.map(r => r[1]),
       mode: "lines+markers", name: e.label,
       line: {color: COMPARE_COLORS[i % COMPARE_COLORS.length], width: 2},
     };
@@ -1188,12 +1194,23 @@ function renderCompanyHistory() {
     paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
     legend: {orientation: "h", y: -0.25},
   }, {responsive: true});
-  const last = DATA.company_history[histCompanies[histCompanies.length - 1]];
+  const lastKey = histCompanies[histCompanies.length - 1];
+  const HIST_UNIT = {台: "億元", 日: "億日圓", 韓: "億韓元", 陸: "億人民幣", 美: "億美元"};
+  const e2 = DATA.company_history[lastKey];
+  const unit = HIST_UNIT[lastKey.split("|")[0]] || "億";
+  const dispRows = (e2 ? e2.rows : []).map(function(r) {
+    return {
+      snapshot_date: DATA.snapshot_dates[r[0]], rank: r[1],
+      "金額億": r[2].toLocaleString() + unit,
+      "金額億台幣": r[3] === null ? "—" : r[3].toLocaleString() + "億元",
+      "金額億台幣_num": r[3],
+    };
+  });
   const cols = [
     {key: "snapshot_date", label: "日期"}, {key: "rank", label: "排名", numeric: true},
     {key: "金額億", label: "金額(億)"}, {key: "金額億台幣", label: "金額(億台幣)", numeric: true, sortKey: "金額億台幣_num"},
   ];
-  buildTable(document.getElementById("historyTable"), cols, last ? last.rows : []);
+  buildTable(document.getElementById("historyTable"), cols, dispRows);
 }
 
 function onHistModeChange() {
