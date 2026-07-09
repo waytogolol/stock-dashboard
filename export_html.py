@@ -165,8 +165,17 @@ def build():
         full_table_out["金額Δ億台幣"] = (full_table_out["金額億台幣_num"] - full_table_out["prev_amt"]).round(0)
     full_records = full_table_out.sort_values(["country", "rank"]).to_dict("records")
 
-    # 緊湊格式省空間：rows = [[快照索引, 排名, 金額億(原幣整數), 金額億台幣(整數或null)], ...]
+    # 緊湊格式省空間：rows = [[快照索引, 排名, 金額億(原幣整數), 金額億台幣(整數或null), 週收盤價或null], ...]
     # 格式化(單位/千分位)由前端渲染時處理
+    close_lookup = {}
+    try:
+        conn_p = sqlite3.connect(DB_PATH)
+        wc = pd.read_sql("SELECT country, code, snapshot_date, close FROM weekly_close", conn_p)
+        conn_p.close()
+        close_lookup = {(r["country"], r["code"], r["snapshot_date"]): r["close"] for _, r in wc.iterrows()}
+        print(f"週收盤價載入 {len(close_lookup)} 筆")
+    except Exception as e:
+        print(f"週收盤價未載入(可先跑 fetch_prices.py): {e}")
     date_idx = {d: i for i, d in enumerate(all_dates)}
     history_cols = ["snapshot_date", "country", "code", "中文名稱", "rank", "金額億_num", "金額億台幣_num"]
     history = rankings[history_cols].sort_values(["country", "code", "snapshot_date"])
@@ -176,9 +185,11 @@ def build():
         rows = []
         for _, r in g.iterrows():
             twd = r["金額億台幣_num"]
+            cl = close_lookup.get((country, code, r["snapshot_date"]))
             rows.append([date_idx[r["snapshot_date"]], int(r["rank"]),
                          int(round(r["金額億_num"])),
-                         int(round(twd)) if twd is not None and pd.notna(twd) else None])
+                         int(round(twd)) if twd is not None and pd.notna(twd) else None,
+                         cl if cl is not None and pd.notna(cl) else None])
         company_history[key] = {"label": f"{country} {code} {g['中文名稱'].iloc[0]}", "rows": rows}
 
     # 族群(題材)隨時間變化的歷史，每個歷史snapshot都重算一次熱度分數
@@ -473,6 +484,31 @@ def build():
         print(f"產業鏈資料載入失敗: {e}")
         data["industry_chains"] = []
         data["industry_chain_list"] = []
+
+    # 公司→題材/產業鏈歸屬(公司歷史頁資訊面板用)
+    try:
+        grp_map = {}
+        for _, r in classification.iterrows():
+            grp_map.setdefault((r["country"], r["code"]), []).append((r["main_group"], r["sub_product"]))
+        chain_map = {}
+        for l in data.get("industry_chains", []):
+            k = (l["supplier_country"], l["supplier_code"])
+            chain_map.setdefault(k, [])
+            if l["chain"] not in chain_map[k]:
+                chain_map[k].append(l["chain"])
+        comp_info = {}
+        for key in company_history:
+            country, code = key.split("|", 1)
+            gs = grp_map.get((country, code), [])
+            comp_info[key] = {
+                "g": sorted(set(g for g, s in gs)),
+                "sub": "、".join(sorted(set(s for g, s in gs if pd.notna(s) and s))[:3]),
+                "ch": chain_map.get((country, code), []),
+            }
+        data["company_info"] = comp_info
+    except Exception as e:
+        print(f"公司資訊面板資料失敗: {e}")
+        data["company_info"] = {}
 
     return data
 
@@ -897,7 +933,8 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     </div>
     <input type="hidden" id="themeHistPick">
   </div>
-  <div id="historyChart" style="height:400px"></div>
+  <div id="historyChart" style="height:420px"></div>
+  <div id="companyInfoPanel"></div>
   <table id="historyTable"></table>
 </div>
 
@@ -1281,9 +1318,23 @@ function renderCompanyHistory() {
     };
   }).filter(Boolean);
   const single = histCompanies.length === 1 ? DATA.company_history[histCompanies[0]] : null;
+  if (single) {
+    const px = [], py = [];
+    single.rows.forEach(function(r) {
+      if (r.length > 4 && r[4] !== null && r[4] !== undefined) {
+        px.push(DATA.snapshot_dates[r[0]]);
+        py.push(r[4]);
+      }
+    });
+    if (px.length) {
+      traces.push({x: px, y: py, mode: "lines", name: "股價(週收盤,右軸)", yaxis: "y2",
+                   line: {color: "#d49610", width: 2}});
+    }
+  }
   Plotly.newPlot("historyChart", traces, {
-    title: single ? single.label + " 排名變化(數字越小越熱)" : "多公司排名對比(數字越小越熱)",
-    yaxis: {autorange: "reversed", title: "排名"},
+    title: single ? single.label + " 資金排名 vs 股價" : "多公司排名對比(數字越小越熱)",
+    yaxis: {autorange: "reversed", title: "資金排名(左,越小越熱)"},
+    yaxis2: {title: "股價", overlaying: "y", side: "right", showgrid: false},
     paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
     legend: {orientation: "h", y: -0.25},
   }, {responsive: true});
@@ -1304,6 +1355,54 @@ function renderCompanyHistory() {
     {key: "金額億", label: "金額(億)"}, {key: "金額億台幣", label: "金額(億台幣)", numeric: true, sortKey: "金額億台幣_num"},
   ];
   buildTable(document.getElementById("historyTable"), cols, dispRows);
+  renderCompanyInfo(lastKey);
+}
+
+function jumpToCompany(key) {
+  if (!DATA.company_history[key]) return;
+  histCompanies = [key];
+  document.getElementById("companyPick").value = key;
+  document.getElementById("companySearch").value = DATA.company_history[key].label;
+  renderCompanyChips();
+  renderCompanyHistory();
+}
+
+function renderCompanyInfo(key) {
+  const el = document.getElementById("companyInfoPanel");
+  const info = (DATA.company_info || {})[key];
+  if (!info) { el.innerHTML = ""; return; }
+  const e = DATA.company_history[key];
+  const parts = key.split("|");
+  let html = "<div class=\"rule-card\" style=\"margin:10px 0\">";
+  html += "<div class=\"rule-item\"><b>" + e.label + "</b>　所屬題材：" +
+          (info.g.length ? info.g.map(function(g) { return "<span class=\"chip\" style=\"padding:1px 8px\">" + g + "</span>"; }).join(" ") : "未分類") +
+          (info.sub ? "　<span style=\"color:var(--tx3)\">" + info.sub + "</span>" : "") + "</div>";
+  if (!info.ch.length) {
+    html += "<div class=\"rule-item\" style=\"color:var(--tx3);font-size:12px\">此公司不在已建的16條產業鏈中（產業鏈視圖僅涵蓋主要製造業供應鏈）</div>";
+  }
+  info.ch.forEach(function(cn) {
+    const links = (DATA.industry_chains || []).filter(function(l) { return l.chain === cn; });
+    html += "<div class=\"rule-item\" style=\"margin-top:8px\"><b>產業鏈：" + cn + "</b>（點成員可切換）</div>";
+    ["上游", "中游", "下游"].forEach(function(st) {
+      const ms = links.filter(function(l) { return l.stage === st; })
+        .sort(function(a, b) { return (a.supplier_rank || 9999) - (b.supplier_rank || 9999); });
+      if (!ms.length) return;
+      const txt = ms.map(function(l) {
+        const k2 = l.supplier_country + "|" + l.supplier_code;
+        const label = (COUNTRY_FLAG[l.supplier_country] || "") + (l.supplier_name || l.supplier_code) + (l.supplier_rank ? "#" + l.supplier_rank : "");
+        if (l.supplier_country === parts[0] && l.supplier_code === parts[1]) {
+          return "<b style=\"color:var(--ac)\">▶" + label + "</b>";
+        }
+        if (DATA.company_history[k2]) {
+          return "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('" + k2 + "')\" style=\"color:var(--tx2);text-decoration:none;border-bottom:1px dotted var(--tx3)\">" + label + "</a>";
+        }
+        return "<span style=\"color:var(--tx3)\">" + label + "</span>";
+      }).join("　");
+      html += "<div class=\"rule-item\" style=\"font-size:12px;line-height:2\">" + st + "：" + txt + "</div>";
+    });
+  });
+  html += "</div>";
+  el.innerHTML = html;
 }
 
 function onHistModeChange() {
@@ -1314,6 +1413,7 @@ function onHistModeChange() {
 }
 
 function renderThemeHistory() {
+  document.getElementById("companyInfoPanel").innerHTML = "";
   const g = document.getElementById("themeHistPick").value;
   const rows = DATA.theme_history[g] || [];
   Plotly.newPlot("historyChart", [{
