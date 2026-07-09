@@ -510,6 +510,64 @@ def build():
         print(f"公司資訊面板資料失敗: {e}")
         data["company_info"] = {}
 
+    # 資料健康狀態列：各資料源最新日期+新鮮度(門檻依各源的正常更新節奏)
+    try:
+        from datetime import date as _date
+        from datetime import datetime as _dt
+        conn_h = sqlite3.connect(DB_PATH)
+        today = _date.today()
+
+        def _q(sql):
+            try:
+                return conn_h.execute(sql).fetchone()[0]
+            except Exception:
+                return None
+
+        def _item(name, latest, ok_days, warn_days, cadence, disp=None, age_from=None):
+            if not latest:
+                return {"n": name, "d": "無資料", "s": "crit", "c": cadence}
+            try:
+                base = _dt.strptime((age_from or latest)[:10], "%Y-%m-%d").date()
+            except ValueError:
+                return {"n": name, "d": disp or latest, "s": "warn", "c": cadence}
+            age = (today - base).days
+            s = "ok" if age <= ok_days else ("warn" if age <= warn_days else "crit")
+            return {"n": name, "d": disp or latest[:10], "s": s, "a": age, "c": cadence}
+
+        health = [
+            _item("資金排行", _q("SELECT MAX(snapshot_date) FROM rankings"), 9, 16, "每週"),
+            _item("週收盤價", _q("SELECT MAX(snapshot_date) FROM weekly_close"), 9, 16, "每週"),
+            _item("匯率", _q("SELECT MAX(snapshot_date) FROM fx_rates"), 9, 16, "每週"),
+        ]
+        ym = _q("SELECT MAX(year_month) FROM tw_monthly_revenue")   # 民國YYYMM
+        if ym:
+            y, m = int(str(ym)[:-2]) + 1911, int(str(ym)[-2:])
+            # 以該月月底起算：次月10日公告完+緩衝，超過45天=下個月營收該補了
+            me = _date(y + (1 if m == 12 else 0), 1 if m == 12 else m + 1, 1)
+            health.append(_item("月營收(官方)", str(me), 45, 75, "每月10日後",
+                                disp=f"{y}-{m:02d}", age_from=str(me)))
+        else:
+            health.append(_item("月營收(官方)", None, 0, 0, "每月10日後"))
+        qt = _q("SELECT MAX(quarter) FROM tw_quarterly_fin")        # 民國YYYQn
+        if qt:
+            qy, qn = int(str(qt).split("Q")[0]) + 1911, int(str(qt).split("Q")[1])
+            qe = [None, _date(qy, 3, 31), _date(qy, 6, 30), _date(qy, 9, 30), _date(qy, 12, 31)][qn]
+            health.append(_item("季財報(官方)", str(qe), 140, 200, "每季報後",
+                                disp=f"{qy}Q{qn}", age_from=str(qe)))
+        else:
+            health.append(_item("季財報(官方)", None, 0, 0, "每季報後"))
+        health += [
+            _item("PB估值(官方)", _q("SELECT MAX(updated) FROM tw_valuation"), 40, 80, "每月"),
+            _item("五國基本面(yf)", _q("SELECT MAX(updated) FROM fundamentals"), 100, 150, "每季"),
+            _item("微題材毛利", _q("SELECT MAX(updated) FROM margin_history"), 100, 150, "每季"),
+            _item("供應鏈標註", data.get("supply_last_updated"), 60, 120, "手動(Gemini)"),
+        ]
+        conn_h.close()
+        data["health"] = health
+    except Exception as e:
+        print(f"資料健康列計算失敗: {e}")
+        data["health"] = []
+
     return data
 
 
@@ -741,8 +799,9 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 .sc-product { font-size: 12px; color: var(--tx2); line-height: 1.5; margin-bottom: 4px; }
 .sc-amount { font-size: 12px; color: var(--ac); font-variant-numeric: tabular-nums; }
 .sc-fund { font-size: 11px; color: var(--tx3); margin-top: 2px; font-variant-numeric: tabular-nums; }
-.fund-up { color: var(--grn); }
-.fund-down { color: var(--red); }
+/* 台股慣例：紅=漲/成長、綠=跌/衰退 */
+.fund-up { color: var(--red); }
+.fund-down { color: var(--grn); }
 
 /* ── 進場訊號頁 ───────────────────────────────────────────────── */
 .rule-card { background: var(--sf); border: 1px solid var(--bd); border-radius: var(--r); padding: 14px 18px; margin-bottom: 8px; }
@@ -754,8 +813,8 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 .pos-badge.star { background: var(--ac-bg); color: var(--ac); }
 .pos-badge.silver { background: var(--sf2); color: var(--tx2); border: 1px solid var(--bdm); }
 .sc-delta { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.sc-delta.up { color: var(--grn); }
-.sc-delta.down { color: var(--red); }
+.sc-delta.up { color: var(--red); }
+.sc-delta.down { color: var(--grn); }
 .sc-delta.flat { color: var(--tx3); }
 
 /* ── 本週摘要橫幅 ──────────────────────────────────────────────── */
@@ -815,6 +874,18 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 }
 .chip-x { cursor: pointer; font-weight: 700; }
 .chip-x:hover { color: var(--red); }
+.theme-link { color: inherit; text-decoration: none; border-bottom: 1px dotted var(--tx3); cursor: pointer; }
+.theme-link:hover { color: var(--ac); border-bottom-color: var(--ac); }
+.health-bar {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center;
+  padding: 10px 28px 16px; border-top: 1px solid var(--bd);
+  font-size: 11px; color: var(--tx3);
+}
+.health-item { white-space: nowrap; }
+.health-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; vertical-align: 1px; }
+.health-dot.ok { background: var(--grn); }
+.health-dot.warn { background: var(--amb); }
+.health-dot.crit { background: var(--red); }
 
 /* ── 供應鏈視圖切換 + 產業鏈上中下游 ─────────────────────────── */
 .sc-view-switch { display: flex; gap: 8px; margin-bottom: 16px; }
@@ -844,13 +915,13 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 <div id="weeklyBanner" class="week-banner" style="display:none"></div>
 <div class="tabs">
   <button class="tab-btn active" onclick="showTab(0)">題材跨市場比較</button>
-  <button class="tab-btn" onclick="showTab(1)">排行榜明細</button>
+  <button class="tab-btn" id="signalTabBtn" onclick="showTab(7)">進場訊號</button>
+  <button class="tab-btn" onclick="showTab(6)">動能雷達</button>
+  <button class="tab-btn" onclick="showTab(5)">供應鏈</button>
   <button class="tab-btn" onclick="showTab(2)">公司歷史趨勢</button>
+  <button class="tab-btn" onclick="showTab(1)">排行榜明細</button>
   <button class="tab-btn" onclick="showTab(3)">財報/法說會提醒</button>
   <button class="tab-btn" onclick="showTab(4)">新聞/目標價</button>
-  <button class="tab-btn" onclick="showTab(5)">供應鏈</button>
-  <button class="tab-btn" onclick="showTab(6)">動能雷達</button>
-  <button class="tab-btn" id="signalTabBtn" onclick="showTab(7)">進場訊號</button>
 </div>
 </div>
 
@@ -1058,6 +1129,8 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div class="scroll-box"><table id="microHistTable"></table></div>
 </div>
 
+<div class="health-bar" id="healthBar"></div>
+
 <script>
 const DATA = __DATA_JSON__;
 
@@ -1116,15 +1189,18 @@ function onHeaderClick(tableId, colIndex) {
 }
 
 function showTab(i) {
-  document.querySelectorAll(".tab-btn").forEach((b, idx) => b.classList.toggle("active", idx === i));
-  document.querySelectorAll(".tab-content").forEach((t, idx) => t.classList.toggle("active", idx === i));
+  // 按鈕順序與內容區塊順序脫鉤：用 onclick 內容/元素 id 對應，不用位置索引
+  document.querySelectorAll(".tab-btn").forEach(b =>
+    b.classList.toggle("active", (b.getAttribute("onclick") || "").indexOf("showTab(" + i + ")") >= 0));
+  document.querySelectorAll(".tab-content").forEach(t => t.classList.toggle("active", t.id === "tab" + i));
 }
 
 function renderThemePivot() {
   const onlyThematic = document.getElementById("onlyThematic").checked;
-  const pivot = onlyThematic ? DATA.theme_pivot_thematic.slice(0, 10) : DATA.theme_pivot_all;
+  const pivotRaw = onlyThematic ? DATA.theme_pivot_thematic.slice(0, 10) : DATA.theme_pivot_all;
+  const pivot = pivotRaw.map(r => Object.assign({}, r, {main_group_disp: themeLink(r.main_group)}));
   const cols = [
-    {key: "main_group", label: "主族群"},
+    {key: "main_group_disp", label: "主族群", sortKey: "main_group"},
     {key: "熱度分數", label: "熱度分數", numeric: true},
   ];
   if (DATA.previous_date) {
@@ -1786,7 +1862,7 @@ function renderBanner() {
   if (s.new_count) parts.push("新進榜 <b>" + s.new_count + "</b> 檔");
   const sigs = (DATA.signal_current || []).filter(function(c) { return c.verdict; });
   if (sigs.length) {
-    parts.push("🔔 進場訊號 <b class=\"wb-up\">" + sigs.map(function(c) { return c.theme + (c.pos < 70 ? "🟢" : "🟡"); }).join("、") + "</b>");
+    parts.push("🔔 進場訊號 <b class=\"wb-up\">" + sigs.map(function(c) { return themeLink(c.theme) + (c.pos < 70 ? "🟢" : "🟡"); }).join("、") + "</b>");
   }
   const mic = (DATA.micro_current || []).filter(function(c) { return c.level; });
   if (mic.length) {
@@ -1853,7 +1929,7 @@ function renderSignalTab() {
   }
   const rows = cur.map(function(c) {
     return {
-      "題材": c.theme,
+      "題材": themeLink(c.theme), "_g": c.theme,
       "判定": c.verdict || (c.n_ok + "/4"),
       "n_ok": c.n_ok,
       "①連漲": pf(c.streak_ok, c.streak + "週"),
@@ -1868,7 +1944,7 @@ function renderSignalTab() {
     };
   });
   const cols = [
-    {key: "題材", label: "題材"}, {key: "判定", label: "判定", sortKey: "n_ok", numeric: true},
+    {key: "題材", label: "題材", sortKey: "_g"}, {key: "判定", label: "判定", sortKey: "n_ok", numeric: true},
     {key: "①連漲", label: "①連漲≥2週"}, {key: "②廣度", label: "②廣度≥50%×2週"},
     {key: "③升國", label: "③≥3國同升"}, {key: "④單國佔比", label: "④單國<80%"},
     {key: "位階", label: "位階%", numeric: true}, {key: "熱度分數", label: "熱度分數", numeric: true},
@@ -1880,13 +1956,13 @@ function renderSignalTab() {
   buildTable(nowEl, cols, rows);
 
   const hist = (DATA.signal_history || []).map(function(h) {
-    return {"日期": h.date, "題材": h.theme, "分數": h.score, "位階%": h.pos,
+    return {"日期": h.date, "題材": themeLink(h.theme), "_g": h.theme, "分數": h.score, "位階%": h.pos,
             "廣度%": h.breadth, "升國": h.rising,
             "+8週倍率": h.fwd8x, "13週最大": h.max13x,
             "評價": h.pos < 70 ? "🟢低中位階" : "🟡高位階"};
   });
   const hcols = [
-    {key: "日期", label: "日期"}, {key: "題材", label: "題材"}, {key: "評價", label: "評價"},
+    {key: "日期", label: "日期"}, {key: "題材", label: "題材", sortKey: "_g"}, {key: "評價", label: "評價"},
     {key: "分數", label: "分數", numeric: true}, {key: "位階%", label: "位階%", numeric: true},
     {key: "廣度%", label: "廣度%", numeric: true}, {key: "升國", label: "升國", numeric: true},
     {key: "+8週倍率", label: "+8週倍率", numeric: true}, {key: "13週最大", label: "13週最大", numeric: true},
@@ -1952,7 +2028,7 @@ function renderRotationHeatmap() {
     const vals = dates.map(function(d) { return byDate[d]; }).filter(function(v) { return v !== undefined; });
     if (!vals.length) return;
     const mx = Math.max.apply(null, vals), mn = Math.min.apply(null, vals);
-    html += "<tr><td class=\"hm-name\">" + g + " <span class=\"hm-score\">" + latestScore[g].toFixed(1) + "·位階" + Math.round(posMap[g] * 100) + "%</span></td>";
+    html += "<tr><td class=\"hm-name\">" + themeLink(g) + " <span class=\"hm-score\">" + latestScore[g].toFixed(1) + "·位階" + Math.round(posMap[g] * 100) + "%</span></td>";
     dates.forEach(function(d) {
       const v = byDate[d];
       if (v === undefined) { html += "<td class=\"hm-cell hm-empty\"></td>"; return; }
@@ -1991,6 +2067,27 @@ function radarClearFocus() {
   radarFocus = {};
   updateRadarFocusChips();
   radarRedraw();
+}
+
+// 全站題材名稱可點：跳到動能雷達並聚焦該題材
+function jumpToRadar(g) {
+  if (!DATA.theme_history || !DATA.theme_history[g]) return;
+  const thematicSet = {};
+  (DATA.theme_list_thematic || []).forEach(function(x) { thematicSet[x] = true; });
+  if (!thematicSet[g]) {
+    const cb = document.getElementById("radarIncludeBroad");
+    if (cb) cb.checked = true;   // 廣義分類(金融等)要先打開開關才會出現在雷達
+  }
+  radarFocus = {};
+  radarFocus[g] = true;
+  updateRadarFocusChips();
+  showTab(6);
+  renderRadar();
+}
+
+function themeLink(g) {
+  if (!DATA.theme_history || !DATA.theme_history[g]) return g;   // 微題材等不在雷達內的不加連結
+  return "<a class=\"theme-link\" href=\"javascript:void(0)\" onclick=\"jumpToRadar('" + g + "')\" title=\"跳到動能雷達聚焦此題材\">" + g + "</a>";
 }
 
 function updateRadarFocusChips() {
@@ -2265,7 +2362,7 @@ function drawRadarFrame(ei, withTable) {
   // 訊號表(只在時間軸停在最新時更新)
   if (withTable) {
     const cols = [
-      {key: "g", label: "題材"},
+      {key: "gDisp", label: "題材", sortKey: "g"},
       {key: "stage", label: "階段"},
       {key: "score", label: "熱度分數", numeric: true},
       {key: "delta", label: "Δ" + n + "週", numeric: true},
@@ -2278,8 +2375,22 @@ function drawRadarFrame(ei, withTable) {
     ];
     const tableEl = document.getElementById("momentumTable");
     tableEl._sortState = {colIndex: 3, dir: -1};
-    buildTable(tableEl, cols, rows);
+    buildTable(tableEl, cols, rows.map(function(r) { return Object.assign({}, r, {gDisp: themeLink(r.g)}); }));
   }
+}
+
+function renderHealthBar() {
+  const el = document.getElementById("healthBar");
+  const items = DATA.health || [];
+  if (!items.length) { el.style.display = "none"; return; }
+  const nWarn = items.filter(function(h) { return h.s !== "ok"; }).length;
+  let html = "<span style=\"font-weight:600;color:var(--tx2)\">資料健康" +
+             (nWarn ? " <span class=\"health-dot warn\"></span>" + nWarn + "項待更新" : " <span class=\"health-dot ok\"></span>全部正常") + "：</span>";
+  html += items.map(function(h) {
+    const tip = "更新節奏：" + h.c + (h.a !== undefined ? "｜距今" + h.a + "天" : "");
+    return "<span class=\"health-item\" title=\"" + tip + "\"><span class=\"health-dot " + h.s + "\"></span>" + h.n + " " + h.d + "</span>";
+  }).join("");
+  el.innerHTML = html;
 }
 
 function init() {
@@ -2325,6 +2436,7 @@ function init() {
   renderRadar();
   renderSignalTab();
   if (DATA.company_list.length) renderCompanyHistory();
+  renderHealthBar();
 }
 init();
 </script>
