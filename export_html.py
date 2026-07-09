@@ -982,6 +982,26 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 </div>
 
 <div class="tab-content" id="tab2">
+  <h3 class="sec-title" style="margin-top:0">族群共振（前幾大成員是否齊漲）</h3>
+  <div class="controls">
+    題材：<select id="resTheme" onchange="renderResonance()"></select>
+    範圍：<select id="resRange" onchange="renderResonance()">
+      <option value="13" selected>近13週(一季)</option>
+      <option value="26">近26週(半年)</option>
+      <option value="52">近52週(一年)</option>
+    </select>
+    成員數：<select id="resN" onchange="renderResonance()">
+      <option value="6" selected>前6大</option>
+      <option value="8">前8大</option>
+      <option value="10">前10大</option>
+    </select>
+    <span id="resScoreBadge"></span>
+  </div>
+  <div class="hint">上=成員週收盤歸一化(範圍起點=100)，線綁在一起走=共振；中=資金排名(越上面越熱)；下=滾動8週共振分數(成員週報酬兩兩相關均值，虛線0.7以上=強共振)。成員取該題材台股最新資金額前N大。點下方成員標籤可跳到單股檢視。</div>
+  <div id="resChart" style="height:620px"></div>
+  <div id="resChips" class="chip-row"></div>
+  <hr style="border:none;border-top:1px solid var(--bd);margin:20px 0">
+  <h3 class="sec-title" style="margin-top:0">個股/題材歷史</h3>
   <div class="controls">
     追蹤對象：
     <label><input type="radio" name="histMode" value="company" checked onchange="onHistModeChange()"> 公司</label>
@@ -1374,6 +1394,160 @@ function renderCompanyChips() {
   el.innerHTML = histCompanies.map(k => {
     const e = DATA.company_history[k];
     return `<span class="chip">${e ? e.label : k}<span class="chip-x" onclick="removeHistCompany('${k}')">×</span></span>`;
+  }).join("");
+}
+
+// ── 族群共振視圖：同題材前N大台股成員的股價/資金是否齊動 ──────────────
+const RES_COLORS = ["#3c8cf0", "#e84545", "#34b87a", "#d49610", "#a06ee0", "#4dc3d0", "#f06ba8", "#8a9a3c", "#c07840", "#6b7f91"];
+
+function resCorr(a, b) {
+  const xs = [], ys = [];
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== null && b[i] !== null) { xs.push(a[i]); ys.push(b[i]); }
+  }
+  if (xs.length < 5) return null;
+  const n = xs.length;
+  const mx = xs.reduce(function(s, v) { return s + v; }, 0) / n;
+  const my = ys.reduce(function(s, v) { return s + v; }, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+  }
+  return (sxx > 0 && syy > 0) ? sxy / Math.sqrt(sxx * syy) : null;
+}
+
+function initResonance() {
+  const cnt = {};
+  Object.keys(DATA.company_info || {}).forEach(function(k) {
+    if (k.indexOf("台|") !== 0 || !DATA.company_history[k]) return;
+    (DATA.company_info[k].g || []).forEach(function(g) { cnt[g] = (cnt[g] || 0) + 1; });
+  });
+  const score = {};
+  (DATA.theme_pivot_all || []).forEach(function(p) { score[p.main_group] = p["熱度分數"] || 0; });
+  const themes = Object.keys(cnt).filter(function(g) { return cnt[g] >= 3; });
+  themes.sort(function(a, b) { return (score[b] || 0) - (score[a] || 0); });
+  document.getElementById("resTheme").innerHTML = themes.map(function(g) {
+    return "<option value=\"" + g + "\">" + g + "（" + (score[g] || 0).toFixed(1) + "）</option>";
+  }).join("");
+  if (themes.length) renderResonance();
+}
+
+function renderResonance() {
+  const theme = document.getElementById("resTheme").value;
+  const nWeeks = parseInt(document.getElementById("resRange").value, 10);
+  const topN = parseInt(document.getElementById("resN").value, 10);
+  const dates = DATA.snapshot_dates;
+  const L = dates.length;
+  const start = Math.max(0, L - nWeeks);
+  const chartEl = document.getElementById("resChart");
+
+  // 候選成員：該題材台股，按最新快照資金額排序，收盤覆蓋不足者跳過
+  const cand = [];
+  Object.keys(DATA.company_info || {}).forEach(function(k) {
+    if (k.indexOf("台|") !== 0) return;
+    const info = DATA.company_info[k];
+    if (!info.g || info.g.indexOf(theme) < 0) return;
+    const e = DATA.company_history[k];
+    if (!e) return;
+    const cl = {}, rk = {};
+    let amt = 0;
+    e.rows.forEach(function(r) {
+      rk[r[0]] = r[1];
+      if (r.length > 4 && r[4] !== null && r[4] !== undefined) cl[r[0]] = r[4];
+      if (r[0] === L - 1) amt = r[3] || 0;
+    });
+    cand.push({key: k, label: e.label, cl: cl, rk: rk, amt: amt});
+  });
+  cand.sort(function(a, b) { return b.amt - a.amt; });
+  const need = Math.max(5, Math.floor(nWeeks * 0.5));
+  const members = [];
+  for (let i = 0; i < cand.length && members.length < topN; i++) {
+    let valid = 0;
+    for (let t = start; t < L; t++) if (cand[i].cl[t] !== undefined) valid++;
+    if (valid >= need) members.push(cand[i]);
+  }
+  const badgeEl = document.getElementById("resScoreBadge");
+  const chipsEl = document.getElementById("resChips");
+  if (members.length < 3) {
+    Plotly.purge(chartEl);
+    chartEl.innerHTML = "<div class=\"hint\">此題材有股價資料的台股成員不足3家，無法看共振。</div>";
+    badgeEl.innerHTML = ""; chipsEl.innerHTML = "";
+    return;
+  }
+
+  // 每成員全歷史週報酬(給滾動共振用)
+  members.forEach(function(m) {
+    m.ret = [];
+    for (let t = 0; t < L; t++) {
+      m.ret.push((m.cl[t] !== undefined && m.cl[t - 1] !== undefined) ? m.cl[t] / m.cl[t - 1] - 1 : null);
+    }
+  });
+  // 滾動8週共振分數
+  const rollX = [], rollY = [];
+  for (let t = Math.max(start, 8); t < L; t++) {
+    const sl = members.map(function(m) { return m.ret.slice(t - 7, t + 1); });
+    const cs = [];
+    for (let i = 0; i < sl.length; i++) {
+      for (let j = i + 1; j < sl.length; j++) {
+        const c = resCorr(sl[i], sl[j]);
+        if (c !== null) cs.push(c);
+      }
+    }
+    if (cs.length) {
+      rollX.push(dates[t]);
+      rollY.push(cs.reduce(function(s, v) { return s + v; }, 0) / cs.length);
+    }
+  }
+  const curScore = rollY.length ? rollY[rollY.length - 1] : null;
+  if (curScore !== null) {
+    const lv = curScore >= 0.7 ? ["🔴 強共振", "var(--red)"] : curScore >= 0.4 ? ["🟡 中等", "var(--amb)"] : ["⚪ 各走各的", "var(--tx3)"];
+    badgeEl.innerHTML = "共振分數 <b style=\"color:" + lv[1] + ";font-size:15px\">" + curScore.toFixed(2) + "</b> " + lv[0];
+  } else { badgeEl.innerHTML = ""; }
+
+  const winDates = dates.slice(start);
+  const traces = [];
+  members.forEach(function(m, i) {
+    const color = RES_COLORS[i % RES_COLORS.length];
+    const p = m.label.split(" ");
+    const short = p.length >= 3 ? p[1] + p[2] : m.label;
+    m.short = short; m.color = color;
+    let base = null;
+    const py = [], ry = [];
+    for (let t = start; t < L; t++) {
+      const c = m.cl[t];
+      if (base === null && c !== undefined) base = c;
+      py.push((c !== undefined && base) ? +(c / base * 100).toFixed(1) : null);
+      ry.push(m.rk[t] !== undefined ? m.rk[t] : null);
+    }
+    traces.push({x: winDates, y: py, mode: "lines", name: short, legendgroup: short,
+                 connectgaps: true, line: {color: color, width: 2}});
+    traces.push({x: winDates, y: ry, mode: "lines", name: short, legendgroup: short,
+                 showlegend: false, yaxis: "y2", hoverinfo: "skip",
+                 connectgaps: true, line: {color: color, width: 1.3}});
+  });
+  traces.push({x: rollX, y: rollY, mode: "lines", name: "共振分數", yaxis: "y3",
+               fill: "tozeroy", line: {color: "#d49610", width: 1.5},
+               fillcolor: "rgba(212,150,16,.15)", showlegend: false});
+  Plotly.newPlot(chartEl, traces, {
+    title: {text: theme + "　前" + members.length + "大台股成員", font: {size: 14}},
+    xaxis: {domain: [0, 1]},
+    yaxis: {title: {text: "股價(起點=100)", font: {size: 11}}, domain: [0.50, 1]},
+    yaxis2: {title: {text: "資金排名", font: {size: 11}}, domain: [0.17, 0.44], autorange: "reversed", anchor: "x"},
+    yaxis3: {title: {text: "共振", font: {size: 11}}, domain: [0, 0.11], range: [-0.5, 1], anchor: "x"},
+    shapes: [{type: "line", xref: "paper", x0: 0, x1: 1, yref: "y3", y0: 0.7, y1: 0.7,
+              line: {color: "rgba(232,69,69,.5)", width: 1, dash: "dot"}}],
+    hovermode: "x unified",
+    paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
+    legend: {orientation: "h", y: 1.06, font: {size: 11}},
+    margin: {t: 60, b: 40},
+  }, {responsive: true});
+
+  chipsEl.innerHTML = members.map(function(m) {
+    const lastRk = m.rk[L - 1];
+    return "<span class=\"chip\" style=\"cursor:pointer;border-left:3px solid " + m.color + "\" " +
+           "onclick=\"jumpToCompany('" + m.key + "')\" title=\"跳到下方單股檢視\">" + m.short +
+           (lastRk ? " #" + lastRk : " 未上榜") + "</span>";
   }).join("");
 }
 
@@ -2436,6 +2610,7 @@ function init() {
   renderRadar();
   renderSignalTab();
   if (DATA.company_list.length) renderCompanyHistory();
+  initResonance();
   renderHealthBar();
 }
 init();
