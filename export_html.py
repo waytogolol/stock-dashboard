@@ -373,6 +373,86 @@ def build():
         data["signal_current"] = []
         data["signal_history"] = []
 
+    # 微題材脈衝雷達（規則v2：脈衝>=2.5x + 跳升中位>=+35名 + 毛利方向分級）
+    try:
+        import statistics
+
+        from micro_themes import MICRO_THEMES
+        conn_m = sqlite3.connect(DB_PATH)
+        subp = pd.read_sql("SELECT DISTINCT code, sub_product FROM classification WHERE country='台'", conn_m)
+        mh = pd.read_sql("SELECT code, quarter, gm FROM margin_history", conn_m)
+        conn_m.close()
+        mdir = {}
+        for code, g in mh.groupby("code"):
+            v = g.sort_values("quarter")["gm"].dropna().tolist()
+            if len(v) >= 2:
+                mdir[code] = {"d": round(v[-1] - v[-2], 1), "gm": round(v[-1], 1)}
+        tw_rank = sig_rank[sig_rank["country"] == "台"]
+        tw_total = tw_rank.groupby("snapshot_date")["twd"].sum()
+        m_dates = sorted(tw_rank["snapshot_date"].unique())
+        micro_current, micro_hist = [], []
+        for name, cfg in MICRO_THEMES.items():
+            kws, excl = cfg["kws"], set(cfg.get("exclude", []))
+            mask = subp["sub_product"].fillna("").apply(lambda t: any(k.lower() in t.lower() for k in kws))
+            codes = sorted(set(subp[mask]["code"]) - excl)
+            if not codes:
+                continue
+            mem = tw_rank[tw_rank["code"].isin(codes)]
+            svals, rmaps = [], []
+            for d in m_dates:
+                snap = mem[mem["snapshot_date"] == d]
+                svals.append(float(snap["twd"].sum() / tw_total.get(d, 1) * 100))
+                rmaps.append(dict(zip(snap["code"], snap["rank"])))
+
+            def jump_at(i):
+                js = [rmaps[i - 1][c] - rmaps[i][c] for c in rmaps[i] if c in rmaps[i - 1]]
+                return statistics.median(js) if js else None
+
+            for i in range(4, len(m_dates)):
+                base = statistics.median(svals[i - 4:i])
+                if base <= 0:
+                    continue
+                pulse = svals[i] / base
+                j = jump_at(i)
+                if pulse >= 2.5 and j is not None and j >= 35:
+                    fwd, back = svals[i + 1:i + 5], svals[i - 4:i]
+                    sus = round(sum(fwd) / 4 / (sum(back) / 4), 2) if len(fwd) == 4 and sum(back) > 0 else None
+                    micro_hist.append({"date": m_dates[i], "theme": name,
+                                       "pulse": round(pulse, 2), "jump": int(j), "sustain": sus})
+            i = len(m_dates) - 1
+            base = statistics.median(svals[i - 4:i]) if i >= 4 else 0
+            pulse = round(svals[i] / base, 2) if base > 0 else None
+            j = jump_at(i) if i >= 1 else None
+            up = sum(1 for c in codes if c in mdir and mdir[c]["d"] > 0)
+            nd = sum(1 for c in codes if c in mdir)
+            trig = bool(pulse is not None and pulse >= 2.5 and j is not None and j >= 35)
+            level = ""
+            if trig:
+                level = "🅰 脈衝+毛利升" if nd and up * 2 >= nd else "🅱 脈衝(待季報驗證)"
+            prior8 = max(svals[max(0, i - 8):i]) if i >= 1 else 0
+            members = []
+            for c in codes:
+                info = latest_lookup.get(("台", c))
+                md = mdir.get(c)
+                members.append({"code": c,
+                                "name": info["中文名稱"] if info is not None else c,
+                                "rank": int(info["rank"]) if info is not None else None,
+                                "gm": md["gm"] if md else None,
+                                "gmd": md["d"] if md else None})
+            micro_current.append({"theme": name, "n": len(codes), "score": round(svals[i], 3),
+                                  "pulse": pulse, "jump": int(j) if j is not None else None,
+                                  "m_up": up, "m_n": nd, "level": level,
+                                  "second": bool(trig and prior8 > svals[i]),
+                                  "members": members})
+        micro_current.sort(key=lambda x: -(x["pulse"] or 0))
+        micro_hist.sort(key=lambda x: x["date"], reverse=True)
+        data["micro_current"] = micro_current
+        data["micro_history"] = micro_hist
+    except Exception as e:
+        print(f"微題材雷達計算失敗: {e}")
+        data["micro_current"] = []
+        data["micro_history"] = []
+
     # 產業鏈(橫向上中下游)資料
     try:
         import industry_chains as ic
@@ -926,6 +1006,19 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <h3 class="sec-title">歷史訊號紀錄</h3>
   <div class="hint">+8週/13週最大 = 觸發後熱度分數倍率(非股價)。對照概念股名單見專案資料夾 tmp_scan_members.txt。</div>
   <div class="scroll-box"><table id="signalHistTable"></table></div>
+
+  <h3 class="sec-title">微題材脈衝雷達（規則v2，台股細分產品層級）</h3>
+  <div class="rule-card">
+    <div class="rule-item">① <b>脈衝倍率 ≥2.5</b>——本週台股分數 / 前4週中位數（微題材是脈衝行情，不適用大題材的連漲規則）</div>
+    <div class="rule-item">② <b>成員排名跳升中位數 ≥ +35名</b>——全員同週大幅躍升</div>
+    <div class="rule-item">③ 毛利率方向分級：<b>🅰 = 有資料成員過半最新季毛利QoQ走升</b>（漲價週期確認）；<b>🅱 = 尚未轉升</b>（資金先行，把下個季報日當驗證點：Q1→5月中/Q2→8月中/Q3→11月中/Q4→3月底）</div>
+    <div class="rule-item">⚠ = 前8週內有更高分數峰值（二次脈衝，出貨疑慮——基本面再好也要警惕）</div>
+    <div class="rule-item" style="color:var(--tx3)">回測60週全樣本：43次觸發21次延續(49%)，但賺賠比極不對稱(贏家sustain 1.8~25x/輸家0.8~1.0)——定位是「提醒你去看」的警示訊號，配合③毛利分級與⚠二次脈衝過濾後精選案例勝率約68%。案例驗證：順德2026/3脈衝=毛利連兩季走升確認當口；ABF 2025/12假脈衝=2/3成員毛利下滑。毛利資料=yfinance季報+MOPS官方季報。</div>
+  </div>
+  <div class="scroll-box"><table id="microNowTable"></table></div>
+  <h3 class="sec-title">微題材歷史脈衝</h3>
+  <div class="hint">sustain = 之後4週均值/之前4週均值，&gt;1.5=行情延續。</div>
+  <div class="scroll-box"><table id="microHistTable"></table></div>
 </div>
 
 <script>
@@ -1595,6 +1688,10 @@ function renderBanner() {
   if (sigs.length) {
     parts.push("🔔 進場訊號 <b class=\"wb-up\">" + sigs.map(function(c) { return c.theme + (c.pos < 70 ? "🟢" : "🟡"); }).join("、") + "</b>");
   }
+  const mic = (DATA.micro_current || []).filter(function(c) { return c.level; });
+  if (mic.length) {
+    parts.push("🔔 微題材脈衝 <b class=\"wb-up\">" + mic.map(function(c) { return c.theme + (c.level.indexOf("🅰") >= 0 ? "🅰" : "🅱") + (c.second ? "⚠" : ""); }).join("、") + "</b>");
+  }
   if (!parts.length) return;
   const el = document.getElementById("weeklyBanner");
   el.innerHTML = "📌 " + parts.join("<span class=\"wb-sep\"> · </span>");
@@ -1604,9 +1701,52 @@ function renderBanner() {
 // ── 進場訊號頁籤 ──────────────────────────────────────────────────────
 function renderSignalTab() {
   const cur = DATA.signal_current || [];
-  const nSig = cur.filter(function(c) { return c.verdict; }).length;
+  const microTrig = (DATA.micro_current || []).filter(function(c) { return c.level; }).length;
+  const nSig = cur.filter(function(c) { return c.verdict; }).length + microTrig;
   const btn = document.getElementById("signalTabBtn");
   if (btn && nSig) btn.innerHTML = "進場訊號 🔔" + nSig;
+
+  // 微題材脈衝雷達
+  const microRows = (DATA.micro_current || []).map(function(c) {
+    const memTxt = c.members.map(function(m) {
+      let g = "";
+      if (m.gm !== null && m.gm !== undefined) {
+        g = "(" + m.gm + "%" + (m.gmd > 0 ? "↗" : m.gmd < 0 ? "↘" : "") + ")";
+      }
+      return m.code + m.name + (m.rank ? "#" + m.rank : "") + g;
+    }).join("　");
+    return {
+      "微題材": c.theme,
+      "判定": (c.level || "—") + (c.second ? " ⚠二次脈衝" : ""),
+      "_trig": c.level ? 1 : 0,
+      "脈衝x": c.pulse, "跳升中位": c.jump, "本週分數": c.score,
+      "毛利方向": c.m_n ? "↗" + c.m_up + "/共" + c.m_n : "—",
+      "成員(排名/最新季毛利)": memTxt,
+    };
+  });
+  const microCols = [
+    {key: "微題材", label: "微題材"},
+    {key: "判定", label: "判定", sortKey: "_trig", numeric: true},
+    {key: "脈衝x", label: "脈衝x", numeric: true},
+    {key: "跳升中位", label: "跳升中位", numeric: true},
+    {key: "本週分數", label: "本週分數", numeric: true},
+    {key: "毛利方向", label: "③毛利方向"},
+    {key: "成員(排名/最新季毛利)", label: "成員(排名/最新季毛利)"},
+  ];
+  const microEl = document.getElementById("microNowTable");
+  microEl._sortState = {colIndex: 2, dir: -1};
+  buildTable(microEl, microCols, microRows);
+
+  const microHist = (DATA.micro_history || []).map(function(h) {
+    return {"日期": h.date, "微題材": h.theme, "脈衝x": h.pulse,
+            "跳升中位": h.jump, "sustain": h.sustain,
+            "結果": h.sustain === null ? "觀察中" : (h.sustain >= 1.5 ? "✅延續" : "✗未延續")};
+  });
+  buildTable(document.getElementById("microHistTable"), [
+    {key: "日期", label: "日期"}, {key: "微題材", label: "微題材"},
+    {key: "脈衝x", label: "脈衝x", numeric: true}, {key: "跳升中位", label: "跳升中位", numeric: true},
+    {key: "sustain", label: "sustain", numeric: true}, {key: "結果", label: "結果"},
+  ], microHist);
 
   function pf(ok, text) {
     return ok ? "<span class=\"sig-pass\">✓ " + text + "</span>" : "<span class=\"sig-fail\">✗ " + text + "</span>";
