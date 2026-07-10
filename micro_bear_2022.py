@@ -215,6 +215,50 @@ stat_block(df[df["nh"] >= 2], "＋90日新高(≥2/3成員)")
 stat_block(df[df["nh"] >= 1], "＋90日新高(≥1成員)")
 stat_block(df[df["gnh"] >= 1], "＋突破跳空(≥1成員)")
 out.write("\n")
+
+# ── 注入HTML報告(research_2022_report.html, 以標記區塊冪等更新) ──
+def html_section():
+    def row_stats(sub, label):
+        pr = sub["pret8"].dropna()
+        if not len(pr):
+            return f"<tr><th>{label}</th><td colspan='6'>0筆</td></tr>"
+        wins, losses = pr[pr > 0], pr[pr <= 0]
+        rr = (wins.mean() / abs(losses.mean())) if len(wins) and len(losses) else float("nan")
+        y22 = sub[sub["date"].str[:4] == "2022"]["pret8"].dropna()
+        y22t = f"{len(y22)}筆 中位{y22.median():+.1%}" if len(y22) else "0筆"
+        return (f"<tr><th>{label}</th><td>{len(sub)}</td><td>{(pr > 0).mean():.0%}</td>"
+                f"<td>{pr.median():+.1%}</td><td>{wins.mean() if len(wins) else 0:+.1%} / "
+                f"{losses.mean() if len(losses) else 0:+.1%}</td><td>{rr:.2f}</td><td>{y22t}</td></tr>")
+
+    s = "<h2>微題材脈衝規則（裸版：①脈衝≥2.5×＋②排名跳升≥+35名，無毛利分級）</h2>"
+    s += "<div class='note'>觸發33次/234週。型態濾網與大題材同定義，套在同一批觸發上對照。微題材成員價格多已在動(規則②使然)，與型態確認有天然重疊，改善幅度較大題材溫和。</div>"
+    s += "<table><tr><th>配置</th><th>筆數</th><th>勝率</th><th>中位+8週</th><th>平均賺/賠</th><th>賺賠比</th><th>2022熊市單</th></tr>"
+    s += row_stats(df, "裸版(無濾網)")
+    s += row_stats(df[df["nh"] >= 2], "＋90日新高(≥2/3成員)")
+    s += row_stats(df[df["nh"] >= 1], "＋90日新高(≥1成員)")
+    s += row_stats(df[df["gnh"] >= 1], "＋突破跳空(≥1成員)")
+    s += "</table>"
+    s += "<h2>微題材逐筆明細</h2><table><tr><th>日期</th><th>微題材</th><th>sustain</th><th>+8週股價</th><th>90日新高</th><th>突破跳空</th><th>成員(前3大)</th></tr>"
+    for _, r in df.sort_values("date").iterrows():
+        pret = format(r["pret8"], "+.1%") if pd.notna(r["pret8"]) else "—"
+        sus = f"{r['sustain']:.2f}" if pd.notna(r["sustain"]) else "—"
+        s += (f"<tr><th>{r['date']}</th><td>{r['theme']}</td><td>{sus}</td><td>{pret}</td>"
+              f"<td>{r['nh']}/3</td><td>{'✓' if r['gnh'] else '—'}</td><td>{'、'.join(r['members'])}</td></tr>")
+    s += "</table>"
+    return s
+
+try:
+    rp = io.open("research_2022_report.html", encoding="utf-8").read()
+    sec = "<!--MICRO_START-->" + html_section() + "<!--MICRO_END-->"
+    if "<!--MICRO_START-->" in rp:
+        import re as _re
+        rp = _re.sub(r"<!--MICRO_START-->.*?<!--MICRO_END-->", lambda _m: sec, rp, flags=_re.S)
+    else:
+        rp = rp.replace("</body>", sec + "</body>")
+    io.open("research_2022_report.html", "w", encoding="utf-8").write(rp)
+    print("微題材章節已注入 research_2022_report.html")
+except FileNotFoundError:
+    print("找不到 research_2022_report.html，先跑 bear_test_2022.py")
 if len(df):
     df["yr"] = df["date"].str[:4]
     out.write(f"{'年':<6}{'觸發':>4}{'sustain>1.5':>11}{'股價+8週中位':>11}{'股價勝率':>8}\n")
