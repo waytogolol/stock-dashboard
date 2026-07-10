@@ -216,6 +216,72 @@ stat_block(df[df["nh"] >= 1], "＋90日新高(≥1成員)")
 stat_block(df[df["gnh"] >= 1], "＋突破跳空(≥1成員)")
 out.write("\n")
 
+# ── 組合模擬(同大題材:前3大等權/持有8週/成本0.5%) + 權益曲線 ──
+WARM = WARMUP
+d_idx = {d: i for i, d in enumerate(dates)}
+
+
+def wk_ret(code, t):
+    s = pc.get(code)
+    if s is None or t + 1 >= len(dates):
+        return None
+    a = s[s.index <= pd.Timestamp(dates[t])]
+    b = s[s.index <= pd.Timestamp(dates[t + 1])]
+    if not len(a) or not len(b) or a.iloc[-1] <= 0 or b.index[-1] == a.index[-1]:
+        return None
+    return float(b.iloc[-1] / a.iloc[-1] - 1)
+
+
+def sim(sel_hits, hold=8, cost=0.005):
+    entries = {}
+    for h in sel_hits:
+        t = d_idx.get(h["date"])
+        if t is not None and h["members"]:
+            entries.setdefault(t, []).append(h["members"])
+    eqv, cds = [1.0], [dates[WARM]]
+    active = []
+    for t in range(WARM, len(dates) - 1):
+        for mem in entries.get(t, []):
+            active.append([mem, hold, True])
+        rets = []
+        for p in active:
+            prs = [wk_ret(c, t) for c in p[0]]
+            prs = [x for x in prs if x is not None]
+            r = sum(prs) / len(prs) if prs else 0.0
+            if p[2]:
+                r -= cost
+                p[2] = False
+            rets.append(r)
+        wr = sum(rets) / len(rets) if rets else 0.0
+        eqv.append(eqv[-1] * (1 + wr))
+        cds.append(dates[t + 1])
+        for p in active:
+            p[1] -= 1
+        active = [p for p in active if p[1] > 0]
+    eq = pd.Series(eqv, index=pd.to_datetime(cds))
+    wr_ = eq.pct_change().dropna()
+    vol = float(wr_.std() * 52 ** 0.5)
+    return {"eq": eq, "mdd": float((eq / eq.cummax() - 1).min()),
+            "sharpe": float(wr_.mean() * 52 / vol) if vol > 0 else 0}
+
+
+micro_ports = {
+    "微題材裸版": sim(hits),
+    "微題材+90日新高(≥2/3)": sim([h for h in hits if h["nh"] >= 2]),
+    "微題材+突破跳空(≥1)": sim([h for h in hits if h["gnh"] >= 1]),
+}
+twii = yf.download("^TWII", start="2021-06-01", end=str(dates[-1]), interval="1wk",
+                   auto_adjust=True, progress=False)["Close"]
+if isinstance(twii, pd.DataFrame):
+    twii = twii.iloc[:, 0]
+bmk = twii[twii.index >= pd.Timestamp(dates[WARM])]
+bmk = bmk / bmk.iloc[0]
+micro_ports["台股加權(基準)"] = {"eq": bmk, "mdd": float((bmk / bmk.cummax() - 1).min()),
+                             "sharpe": float(bmk.pct_change().dropna().mean() * 52 /
+                                             (bmk.pct_change().dropna().std() * 52 ** 0.5))}
+M_COLORS = {"微題材裸版": "#3987e5", "微題材+90日新高(≥2/3)": "#199e70",
+            "微題材+突破跳空(≥1)": "#c98500", "台股加權(基準)": "#8a8878"}
+
 # ── 注入HTML報告(research_2022_report.html, 以標記區塊冪等更新) ──
 def html_section():
     def row_stats(sub, label):
@@ -238,6 +304,22 @@ def html_section():
     s += row_stats(df[df["nh"] >= 1], "＋90日新高(≥1成員)")
     s += row_stats(df[df["gnh"] >= 1], "＋突破跳空(≥1成員)")
     s += "</table>"
+    # 組合權益曲線
+    import json as _json
+    mp = {k: {"x": [str(d.date()) for d in v["eq"].index],
+              "y": [round(float(x), 4) for x in v["eq"]]} for k, v in micro_ports.items()}
+    stats = " ｜ ".join(f"{k} {v['eq'].iloc[-1]:.2f}x(夏普{v['sharpe']:.2f}/回撤{v['mdd']:.0%})"
+                        for k, v in micro_ports.items())
+    s += "<h2>微題材組合權益曲線（前3大成員等權/持有8週/成本0.5%）</h2>"
+    s += f"<div class='note'>{stats}。微題材觸發稀疏(33筆/234週)，空手期資金閒置以現金計。</div>"
+    s += "<div id='mc1' style='height:380px'></div>"
+    s += ("<script>const MD=" + _json.dumps(mp, ensure_ascii=False) +
+          ";const MC=" + _json.dumps(M_COLORS, ensure_ascii=False) + ";"
+          "Plotly.newPlot('mc1',Object.keys(MD).map(k=>({x:MD[k].x,y:MD[k].y,name:k,mode:'lines',"
+          "line:{color:MC[k],width:2,dash:k.indexOf('基準')>=0?'dash':'solid'}})),"
+          "{paper_bgcolor:'#1a1a19',plot_bgcolor:'#1a1a19',font:{color:'#c3c2b7',size:12},"
+          "xaxis:{gridcolor:'#2c2c2a'},yaxis:{gridcolor:'#2c2c2a'},legend:{orientation:'h',y:1.12},"
+          "margin:{t:10,b:36,l:56,r:80},hovermode:'x unified'},{responsive:true});</script>")
     s += "<h2>微題材逐筆明細</h2><table><tr><th>日期</th><th>微題材</th><th>sustain</th><th>+8週股價</th><th>90日新高</th><th>突破跳空</th><th>成員(前3大)</th></tr>"
     for _, r in df.sort_values("date").iterrows():
         pret = format(r["pret8"], "+.1%") if pd.notna(r["pret8"]) else "—"
