@@ -20,11 +20,14 @@ DB = "capital_flow.db"
 CACHE = "tmp_price_cache.pkl"
 
 
-def load_cache():
+def load_cache(end):
+    # 快取綁定end日：僅同一輪(同end)中斷續傳有效，跨週舊快取自動作廢
     if os.path.exists(CACHE):
         with open(CACHE, "rb") as f:
-            return pickle.load(f)
-    return {}
+            c = pickle.load(f)
+        if isinstance(c, dict) and c.get("_end") == end:
+            return c
+    return {"_end": end}
 
 
 def save_cache(c):
@@ -77,7 +80,7 @@ def main():
     end = str(datetime.strptime(dates[-1], "%Y-%m-%d").date() + timedelta(days=1))
     print(f"宇宙 {len(plan)} 檔，快照 {len(dates)} 週 ({dates[0]} ~ {dates[-1]})")
 
-    cache = load_cache()
+    cache = load_cache(end)
     guard = RateGuard()
     primary = sorted(set(p[2][0] for p in plan))
     cache = download_close(primary, start, end, cache, guard)
@@ -106,6 +109,10 @@ def main():
     n = conn.execute("SELECT COUNT(*), COUNT(DISTINCT country||code) FROM weekly_close").fetchone()
     conn.close()
     print(f"weekly_close: {n[0]} 筆 / {n[1]} 檔")
+    # 成功寫入後刪快取：快取只涵蓋到本次end日，留著會讓下週執行時跳過所有已抓股票、漏掉新週資料
+    if os.path.exists(CACHE):
+        os.remove(CACHE)
+        print("已清除價格快取(下次執行會抓含最新週的完整區間)")
 
 
 if __name__ == "__main__":
