@@ -298,6 +298,46 @@ def build():
     except Exception as e:
         print(f"基本面資料未載入(可先跑 fetch_fundamentals.py): {e}")
 
+    # 陸股東財事件標籤(業績預告/快報/調研飆升，fetch_cn_eastmoney.py更新)
+    cn_note = {}
+    try:
+        import statistics
+        conn_e = sqlite3.connect(DB_PATH)
+        for code, pt, lo, hi in conn_e.execute(
+                """SELECT code, predict_type, amp_lower, amp_upper FROM cn_forecast f
+                   WHERE notice_date=(SELECT MAX(notice_date) FROM cn_forecast WHERE code=f.code)"""):
+            rng = ""
+            if lo is not None and hi is not None:
+                rng = f"{lo:+.0f}~{hi:+.0f}%"
+            elif lo is not None:
+                rng = f"{lo:+.0f}%"
+            cn_note[code] = f"📢預告{pt}{rng}"
+        for code, yoy, npy in conn_e.execute(
+                """SELECT code, rev_yoy, np_yoy FROM cn_flash f
+                   WHERE report_date=(SELECT MAX(report_date) FROM cn_flash WHERE code=f.code)"""):
+            t = []
+            if yoy is not None:
+                t.append(f"營收{yoy:+.0f}%")
+            if npy is not None:
+                t.append(f"淨利{npy:+.0f}%")
+            if t:
+                cn_note[code] = (cn_note.get(code, "") + "｜快報" + "/".join(t)).lstrip("｜")
+        sv = {}
+        for code, month, n in conn_e.execute("SELECT code, month, n FROM cn_survey"):
+            sv.setdefault(code, []).append((month, n))
+        for code, lst in sv.items():
+            lst.sort()
+            if len(lst) >= 3:
+                cur = lst[-1][1]
+                med = statistics.median(v for _m, v in lst[:-1])
+                if cur >= 5 and cur >= 3 * max(med, 1):
+                    cn_note[code] = (cn_note.get(code, "") + f"｜🔍調研飆升{cur}場/月").lstrip("｜")
+        conn_e.close()
+        if cn_note:
+            print(f"陸股東財標籤 {len(cn_note)} 檔")
+    except Exception as e:
+        print(f"陸股東財標籤未載入(可先跑 fetch_cn_eastmoney.py): {e}")
+
     # 產業地位描述(取分類表第一筆非空值)
     pos_lookup = {}
     for _, r in classification.iterrows():
@@ -319,6 +359,7 @@ def build():
             "eps_ttm": f.get("eps_ttm"),
             "eps_fwd": f.get("eps_fwd"),
             "position_note": pos_lookup.get((country, code), ""),
+            "cn_note": cn_note.get(code, "") if country == "陸" else "",
             "supplier_name": info["中文名稱"] if info is not None else code,
             "supplier_rank": int(info["rank"]) if info is not None else None,
             "supplier_rank_delta": rank_delta,
@@ -1176,8 +1217,8 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div class="scroll-box"><table id="usEarningsTable"></table></div>
   <h4>台股法說會 <span id="twEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
   <div class="scroll-box"><table id="twEarningsTable"></table></div>
-  <h4>日韓財報日 <span id="jpkrEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
-  <div class="hint">來源=Yahoo(yfinance calendar)，各市場前100大、僅未來90天；日股覆蓋率高、韓股約1/3，更新跑 <code>python fetch_earnings_dates.py</code>。陸股Yahoo無資料。</div>
+  <h4>日韓陸財報日 <span id="jpkrEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
+  <div class="hint">日韓=Yahoo(yfinance calendar，日股覆蓋率高、韓股約1/3)；陸=東方財富披露預約(整批API)。各市場前100大、僅未來90天，更新跑 <code>python fetch_earnings_dates.py</code>。歷史財報日累積於DB earnings_dates表(事件研究用)，回補跑 <code>python fetch_earnings_history.py</code>。</div>
   <div class="scroll-box"><table id="jpkrEarningsTable"></table></div>
 </div>
 
@@ -2202,6 +2243,7 @@ function buildFundHTML(l) {
   let html = "";
   if (line1.length) html += "<div class=\"sc-fund\">" + line1.join("｜") + "</div>";
   if (line2.length) html += "<div class=\"sc-fund\">" + line2.join("｜") + "</div>";
+  if (l.cn_note) html += "<div class=\"sc-fund\" style=\"color:var(--amb)\">" + l.cn_note + "</div>";
   return html;
 }
 
