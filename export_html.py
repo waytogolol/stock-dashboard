@@ -480,10 +480,32 @@ def build():
             chain_links.append(rec)
         data["industry_chains"] = chain_links
         data["industry_chain_list"] = ic.CHAINS
+
+        # 每鏈每週熱度分數(排行用)：成員台幣金額佔各國總額比例加總×100，與題材熱度同一把尺
+        tot_by = rankings.groupby(["snapshot_date", "country"])["金額億台幣_num"].sum()
+        amt_idx = rankings.set_index(["snapshot_date", "country", "code"])["金額億台幣_num"]
+        chain_hist = {}
+        for chain in ic.CHAINS:
+            mem = set((code, country) for ch2, _st, code, country, _r in ic.CHAIN_LINKS if ch2 == chain)
+            vals = []
+            for d in all_dates:
+                s = 0.0
+                for code, country in mem:
+                    try:
+                        a = amt_idx.loc[(d, country, code)]
+                    except KeyError:
+                        continue
+                    t = tot_by.loc[(d, country)]
+                    if pd.notna(a) and t > 0:
+                        s += float(a) / float(t) * 100
+                vals.append(round(s, 2))
+            chain_hist[chain] = vals
+        data["chain_history"] = chain_hist
     except Exception as e:
         print(f"產業鏈資料載入失敗: {e}")
         data["industry_chains"] = []
         data["industry_chain_list"] = []
+        data["chain_history"] = {}
 
     # 公司→題材/產業鏈歸屬(公司歷史頁資訊面板用)
     try:
@@ -1084,6 +1106,9 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div id="scCards"></div>
   </div>
   <div id="scChainView" style="display:none">
+    <h3 class="sec-title">產業鏈熱度排行</h3>
+    <div class="hint">熱度分數 = 鏈上全部成員(五市場)台幣金額佔各國總額比例加總，與題材熱度分數同一把尺。週/月 = 與1週/4週前比較。點列切換下方上中下游明細。</div>
+    <div id="chainRanking" class="sc-ranking"></div>
     <div class="hint">選一條產業鏈，看上游材料/設備 → 中游製造 → 下游應用的跨國全貌。卡片按資金流向排名排序，左色條=熱度(紅=前50、琥珀=前150)，▲▼=排名週變化。基本面欄(yfinance季度值，每季更新)：毛利率、<b>季營收YoY</b>(最新季vs去年同季，非台股月營收)、PB股價淨值比(循環股位置參考)、EPS預估方向(forward vs trailing，↗=分析師預估成長)。</div>
     <div class="sc-anchors" id="chainBtns"></div>
     <div class="chain-stages" id="chainStages"></div>
@@ -1118,6 +1143,11 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 </div>
 
 <div class="tab-content" id="tab7">
+  <div class="sc-view-switch">
+    <button class="view-btn active" id="sigViewMacroBtn" onclick="switchSigView('macro')">大題材檢查清單</button>
+    <button class="view-btn" id="sigViewMicroBtn" onclick="switchSigView('micro')">微題材脈衝雷達</button>
+  </div>
+  <div id="sigMacroView">
   <h3 class="sec-title">檢查清單規則（源自記憶體2025/9案例研究，勿刪）</h3>
   <div class="rule-card">
     <div class="rule-item">① <b>連漲 ≥2 週</b>——熱度分數連續上升，排除單週噪音</div>
@@ -1134,7 +1164,9 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <h3 class="sec-title">歷史訊號紀錄</h3>
   <div class="hint">+8週/13週最大 = 觸發後熱度分數倍率(非股價)。對照概念股名單見專案資料夾 tmp_scan_members.txt。</div>
   <div class="scroll-box"><table id="signalHistTable"></table></div>
+  </div>
 
+  <div id="sigMicroView" style="display:none">
   <h3 class="sec-title">微題材脈衝雷達（規則v2，台股細分產品層級）</h3>
   <div class="rule-card">
     <div class="rule-item">① <b>脈衝倍率 ≥2.5</b>——本週台股分數 / 前4週中位數（微題材是脈衝行情，不適用大題材的連漲規則）</div>
@@ -1147,6 +1179,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <h3 class="sec-title">微題材歷史脈衝</h3>
   <div class="hint">sustain = 之後4週均值/之前4週均值，&gt;1.5=行情延續。</div>
   <div class="scroll-box"><table id="microHistTable"></table></div>
+  </div>
 </div>
 
 <div class="health-bar" id="healthBar"></div>
@@ -1917,6 +1950,43 @@ function selectChain(c) {
   renderChainView();
 }
 
+function renderChainRanking() {
+  const el = document.getElementById("chainRanking");
+  const ch = DATA.chain_history || {};
+  const chains = Object.keys(ch);
+  if (!chains.length) { el.innerHTML = ""; return; }
+  const twCnt = {};
+  (DATA.industry_chains || []).forEach(function(l) {
+    if (l.supplier_country === "台") {
+      twCnt[l.chain] = twCnt[l.chain] || {};
+      twCnt[l.chain][l.supplier_code] = 1;
+    }
+  });
+  const rows = chains.map(function(c) {
+    const s = ch[c], L = s.length;
+    const cur = s[L - 1] || 0;
+    return {c: c, cur: cur,
+            d1: L > 1 ? cur - s[L - 2] : 0,
+            d4: L > 4 ? cur - s[L - 5] : 0,
+            tw: Object.keys(twCnt[c] || {}).length};
+  });
+  rows.sort(function(a, b) { return b.cur - a.cur; });
+  const mx = Math.max.apply(null, rows.map(function(r) { return r.cur; }).concat([0.01]));
+  function arr(d) {
+    if (d > 0.05) return "<span style=\"color:var(--red)\">▲" + d.toFixed(1) + "</span>";
+    if (d < -0.05) return "<span style=\"color:var(--grn)\">▼" + (-d).toFixed(1) + "</span>";
+    return "<span style=\"color:var(--tx3)\">—</span>";
+  }
+  el.innerHTML = rows.map(function(r, i) {
+    const pct = Math.round(r.cur / mx * 100);
+    return "<div class=\"scr-row" + (r.c === currentChain ? " active" : "") + "\" onclick=\"selectChain('" + r.c + "')\">" +
+      "<span class=\"scr-rank\">" + (i + 1) + "</span>" +
+      "<span class=\"scr-label\">" + r.c + "</span>" +
+      "<span class=\"scr-bar-wrap\"><span class=\"scr-bar\" style=\"width:" + pct + "%\"></span></span>" +
+      "<span class=\"scr-stats\">" + r.cur.toFixed(1) + "分 週" + arr(r.d1) + " 月" + arr(r.d4) + " · 台" + r.tw + "家</span></div>";
+  }).join("");
+}
+
 function renderChainView() {
   const chains = DATA.industry_chain_list || [];
   const btnsEl = document.getElementById("chainBtns");
@@ -1927,6 +1997,7 @@ function renderChainView() {
     return;
   }
   if (!currentChain || chains.indexOf(currentChain) < 0) currentChain = chains[0];
+  renderChainRanking();
   btnsEl.innerHTML = chains.map(function(c) {
     return "<button class=\"anchor-btn" + (c === currentChain ? " active" : "") + "\" onclick=\"selectChain('" + c + "')\">" + c + "</button>";
   }).join("");
@@ -2049,12 +2120,24 @@ function renderBanner() {
 }
 
 // ── 進場訊號頁籤 ──────────────────────────────────────────────────────
+function switchSigView(v) {
+  document.getElementById("sigViewMacroBtn").classList.toggle("active", v === "macro");
+  document.getElementById("sigViewMicroBtn").classList.toggle("active", v === "micro");
+  document.getElementById("sigMacroView").style.display = v === "macro" ? "" : "none";
+  document.getElementById("sigMicroView").style.display = v === "micro" ? "" : "none";
+}
+
 function renderSignalTab() {
   const cur = DATA.signal_current || [];
   const microTrig = (DATA.micro_current || []).filter(function(c) { return c.level; }).length;
-  const nSig = cur.filter(function(c) { return c.verdict; }).length + microTrig;
+  const macroTrig = cur.filter(function(c) { return c.verdict; }).length;
+  const nSig = macroTrig + microTrig;
   const btn = document.getElementById("signalTabBtn");
   if (btn && nSig) btn.innerHTML = "進場訊號 🔔" + nSig;
+  const macroBtn = document.getElementById("sigViewMacroBtn");
+  if (macroBtn && macroTrig) macroBtn.innerHTML = "大題材檢查清單 🔔" + macroTrig;
+  const microBtn = document.getElementById("sigViewMicroBtn");
+  if (microBtn && microTrig) microBtn.innerHTML = "微題材脈衝雷達 🔔" + microTrig;
 
   // 微題材脈衝雷達
   const microRows = (DATA.micro_current || []).map(function(c) {
