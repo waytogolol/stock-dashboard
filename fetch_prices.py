@@ -14,7 +14,7 @@ import pandas as pd
 import yfinance as yf
 
 sys.path.insert(0, os.getcwd())
-from backfill_history import CHUNK, RateGuard, UNIVERSE_FILES, ticker_variants
+from backfill_history import CHUNK, RateGuard, ticker_variants
 
 DB = "capital_flow.db"
 CACHE = "tmp_price_cache.pkl"
@@ -67,13 +67,12 @@ def download_close(tickers, start, end, cache, guard):
 def main():
     conn = sqlite3.connect(DB)
     dates = [r[0] for r in conn.execute("SELECT DISTINCT snapshot_date FROM rankings ORDER BY snapshot_date")]
+    # 名單=進過排行榜的全部代碼(宇宙檔是靜態快照，會漏掉偶爾進榜的股票如台泥)
     plan = []
-    for country, fname in UNIVERSE_FILES.items():
-        uni = pd.read_csv(fname, dtype=str)
-        for _, r in uni.iterrows():
-            variants = ticker_variants(country, r["code"])
-            if variants:
-                plan.append((country, r["code"], variants))
+    for country, code in conn.execute("SELECT DISTINCT country, code FROM rankings"):
+        variants = ticker_variants(country, code)
+        if variants:
+            plan.append((country, code, variants))
     start = str(datetime.strptime(dates[0], "%Y-%m-%d").date() - timedelta(days=10))
     end = str(datetime.strptime(dates[-1], "%Y-%m-%d").date() + timedelta(days=1))
     print(f"宇宙 {len(plan)} 檔，快照 {len(dates)} 週 ({dates[0]} ~ {dates[-1]})")
