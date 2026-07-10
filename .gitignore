@@ -8,3 +8,5 @@ __pycache__/
 tmp_*
 theme_rank.json
 research_*.db
+research_2022_report.html
+tmp_backfill_research_*

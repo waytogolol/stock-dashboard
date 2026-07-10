@@ -161,6 +161,14 @@ def main(n_weeks):
             variants = ticker_variants(country, r["code"])
             if variants:
                 plan.append((country, r["code"], r["name"], variants))
+    # 歷史降溫股補充(2022年代熱門但已跌出現行宇宙，去倖存者偏差用)
+    if os.path.exists("tw_universe_supplement.csv"):
+        sup = pd.read_csv("tw_universe_supplement.csv", dtype=str)
+        for _, r in sup.iterrows():
+            variants = ticker_variants("台", r["code"])
+            if variants:
+                plan.append(("台", r["code"], r["name"], variants))
+        print(f"宇宙補充 +{len(sup)} 檔(台)")
     print(f"宇宙共 {len(plan)} 檔")
 
     # 2) 下載（主要代碼 -> 備用代碼），全程風控+快取
