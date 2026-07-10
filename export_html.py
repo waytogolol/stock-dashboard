@@ -517,6 +517,44 @@ def build():
                                 else ("👀 觸發·⑤未過" if c["pat"] is False else "觸發(⑤未評估)"))
             else:
                 c["verdict"] = ""
+
+        # 大盤態勢(週線 vs 月線/季線 -> 建議倉位) + 推薦程度分級
+        _tier, _tier_txt = 1.0, "月線上"
+        try:
+            import yfinance as _yf
+            _tx = _yf.download("^TWII", period="8mo", interval="1wk",
+                               auto_adjust=True, progress=False)["Close"]
+            if hasattr(_tx, "iloc") and getattr(_tx, "ndim", 1) > 1:
+                _tx = _tx.iloc[:, 0]
+            _px = float(_tx.iloc[-1])
+            _m4, _m13 = float(_tx.tail(4).mean()), float(_tx.tail(13).mean())
+            if _px < _m13:
+                _tier, _tier_txt = 0.3, "季線下"
+            elif _px < _m4:
+                _tier, _tier_txt = 0.6, "月線下"
+        except Exception as e:
+            print(f"大盤態勢未取得(預設月線上): {e}")
+        data["market_tier"] = {"tier": _tier, "txt": _tier_txt}
+
+        _th_hist = {g: [x["熱度分數"] for x in h] for g, h in theme_history.items()}
+        for c in sig_current:
+            sc_h = _th_hist.get(c["theme"], [])
+            # 接刀警示(假說級): 題材熱度低於26週前 且 位階<40
+            c["knife"] = bool(len(sc_h) >= 27 and sc_h[-1] < sc_h[-27] and c["pos"] < 40)
+            g = ""
+            if c["n_ok"] == 4 and c["pat"]:
+                g = "S" if _tier >= 1.0 else "A"
+            elif c["n_ok"] == 4 and c["pat"] is None:
+                g = "A" if _tier >= 1.0 else "B"
+            elif c["n_ok"] == 4:
+                g = "B"
+            elif c["n_ok"] == 3 and c["pat"]:
+                g = "B"
+            elif c["n_ok"] == 3:
+                g = "C"
+            if c["knife"] and g in ("S", "A", "B"):
+                g = {"S": "A", "A": "B", "B": "C"}[g]
+            c["grade"] = g
         sig_history.sort(key=lambda x: x["date"], reverse=True)
         data["signal_current"] = sig_current
         data["signal_history"] = sig_history
@@ -596,6 +634,18 @@ def build():
                                   "m_up": up, "m_n": nd, "level": level,
                                   "second": bool(trig and prior8 > svals[i]),
                                   "members": members})
+        # 微題材推薦程度(證據上限⭐⭐：精選勝率~68%)：觸發+毛利過半升=標準，二次脈衝/大盤轉弱各降一級
+        _mt = (data.get("market_tier") or {}).get("tier", 1.0)
+        for c in micro_current:
+            if not c["level"]:
+                c["grade"] = ""
+                continue
+            g = "A" if (c["m_n"] and c["m_up"] * 2 > c["m_n"]) else "B"
+            if c["second"]:
+                g = {"A": "B", "B": "C"}[g]
+            if _mt < 1.0:
+                g = {"A": "B", "B": "C", "C": "C"}[g]
+            c["grade"] = g
         micro_current.sort(key=lambda x: -(x["pulse"] or 0))
         micro_hist.sort(key=lambda x: x["date"], reverse=True)
         data["micro_current"] = micro_current
@@ -743,6 +793,12 @@ def build():
                     "pos": (round(pos) if pos is not None else None),
                     "tags": tags, "n_tags": len(tags),
                 })
+        # 補漲雷達優先序(未回測=研究優先序非信心)：理由≥3且所屬題材為S/A級=優先，其一=一般
+        _tg = {c["theme"]: c.get("grade") for c in data.get("signal_current", [])}
+        for r in catchup_rows:
+            strong_theme = _tg.get(r["theme"]) in ("S", "A")
+            r["grade"] = ("A" if (r["n_tags"] >= 3 and strong_theme)
+                          else ("B" if (r["n_tags"] >= 3 or strong_theme) else ""))
         catchup_rows.sort(key=lambda r: (-r["n_tags"], r["pb"] if r["pb"] is not None else 99))
         data["catchup_radar"] = {"themes": sorted(ignited), "rows": catchup_rows[:60]}
     except Exception as e:
@@ -1392,7 +1448,8 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     <div class="rule-item" style="color:var(--tx3)">回測基礎（2022-2026共234週，含熊市壓力測試，以成員實際股價驗證）：資金四關訊號在多頭期股價勝率54-80%；加上⑤型態門檻後，樣本外(2025-26)勝率72-90%。賺賠比約2.8（平均賺+23%/賠-8%）。已知弱點：熊市中成交金額型熱度會被賣壓觸發（2022年勝率27%），建議依大盤相對月線/季線位置調整倉位（月線下六成、季線下三成，回測夏普1.56優於滿倉1.29）。台股跟隨美韓約5週；微題材脈衝行情由下方微題材雷達補接。</div>
   </div>
   <h3 class="sec-title">本週檢查表（每次資料更新自動重算）</h3>
-  <div class="hint">依通過條數排序。✓/✗ 對應規則①~④；觸發中的題材可去「產業鏈視圖」看上中下游誰先動、動能雷達看象限位置。</div>
+  <div class="hint" id="sigRegime" style="font-weight:600"></div>
+  <div class="hint">依通過條數排序。✓/✗ 對應規則①~④；推薦程度=綜合①~⑤與大盤態勢的信心分級（內部權重）：<b>⭐⭐⭐重點</b>=歷史最高勝率情境、<b>⭐⭐標準</b>、<b>⭐觀察</b>=等結構確認、<b>⚠</b>=退潮接刀警示（假說級，自動降一級）。分級是研究地圖，非投資建議。</div>
   <div class="scroll-box"><table id="signalNowTable"></table></div>
   <h3 class="sec-title">歷史訊號紀錄</h3>
   <div class="hint">+8週/13週最大 = 觸發後熱度分數倍率(非股價)。對照概念股名單見專案資料夾 tmp_scan_members.txt。</div>
@@ -2582,6 +2639,9 @@ function renderSignalTab() {
   const cuRows = cu.rows.map(function(r) {
     return {
       "點火題材": themeLink(r.theme), "_g": r.theme,
+      "優先序": ({A: "<span style=\"color:var(--amb);font-weight:700\">⭐⭐ 優先研究</span>",
+                B: "<span style=\"color:var(--tx2)\">⭐ 一般</span>"})[r.grade] || "—",
+      "_gr": ({A: 2, B: 1})[r.grade] || 0,
       "成員": "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + r.code + "')\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + r.code + " " + r.name + "</a>",
       "最新排名": r.rank, "PB": r.pb, "營收YoY%": r.yoy, "資金位階%": r.pos,
       "埋伏理由": r.tags.join("｜"), "_n": r.n_tags,
@@ -2590,7 +2650,9 @@ function renderSignalTab() {
   const cuEl = document.getElementById("catchupTable");
   cuEl._sortState = {colIndex: 6, dir: -1};
   buildTable(cuEl, [
-    {key: "點火題材", label: "點火題材", sortKey: "_g"}, {key: "成員", label: "成員(未點火)"},
+    {key: "點火題材", label: "點火題材", sortKey: "_g"},
+    {key: "優先序", label: "優先序(未回測)", sortKey: "_gr", numeric: true},
+    {key: "成員", label: "成員(未點火)"},
     {key: "最新排名", label: "最新排名", numeric: true}, {key: "PB", label: "PB", numeric: true},
     {key: "營收YoY%", label: "營收YoY%", numeric: true}, {key: "資金位階%", label: "資金位階%", numeric: true},
     {key: "埋伏理由", label: "埋伏理由(符合數排序)", sortKey: "_n", numeric: true},
@@ -2605,8 +2667,12 @@ function renderSignalTab() {
       }
       return m.code + m.name + (m.rank ? "#" + m.rank : "") + g;
     }).join("　");
+    const MG = {A: "<span style=\"color:var(--amb);font-weight:700\">⭐⭐ 標準</span>",
+                B: "<span style=\"color:var(--tx2)\">⭐ 觀察</span>", C: "—"};
     return {
       "微題材": c.theme,
+      "推薦": MG[c.grade] || "—",
+      "_gr": ({A: 3, B: 2, C: 1})[c.grade] || 0,
       "判定": (c.level || "—") + (c.second ? " ⚠二次脈衝" : ""),
       "_trig": c.level ? 1 : 0,
       "脈衝x": c.pulse, "跳升中位": c.jump, "本週分數": c.score,
@@ -2616,6 +2682,7 @@ function renderSignalTab() {
   });
   const microCols = [
     {key: "微題材", label: "微題材"},
+    {key: "推薦", label: "推薦程度", sortKey: "_gr", numeric: true},
     {key: "判定", label: "判定", sortKey: "_trig", numeric: true},
     {key: "脈衝x", label: "脈衝x", numeric: true},
     {key: "跳升中位", label: "跳升中位", numeric: true},
@@ -2641,9 +2708,22 @@ function renderSignalTab() {
   function pf(ok, text) {
     return ok ? "<span class=\"sig-pass\">✓ " + text + "</span>" : "<span class=\"sig-fail\">✗ " + text + "</span>";
   }
+  const regime = DATA.market_tier || {};
+  const regEl = document.getElementById("sigRegime");
+  if (regEl && regime.txt) {
+    const pct = Math.round((regime.tier || 1) * 100);
+    regEl.innerHTML = "🎚️ 大盤態勢：加權指數<b>" + regime.txt + "</b> → 建議倉位上限 <b style=\"color:var(--" +
+      (pct >= 100 ? "grn" : pct >= 60 ? "amb" : "red") + ")\">" + pct + "%</b>（回測：階梯倉位夏普1.56 vs 滿倉1.29）";
+  }
+  const GRADE = {S: "<span style=\"color:var(--red);font-weight:700\">⭐⭐⭐ 重點</span>",
+                 A: "<span style=\"color:var(--amb);font-weight:700\">⭐⭐ 標準</span>",
+                 B: "<span style=\"color:var(--tx2)\">⭐ 觀察</span>", C: "—"};
+  const GNUM = {S: 4, A: 3, B: 2, C: 1};
   const rows = cur.map(function(c) {
     return {
       "題材": themeLink(c.theme), "_g": c.theme,
+      "推薦": (GRADE[c.grade] || "—") + (c.knife ? " <span title=\"題材長趨勢向下+低位階(假說級警示)\">⚠</span>" : ""),
+      "_gr": (GNUM[c.grade] || 0),
       "判定": c.verdict || (c.n_ok + "/4"),
       "n_ok": c.n_ok,
       "①連漲": pf(c.streak_ok, c.streak + "週"),
@@ -2661,7 +2741,9 @@ function renderSignalTab() {
     };
   });
   const cols = [
-    {key: "題材", label: "題材", sortKey: "_g"}, {key: "判定", label: "判定", sortKey: "n_ok", numeric: true},
+    {key: "題材", label: "題材", sortKey: "_g"},
+    {key: "推薦", label: "推薦程度", sortKey: "_gr", numeric: true},
+    {key: "判定", label: "判定", sortKey: "n_ok", numeric: true},
     {key: "①連漲", label: "①連漲≥2週"}, {key: "②廣度", label: "②廣度≥50%×2週"},
     {key: "③升國", label: "③≥3國同升"}, {key: "④單國佔比", label: "④單國<80%"},
     {key: "⑤型態門檻", label: "⑤型態門檻", sortKey: "_pat", numeric: true},
