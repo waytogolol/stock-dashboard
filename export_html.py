@@ -257,6 +257,7 @@ def build():
         ),
         "us_earnings": load_earnings_csv("us_earnings_watch.csv"),
         "tw_earnings": load_earnings_csv("tw_earnings_watch.csv"),
+        "jpkr_earnings": load_earnings_csv("jp_kr_earnings_watch.csv"),
         "theme_news": pd.read_csv("theme_news.csv").to_dict("records") if os.path.exists("theme_news.csv") else [],
     }
 
@@ -560,6 +561,82 @@ def build():
         print(f"公司資訊面板資料失敗: {e}")
         data["company_info"] = {}
 
+    # 補漲雷達：題材點火時，篩「尚未點火」且符合研究員邏輯(低PB/營收轉正/低位階)的台股成員
+    try:
+        import numpy as _np
+        conn_c = sqlite3.connect(DB_PATH)
+        pb_map = dict(conn_c.execute("SELECT code, pb FROM tw_valuation WHERE pb IS NOT NULL"))
+        pb_median = float(_np.median(list(pb_map.values()))) if pb_map else 2.0
+        rev_map = {}
+        for code, yoy in conn_c.execute(
+                """SELECT code, yoy_pct FROM tw_monthly_revenue m
+                   WHERE year_month=(SELECT MAX(year_month) FROM tw_monthly_revenue)"""):
+            rev_map[code] = yoy
+        eps_map = dict(conn_c.execute(
+            "SELECT code, eps_fwd FROM fundamentals WHERE country='台' AND eps_ttm<=0 AND eps_fwd>0"))
+        conn_c.close()
+
+        def _z_ignite(vals):
+            """最新一週變化是否z>1；資料不足視為未點火"""
+            if len(vals) < 6:
+                return False, None
+            d = _np.diff(vals)
+            sd = d.std()
+            pos = float((_np.array(vals) <= vals[-1]).mean() * 100)
+            return (sd > 0 and d[-1] / sd > 1.0), pos
+
+        # 點火題材 = 最新週熱度Δ z>1 或 檢查清單verdict觸發
+        ignited = set(c["theme"] for c in data.get("signal_current", []) if c.get("verdict"))
+        for g, hist in theme_history.items():
+            sc = [h["熱度分數"] for h in hist]
+            fire, _p = _z_ignite(sc)
+            if fire:
+                ignited.add(g)
+        ignited -= BROAD_GROUPS
+
+        last_idx = len(all_dates) - 1
+        tw_cls = classification[classification["country"] == "台"]
+        catchup_rows = []
+        for g in sorted(ignited):
+            mem_codes = tw_cls[tw_cls["main_group"] == g]["code"].unique()
+            if len(mem_codes) < 3:
+                continue
+            for code in mem_codes:
+                e = company_history.get(f"台|{code}")
+                if not e:
+                    continue
+                amts = [r[3] or 0 for r in e["rows"]]
+                fire, pos = _z_ignite(amts)
+                if fire:
+                    continue                     # 已點火的不是補漲候選
+                tags = []
+                pb = pb_map.get(code)
+                if pb is not None and pb <= pb_median:
+                    tags.append(f"低PB {pb}")
+                yoy = rev_map.get(code)
+                if yoy is not None and yoy > 0:
+                    tags.append(f"營收YoY+{round(yoy)}%")
+                if pos is not None and pos < 50:
+                    tags.append(f"資金低位階{round(pos)}%")
+                if code in eps_map:
+                    tags.append("預估虧轉盈")
+                if len(tags) < 2:
+                    continue
+                last_row = e["rows"][-1]
+                catchup_rows.append({
+                    "theme": g, "code": code,
+                    "name": e["label"].split(" ", 2)[-1],
+                    "rank": last_row[1] if last_row[0] == last_idx else None,
+                    "pb": pb, "yoy": (round(yoy, 1) if yoy is not None else None),
+                    "pos": (round(pos) if pos is not None else None),
+                    "tags": tags, "n_tags": len(tags),
+                })
+        catchup_rows.sort(key=lambda r: (-r["n_tags"], r["pb"] if r["pb"] is not None else 99))
+        data["catchup_radar"] = {"themes": sorted(ignited), "rows": catchup_rows[:60]}
+    except Exception as e:
+        print(f"補漲雷達計算失敗: {e}")
+        data["catchup_radar"] = {"themes": [], "rows": []}
+
     # 資料健康狀態列：各資料源最新日期+新鮮度(門檻依各源的正常更新節奏)
     try:
         from datetime import date as _date
@@ -795,6 +872,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 .cal-evt { font-size: 10px; border-radius: 3px; padding: 1px 5px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
 .cal-evt.tw { background: var(--red-bg); color: var(--red); border-left: 2px solid var(--red); }
 .cal-evt.us { background: var(--ac-bg); color: var(--ac); border-left: 2px solid var(--ac); }
+.cal-evt.jpkr { background: rgba(52,184,122,.1); color: var(--grn); border-left: 2px solid var(--grn); }
 .cal-evt.fire { animation: pulse 1.2s infinite; }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.55} }
 
@@ -1098,6 +1176,9 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div class="scroll-box"><table id="usEarningsTable"></table></div>
   <h4>台股法說會 <span id="twEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
   <div class="scroll-box"><table id="twEarningsTable"></table></div>
+  <h4>日韓財報日 <span id="jpkrEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
+  <div class="hint">來源=Yahoo(yfinance calendar)，各市場前100大、僅未來90天；日股覆蓋率高、韓股約1/3，更新跑 <code>python fetch_earnings_dates.py</code>。陸股Yahoo無資料。</div>
+  <div class="scroll-box"><table id="jpkrEarningsTable"></table></div>
 </div>
 
 <div class="tab-content" id="tab4">
@@ -1183,6 +1264,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div class="sc-view-switch">
     <button class="view-btn active" id="sigViewMacroBtn" onclick="switchSigView('macro')">大題材檢查清單</button>
     <button class="view-btn" id="sigViewMicroBtn" onclick="switchSigView('micro')">微題材脈衝雷達</button>
+    <button class="view-btn" id="sigViewCatchupBtn" onclick="switchSigView('catchup')">補漲雷達</button>
   </div>
   <div id="sigMacroView">
   <h3 class="sec-title">檢查清單規則（源自記憶體2025/9案例研究，勿刪）</h3>
@@ -1216,6 +1298,18 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <h3 class="sec-title">微題材歷史脈衝</h3>
   <div class="hint">sustain = 之後4週均值/之前4週均值，&gt;1.5=行情延續。</div>
   <div class="scroll-box"><table id="microHistTable"></table></div>
+  </div>
+
+  <div id="sigCatchupView" style="display:none">
+  <h3 class="sec-title">補漲雷達（研究員邏輯：點火題材裡誰還沒動）</h3>
+  <div class="rule-card">
+    <div class="rule-item">邏輯：資金常跟著券商研究員的報告邏輯走——題材點火後，下一份報告傾向寫「同題材裡低PB、營收轉正、還沒漲」的公司。本雷達在題材點火當週自動列出這份候選名單，搶在報告之前。</div>
+    <div class="rule-item">① <b>題材點火</b> = 熱度分數週變化 z&gt;1 或檢查清單訊號觸發　② <b>成員未點火</b> = 個股資金額最新週變化 z≤1</div>
+    <div class="rule-item">③ 埋伏理由（至少符合2項才上榜）：<b>低PB</b>(≤全市場中位數，官方BWIBBU)｜<b>營收YoY為正</b>(官方月營收)｜<b>資金低位階</b>(&lt;50%自身歷史)｜<b>預估虧轉盈</b>(yf分析師共識，僅參考)</div>
+    <div class="rule-item" style="color:var(--tx3)">定位=研究清單非買進清單：進場等的是成員「自己的點火」(排名跳升/加入廣度)；符合條件但遲遲不點火=市場不認同，放掉。毛利QoQ方向(Q2財報後官方資料就有兩季可比)與合約負債(MOPS簡表無此細項，需XBRL/FinMind)待資料到位後補上。</div>
+  </div>
+  <div class="hint" id="catchupThemes"></div>
+  <div class="scroll-box"><table id="catchupTable"></table></div>
   </div>
 </div>
 
@@ -1909,6 +2003,14 @@ function renderEarningsTab() {
   ];
   buildTable(document.getElementById("twEarningsTable"), twCols, DATA.tw_earnings.rows, r => earningsTierClass(r["日期"]));
 
+  const jpkr = DATA.jpkr_earnings || {rows: []};
+  document.getElementById("jpkrEarningsMtime").textContent = jpkr.mtime ? `(最後查詢: ${jpkr.mtime})` : "(尚未查詢過)";
+  const jpkrCols = [
+    {key: "日期", label: "日期"}, {key: "市場", label: "市場"}, {key: "代碼", label: "代碼"},
+    {key: "公司", label: "公司"}, {key: "成交金額排名", label: "排名", numeric: true}, {key: "主族群", label: "主族群"},
+  ];
+  buildTable(document.getElementById("jpkrEarningsTable"), jpkrCols, jpkr.rows, r => earningsTierClass(r["日期"]));
+
   // 初始化日曆：顯示當月
   const _now = new Date();
   renderCalendar(_now.getFullYear(), _now.getMonth());
@@ -1930,6 +2032,11 @@ function buildEvtMap() {
     const d = r["日期"]; if (!d) return;
     if (!m[d]) m[d] = [];
     m[d].push({label: r["代碼"], market: "us", date: d});
+  });
+  ((DATA.jpkr_earnings || {}).rows || []).forEach(r => {
+    const d = r["日期"]; if (!d) return;
+    if (!m[d]) m[d] = [];
+    m[d].push({label: r["市場"] + " " + (r["公司"] || r["代碼"]), market: "jpkr", date: d});
   });
   return m;
 }
@@ -2305,10 +2412,11 @@ function renderBanner() {
 
 // ── 進場訊號頁籤 ──────────────────────────────────────────────────────
 function switchSigView(v) {
-  document.getElementById("sigViewMacroBtn").classList.toggle("active", v === "macro");
-  document.getElementById("sigViewMicroBtn").classList.toggle("active", v === "micro");
-  document.getElementById("sigMacroView").style.display = v === "macro" ? "" : "none";
-  document.getElementById("sigMicroView").style.display = v === "micro" ? "" : "none";
+  ["Macro", "Micro", "Catchup"].forEach(function(k) {
+    const on = v === k.toLowerCase();
+    document.getElementById("sigView" + k + "Btn").classList.toggle("active", on);
+    document.getElementById("sig" + k + "View").style.display = on ? "" : "none";
+  });
 }
 
 function renderSignalTab() {
@@ -2322,6 +2430,30 @@ function renderSignalTab() {
   if (macroBtn && macroTrig) macroBtn.innerHTML = "大題材檢查清單 🔔" + macroTrig;
   const microBtn = document.getElementById("sigViewMicroBtn");
   if (microBtn && microTrig) microBtn.innerHTML = "微題材脈衝雷達 🔔" + microTrig;
+
+  // 補漲雷達
+  const cu = DATA.catchup_radar || {themes: [], rows: []};
+  const cuBtn = document.getElementById("sigViewCatchupBtn");
+  if (cuBtn && cu.rows.length) cuBtn.innerHTML = "補漲雷達 🎯" + cu.rows.length;
+  document.getElementById("catchupThemes").innerHTML = cu.themes.length
+    ? "本週點火題材：" + cu.themes.map(function(g) { return themeLink(g); }).join("、")
+    : "本週無題材點火，雷達休眠（點火=熱度週變化z>1或檢查清單觸發）。";
+  const cuRows = cu.rows.map(function(r) {
+    return {
+      "點火題材": themeLink(r.theme), "_g": r.theme,
+      "成員": "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + r.code + "')\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + r.code + " " + r.name + "</a>",
+      "最新排名": r.rank, "PB": r.pb, "營收YoY%": r.yoy, "資金位階%": r.pos,
+      "埋伏理由": r.tags.join("｜"), "_n": r.n_tags,
+    };
+  });
+  const cuEl = document.getElementById("catchupTable");
+  cuEl._sortState = {colIndex: 6, dir: -1};
+  buildTable(cuEl, [
+    {key: "點火題材", label: "點火題材", sortKey: "_g"}, {key: "成員", label: "成員(未點火)"},
+    {key: "最新排名", label: "最新排名", numeric: true}, {key: "PB", label: "PB", numeric: true},
+    {key: "營收YoY%", label: "營收YoY%", numeric: true}, {key: "資金位階%", label: "資金位階%", numeric: true},
+    {key: "埋伏理由", label: "埋伏理由(符合數排序)", sortKey: "_n", numeric: true},
+  ], cuRows);
 
   // 微題材脈衝雷達
   const microRows = (DATA.micro_current || []).map(function(c) {
