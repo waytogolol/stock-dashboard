@@ -7,12 +7,13 @@
 - 訊號觸發點標記（發動/主升段轉換）
 - 台股 vs 美韓子分數的 lead-lag 相關性
 """
+import os
 import sqlite3
 import sys
 
 import pandas as pd
 
-DB = "capital_flow.db"
+DB = os.environ.get("CF_DB", "capital_flow.db")   # 研究沙盒: set CF_DB=research_2022.db
 COUNTRIES = ["台", "日", "美", "韓", "陸"]
 THEMES = sys.argv[1:] if len(sys.argv) > 1 else ["記憶體", "被動元件"]
 

@@ -338,6 +338,52 @@ def build():
     except Exception as e:
         print(f"陸股東財標籤未載入(可先跑 fetch_cn_eastmoney.py): {e}")
 
+    # 資本支出(fetch_capex.py每季更新)：卡片擴產標籤 + 錨點客戶資本開支引擎
+    def _fmt_b(v):
+        return f"{v/1e12:.1f}T" if v >= 1e12 else f"{v/1e9:.1f}B"
+
+    capex_note = {}
+    capex_map = {}
+    try:
+        conn_x = sqlite3.connect(DB_PATH)
+        rowsx = conn_x.execute(
+            "SELECT country, code, qdate, capex FROM capex_history ORDER BY qdate").fetchall()
+        conn_x.close()
+        serx = {}
+        for c, cd, q, v in rowsx:
+            serx.setdefault((c, cd), []).append((q, v))
+        for (c, cd), lst in serx.items():
+            if len(lst) < 2 or lst[-1][1] <= 0:
+                continue
+            qd, v = lst[-1]
+            d1 = datetime.strptime(qd, "%Y-%m-%d")
+            ref = None
+            for q0, v0 in lst[:-1]:
+                dd = (d1 - datetime.strptime(q0, "%Y-%m-%d")).days
+                if 330 <= dd <= 400 and v0 > 0:
+                    ref = (q0, v0, "YoY")
+            if ref is None and lst[0][1] > 0 and lst[0][0] != qd:
+                ref = (lst[0][0], lst[0][1], f"vs{lst[0][0][:7]}")
+            if not ref:
+                continue
+            chg = round((v / ref[1] - 1) * 100)
+            hist = "、".join(f"{q[:7]}:{_fmt_b(x)}" for q, x in lst[-5:])
+            # 最小金額門檻(原幣)：排除小基數跳變雜訊(0.00B->0.01B也算+幾百%)
+            min_capex = {"台": 5e8, "美": 5e7, "日": 5e9, "韓": 5e10, "陸": 3e8}.get(c, 0)
+            note = ""
+            if v >= min_capex:
+                if chg >= 50:
+                    note = f"🏗️Capex+{chg}%({ref[2]})"
+                elif chg <= -40:
+                    note = f"Capex{chg}%({ref[2]})"
+            capex_note[(c, cd)] = {"n": note, "h": hist}
+            capex_map[f"{c}|{cd}"] = {"cur": _fmt_b(v), "chg": chg, "h": hist}
+        data["capex_map"] = capex_map
+        print(f"capex: 序列{len(capex_map)}檔，擴產/縮減標籤{sum(1 for x in capex_note.values() if x['n'])}檔")
+    except Exception as e:
+        print(f"capex未載入(可先跑 fetch_capex.py): {e}")
+        data["capex_map"] = {}
+
     # 產業地位描述(取分類表第一筆非空值)
     pos_lookup = {}
     for _, r in classification.iterrows():
@@ -360,6 +406,8 @@ def build():
             "eps_fwd": f.get("eps_fwd"),
             "position_note": pos_lookup.get((country, code), ""),
             "cn_note": cn_note.get(code, "") if country == "陸" else "",
+            "capex_note": capex_note.get((country, code), {}).get("n", ""),
+            "capex_hist": capex_note.get((country, code), {}).get("h", ""),
             "supplier_name": info["中文名稱"] if info is not None else code,
             "supplier_rank": int(info["rank"]) if info is not None else None,
             "supplier_rank_delta": rank_delta,
@@ -728,6 +776,7 @@ def build():
             _item("PB估值(官方)", _q("SELECT MAX(updated) FROM tw_valuation"), 40, 80, "每月"),
             _item("五國基本面(yf)", _q("SELECT MAX(updated) FROM fundamentals"), 100, 150, "每季"),
             _item("微題材毛利", _q("SELECT MAX(updated) FROM margin_history"), 100, 150, "每季"),
+            _item("資本支出(yf)", _q("SELECT MAX(updated) FROM capex_history"), 100, 150, "每季"),
             _item("供應鏈標註", data.get("supply_last_updated"), 60, 120, "手動(Gemini)"),
         ]
         conn_h.close()
@@ -1257,6 +1306,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     <button class="anchor-btn" onclick="selectAnchor('TENCENT')">🎮 騰訊</button>
     <button class="anchor-btn" onclick="selectAnchor('HUAWEI')">📡 華為</button>
   </div>
+  <div id="anchorCapexStrip" class="hint" style="margin-top:6px"></div>
   <div id="scCountryBar"></div>
   <div id="scCards"></div>
   </div>
@@ -2244,6 +2294,7 @@ function buildFundHTML(l) {
   if (line1.length) html += "<div class=\"sc-fund\">" + line1.join("｜") + "</div>";
   if (line2.length) html += "<div class=\"sc-fund\">" + line2.join("｜") + "</div>";
   if (l.cn_note) html += "<div class=\"sc-fund\" style=\"color:var(--amb)\">" + l.cn_note + "</div>";
+  if (l.capex_note) html += "<div class=\"sc-fund\" style=\"color:var(--amb)\" title=\"近幾季capex(原幣): " + (l.capex_hist || "") + "\">" + l.capex_note + "</div>";
   return html;
 }
 
@@ -2378,9 +2429,34 @@ function renderSCRanking() {
   document.getElementById("scRanking").innerHTML = html;
 }
 
+const CCY = {美: "USD", 台: "TWD", 韓: "KRW", 日: "JPY", 陸: "CNY"};
+
+function renderAnchorCapex() {
+  const el = document.getElementById("anchorCapexStrip");
+  const def = ANCHOR_DEFS[scCurrentAnchor];
+  const cm = DATA.capex_map || {};
+  const byCode = {};
+  Object.keys(cm).forEach(function(k) {
+    const p = k.split("|");
+    byCode[p[1]] = {e: cm[k], c: p[0]};
+  });
+  const parts = [];
+  ((def && def.codes) || []).forEach(function(code) {
+    const x = byCode[code];
+    if (!x) return;
+    const cls = x.e.chg >= 0 ? "fund-up" : "fund-down";
+    parts.push("<span title=\"近幾季capex(原幣): " + x.e.h + "\"><b>" + code + "</b> " + x.e.cur + " " + (CCY[x.c] || "") +
+               " <span class=\"" + cls + "\">" + (x.e.chg >= 0 ? "+" : "") + x.e.chg + "%</span></span>");
+  });
+  el.innerHTML = parts.length
+    ? "🏗️ <b>資本開支引擎</b>(最新季/YoY，客戶capex領先供應商營收2~4季)：" + parts.join("　·　")
+    : "";
+}
+
 function renderSCCards() {
   const def = ANCHOR_DEFS[scCurrentAnchor];
   if (!def) return;
+  renderAnchorCapex();
   const links = (DATA.supply_links || []).filter(function(l) { return def.codes.indexOf(l.customer_code) >= 0; });
 
   // Group by supplier country

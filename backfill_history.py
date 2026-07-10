@@ -24,11 +24,12 @@ from datetime import date, timedelta
 import pandas as pd
 import yfinance as yf
 
-DB = "capital_flow.db"
+import os as _os
+DB = _os.environ.get("CF_DB", "capital_flow.db")   # 研究沙盒: set CF_DB=research_2022.db
 EARLIEST_REAL = date(2026, 6, 21)   # 第一筆真實快照，只回補這之前
 CHUNK = 50                          # 每批檔數，小批次避免請求過猛
 BASE_SLEEP = 4                      # 批次間基礎間隔(秒)
-CACHE = "tmp_backfill_cache.pkl"
+CACHE = "tmp_backfill_cache.pkl" if DB == "capital_flow.db" else f"tmp_backfill_{DB.replace('.db','')}.pkl"
 
 UNIVERSE_FILES = {
     "台": "tw_top300.csv",

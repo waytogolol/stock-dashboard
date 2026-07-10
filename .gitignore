@@ -7,3 +7,4 @@ __pycache__/
 *.log
 tmp_*
 theme_rank.json
+research_*.db
