@@ -575,8 +575,13 @@ td,th{border:1px solid #333;padding:5px 12px;text-align:right} th{text-align:lef
 <h2>權益曲線（起點=1，對數刻度）</h2><div id="c1" style="height:420px"></div>
 <h2>水下回撤（全部訊號 vs 大盤）</h2><div id="c2" style="height:260px"></div>
 <h2>逐年報酬</h2><div id="c3" style="height:320px"></div>
+<h2>大題材逐筆明細（配置B全部觸發，依日期）</h2>
+<div class="note">+8週股價=觸發時題材前3大台股成員等權8週後報酬(未扣成本)。90日新高=幾檔成員符合/3；突破跳空=✓表≥1檔成員同日跳空+創60日新高。</div>
+<div style="max-height:420px;overflow-y:auto"><table>
+<tr><th>日期</th><th>題材</th><th>位階</th><th>廣度%</th><th>升國</th><th>90日新高</th><th>突破跳空</th><th>+8週股價</th><th>成員(前3大)</th></tr>
+__TRADES__</table></div>
 <div class="note">已知限制：熱度=成交金額(跌市放量會觸發假訊號→2022勝率27%)；估算回補含倖存者殘餘；固定8週持有為簡化(實戰=騎著等訊號惡化)；
-規則⑥基本面與微題材未含。結論五條見 tmp_bear_report.txt 與記憶檔。</div>
+規則⑥基本面未含。結論見 tmp_bear_report.txt 與記憶檔。</div>
 <script>
 const D = __DATA__;
 const L = {paper_bgcolor:"#1a1a19", plot_bgcolor:"#1a1a19", font:{color:"#c3c2b7",size:12},
@@ -597,7 +602,15 @@ const t3 = Object.keys(D.yr).map(k => ({x:D.years, y:D.years.map(y=>D.yr[k][y]!=
 Plotly.newPlot("c3", t3, Object.assign({}, L, {barmode:"group", yaxis:{tickformat:".0%", gridcolor:"#2c2c2a"},
   hovermode:"closest"}), {responsive:true});
 </script></body></html>"""
-html = html.replace("__HEAD__", head_html).replace("__ROWS__", rows_html).replace("__DATA__", _json.dumps(payload, ensure_ascii=False))
+trades_html = ""
+for h in sorted(hits_b, key=lambda x: str(x["date"])):
+    pret = format(h["pret8"], "+.1%") if h["pret8"] is not None else "—"
+    trades_html += (f"<tr><th>{h['date']}</th><td>{h['theme']}</td><td>{h['pos']}</td>"
+                    f"<td>{h['breadth']}</td><td>{h['rising']}</td>"
+                    f"<td>{h.get('nh', 0)}/3</td><td>{'✓' if h.get('gnh') else '—'}</td>"
+                    f"<td>{pret}</td><td>{'、'.join(h['members'])}</td></tr>")
+html = (html.replace("__HEAD__", head_html).replace("__ROWS__", rows_html)
+        .replace("__TRADES__", trades_html).replace("__DATA__", _json.dumps(payload, ensure_ascii=False)))
 with open("research_2022_report.html", "w", encoding="utf-8") as f:
     f.write(html)
 print("done -> tmp_bear_report.txt, research_2022_report.html")
