@@ -79,14 +79,24 @@ def fetch_monthly(conn, log):
 
 
 def fetch_quarterly(conn, log):
-    rows = []
+    """MOPS t187ap06 為「年初至今累計值」：Q1=單季可直用；Q2起必須扣減前季累計還原單季。
+    tw_quarterly_cum 存官方原始累計值，tw_quarterly_fin 一律存還原後的單季值。"""
+    conn.execute("""CREATE TABLE IF NOT EXISTS tw_quarterly_cum (
+        code TEXT, quarter TEXT, revenue REAL, gross_profit REAL, eps REAL,
+        updated TEXT, PRIMARY KEY (code, quarter))""")
+    # 遷移(冪等)：既有Q1單季=累計，補進累計表，供未來Q2扣減
+    conn.execute("""INSERT OR IGNORE INTO tw_quarterly_cum
+        SELECT code, quarter, revenue, gross_profit, eps, updated
+        FROM tw_quarterly_fin WHERE quarter LIKE '%Q1'""")
+    conn.commit()
+
+    raw = []
     for name, url in [
         ("上市一般業", "https://mopsfin.twse.com.tw/opendata/t187ap06_L_ci.csv"),
         ("上櫃一般業", "https://mopsfin.twse.com.tw/opendata/t187ap06_O_ci.csv"),
     ]:
         try:
             df = get_csv(url)
-            cols = {c: c for c in df.columns}
             for _, r in df.iterrows():
                 d = dict(r)
                 code = pick(d, "公司代號")
@@ -95,18 +105,40 @@ def fetch_quarterly(conn, log):
                 gp = to_f(pick(d, "營業毛利"))
                 eps = to_f(pick(d, "每股盈餘"))
                 if code and yr and season and rev:
-                    q = f"{yr}Q{season}"
-                    gm = gp / rev * 100 if (gp is not None and rev) else None
-                    rows.append((str(code).strip(), q, rev, gp, gm, eps))
+                    raw.append((str(code).strip(), str(yr).strip(), int(season), rev, gp, eps))
             log.append(f"季損益 {name}: {len(df)} 筆 OK (欄位: {list(df.columns)[:8]}...)")
         except Exception as e:
             log.append(f"季損益 {name}: 失敗 {e}")
         time.sleep(2)
+    if not raw:
+        return 0
+    today = str(date.today())
+    conn.executemany("INSERT OR REPLACE INTO tw_quarterly_cum VALUES (?,?,?,?,?,?)",
+                     [(c, f"{y}Q{s}", rv, gp, eps, today) for c, y, s, rv, gp, eps in raw])
+    conn.commit()
+
+    prev = {(c, q): (rv, gp, eps) for c, q, rv, gp, eps in
+            conn.execute("SELECT code, quarter, revenue, gross_profit, eps FROM tw_quarterly_cum")}
+    rows, skipped = [], 0
+    for c, y, s, rv, gp, eps in raw:
+        if s == 1:
+            srv, sgp, seps = rv, gp, eps
+        else:
+            p = prev.get((c, f"{y}Q{s - 1}"))
+            if not p or p[0] is None:
+                skipped += 1        # 缺前季累計，無法還原單季，寧缺勿錯
+                continue
+            srv = rv - p[0]
+            sgp = gp - p[1] if (gp is not None and p[1] is not None) else None
+            seps = eps - p[2] if (eps is not None and p[2] is not None) else None
+        gm = sgp / srv * 100 if (sgp is not None and srv) else None
+        rows.append((c, f"{y}Q{s}", srv, sgp, gm, seps))
+    if skipped:
+        log.append(f"季損益: {skipped} 檔缺前季累計值，略過單季還原")
     if rows:
         conn.execute("""CREATE TABLE IF NOT EXISTS tw_quarterly_fin (
             code TEXT, quarter TEXT, revenue REAL, gross_profit REAL,
             gross_margin REAL, eps REAL, updated TEXT, PRIMARY KEY (code, quarter))""")
-        today = str(date.today())
         conn.executemany(
             "INSERT OR REPLACE INTO tw_quarterly_fin VALUES (?,?,?,?,?,?,?)",
             [(c, q, rv, gp, gm, eps, today) for c, q, rv, gp, gm, eps in rows])
