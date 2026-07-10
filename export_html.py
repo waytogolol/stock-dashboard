@@ -203,6 +203,24 @@ def build():
                 "金額合計億台幣": round(r["金額合計億台幣"]),
             })
 
+    # 題材×國別子分數歷史(族群金流解剖：看哪個市場先動)
+    try:
+        _r = rankings[["snapshot_date", "country", "code", "金額億台幣_num"]].copy()
+        _r["tot"] = _r.groupby(["snapshot_date", "country"])["金額億台幣_num"].transform("sum")
+        _r["share"] = _r["金額億台幣_num"] / _r["tot"] * 100
+        _m = _r.merge(classification[["country", "code", "main_group"]].drop_duplicates(),
+                      on=["country", "code"])
+        _sub = _m.groupby(["main_group", "country", "snapshot_date"])["share"].sum()
+        tch = {}
+        for (g, c), grp in _sub.groupby(level=[0, 1]):
+            s = grp.droplevel([0, 1]).reindex(all_dates).fillna(0)
+            if s.max() > 0.05:
+                tch.setdefault(g, {})[c] = [round(float(v), 2) for v in s]
+        data_theme_country = tch
+    except Exception as e:
+        print(f"題材國別子分數計算失敗: {e}")
+        data_theme_country = {}
+
     def load_earnings_csv(path):
         if not os.path.exists(path):
             return {"rows": [], "mtime": None}
@@ -210,9 +228,19 @@ def build():
         mtime = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
         return {"rows": df.to_dict("records"), "mtime": mtime}
 
+    try:
+        import subprocess
+        _vn = subprocess.run(["git", "rev-list", "--count", "HEAD"], capture_output=True, text=True).stdout.strip()
+        _vh = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+        version = f"v{int(_vn) + 1}（基於{_vh}）" if _vn else ""   # 匯出後才commit，故+1=本次發版號
+    except Exception:
+        version = ""
+
     data = {
         "latest_date": latest_date,
         "previous_date": previous_date,
+        "version": version,
+        "theme_country_history": data_theme_country,
         "countries": COUNTRIES,
         "snapshot_dates": sorted(rankings["snapshot_date"].unique().tolist()),
         "theme_pivot_all": theme_pivot_all,
@@ -1022,6 +1050,11 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div class="hint">上=成員週收盤歸一化(範圍起點=100)，線綁在一起走=共振；中=資金排名(越上面越熱)；下=滾動8週共振分數(成員週報酬兩兩相關均值，虛線0.7以上=強共振)。成員取該題材台股最新資金額前N大。點下方成員標籤可跳到單股檢視。</div>
   <div id="resChart" style="height:620px"></div>
   <div id="resChips" class="chip-row"></div>
+  <h3 class="sec-title">族群金流解剖（誰先動：市場層 → 台股成員層）</h3>
+  <div class="hint">上圖=該題材在五市場的資金份額子分數，◆=點火週(份額週變化&gt;1個標準差)——看哪個市場先動。中圖=集中度：台股第1大成員佔題材台股金額%，上升=龍頭獨走、下降=擴散(全員行情較健康)。下表=台股成員點火時序，最早點火標🐑。<b>提醒</b>：回測顯示跨市場接力僅弱訊號(最強=韓→台 lift 1.19)、領頭羊帶動整體 lift 1.15——先後順序是「觀察起點」不是「買進理由」，決策仍看位階+廣度。</div>
+  <div id="anaChart" style="height:340px"></div>
+  <div id="anaConc" style="height:130px"></div>
+  <div class="scroll-box"><table id="anaTable"></table></div>
   <hr style="border:none;border-top:1px solid var(--bd);margin:20px 0">
   <h3 class="sec-title" style="margin-top:0">個股/題材歷史</h3>
   <div class="controls">
@@ -1111,6 +1144,10 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     <div id="chainRanking" class="sc-ranking"></div>
     <div class="hint">選一條產業鏈，看上游材料/設備 → 中游製造 → 下游應用的跨國全貌。卡片按資金流向排名排序，左色條=熱度(紅=前50、琥珀=前150)，▲▼=排名週變化。基本面欄(yfinance季度值，每季更新)：毛利率、<b>季營收YoY</b>(最新季vs去年同季，非台股月營收)、PB股價淨值比(循環股位置參考)、EPS預估方向(forward vs trailing，↗=分析師預估成長)。</div>
     <div class="sc-anchors" id="chainBtns"></div>
+    <div class="sc-anchors" style="margin-top:6px">
+      <span id="chainCountryBtns"></span>
+      <label style="font-size:12px;margin-left:8px"><input type="checkbox" id="chainOnlyRanked" onchange="renderChainView()"> 只看上榜成員(有資金排名)</label>
+    </div>
     <div class="chain-stages" id="chainStages"></div>
   </div>
 </div>
@@ -1506,6 +1543,7 @@ function renderResonance() {
     Plotly.purge(chartEl);
     chartEl.innerHTML = "<div class=\"hint\">此題材有股價資料的台股成員不足3家，無法看共振。</div>";
     badgeEl.innerHTML = ""; chipsEl.innerHTML = "";
+    renderAnatomy();
     return;
   }
 
@@ -1582,6 +1620,134 @@ function renderResonance() {
            "onclick=\"jumpToCompany('" + m.key + "')\" title=\"跳到下方單股檢視\">" + m.short +
            (lastRk ? " #" + lastRk : " 未上榜") + "</span>";
   }).join("");
+  renderAnatomy();
+}
+
+// ── 族群金流解剖：市場層點火順序 + 集中度 + 台股成員點火時序 ────────────
+const ANA_COLORS = {台: "#e84545", 美: "#3c8cf0", 韓: "#a06ee0", 日: "#34b87a", 陸: "#d49610"};
+
+function anaIgn(series) {
+  const d = [];
+  for (let i = 1; i < series.length; i++) d.push(series[i] - series[i - 1]);
+  if (!d.length) return [];
+  const mean = d.reduce(function(s, v) { return s + v; }, 0) / d.length;
+  const sd = Math.sqrt(d.reduce(function(s, v) { return s + (v - mean) * (v - mean); }, 0) / d.length);
+  const out = [];
+  if (!sd) return out;
+  for (let i = 0; i < d.length; i++) if (d[i] / sd > 1) out.push(i + 1);
+  return out;
+}
+
+function renderAnatomy() {
+  const theme = document.getElementById("resTheme").value;
+  const nWeeks = parseInt(document.getElementById("resRange").value, 10);
+  const dates = DATA.snapshot_dates, L = dates.length;
+  const start = Math.max(0, L - nWeeks);
+  const winDates = dates.slice(start);
+  const chartEl = document.getElementById("anaChart");
+  const concEl = document.getElementById("anaConc");
+  const tableEl = document.getElementById("anaTable");
+
+  // 市場層：五國子分數 + 點火標記
+  const tc = (DATA.theme_country_history || {})[theme] || {};
+  const traces = [];
+  ["美", "韓", "日", "陸", "台"].forEach(function(c) {
+    const s = tc[c];
+    if (!s) return;
+    const color = ANA_COLORS[c] || "#6b7f91";
+    traces.push({x: winDates, y: s.slice(start), mode: "lines", name: c,
+                 line: {color: color, width: c === "台" ? 2.5 : 1.8}});
+    const ig = anaIgn(s).filter(function(w) { return w >= start; });
+    if (ig.length) {
+      traces.push({x: ig.map(function(w) { return dates[w]; }),
+                   y: ig.map(function(w) { return s[w]; }),
+                   mode: "markers", showlegend: false,
+                   marker: {color: color, size: 9, symbol: "diamond"},
+                   hovertemplate: c + " 點火 %{x}<extra></extra>"});
+    }
+  });
+  if (!traces.length) {
+    Plotly.purge(chartEl);
+    chartEl.innerHTML = "<div class=\"hint\">此題材無國別子分數資料。</div>";
+  } else {
+    Plotly.newPlot(chartEl, traces, {
+      title: {text: theme + "　五市場子分數與點火週（◆）", font: {size: 14}},
+      yaxis: {title: {text: "子分數(份額%)", font: {size: 11}}},
+      paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
+      legend: {orientation: "h", y: 1.14, font: {size: 11}},
+      hovermode: "x unified", margin: {t: 46, b: 36},
+    }, {responsive: true});
+  }
+
+  // 台股成員
+  const mem = [];
+  Object.keys(DATA.company_info || {}).forEach(function(k) {
+    if (k.indexOf("台|") !== 0) return;
+    const info = DATA.company_info[k];
+    if (!info.g || info.g.indexOf(theme) < 0) return;
+    const e = DATA.company_history[k];
+    if (!e) return;
+    const amt = {}, rk = {};
+    e.rows.forEach(function(r) { amt[r[0]] = r[3] || 0; rk[r[0]] = r[1]; });
+    mem.push({key: k, label: e.label, amt: amt, rk: rk});
+  });
+  if (!mem.length) {
+    Plotly.purge(concEl); concEl.innerHTML = ""; tableEl.innerHTML = "";
+    return;
+  }
+
+  // 集中度：第1大成員佔題材台股金額%
+  const concX = [], concY = [];
+  for (let t = start; t < L; t++) {
+    let tot = 0, mx = 0;
+    mem.forEach(function(m) { const a = m.amt[t] || 0; tot += a; if (a > mx) mx = a; });
+    if (tot > 0) { concX.push(dates[t]); concY.push(+(mx / tot * 100).toFixed(1)); }
+  }
+  Plotly.newPlot(concEl, [{x: concX, y: concY, mode: "lines", fill: "tozeroy",
+    line: {color: "#d49610", width: 1.5}, fillcolor: "rgba(212,150,16,.15)"}], {
+    yaxis: {title: {text: "第1大佔%", font: {size: 10}}, range: [0, 100]},
+    paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8", size: 10},
+    margin: {t: 8, b: 30, l: 50, r: 20}, showlegend: false,
+  }, {responsive: true});
+
+  // 成員點火時序表
+  let totLast = 0;
+  mem.forEach(function(m) { totLast += m.amt[L - 1] || 0; });
+  const rows = mem.map(function(m) {
+    const s = [];
+    for (let t = 0; t < L; t++) s.push(m.amt[t] || 0);
+    const ig = anaIgn(s).filter(function(w) { return w >= start; });
+    const first = ig.length ? ig[0] : null;
+    let streak = 0;
+    for (let t = L - 1; t > 0; t--) {
+      if ((m.amt[t] || 0) > (m.amt[t - 1] || 0)) streak++; else break;
+    }
+    const r1 = m.rk[L - 1], r5 = m.rk[L - 5];
+    const p = m.label.split(" ");
+    const short = p.length >= 3 ? p[1] + p[2] : m.label;
+    return {
+      "成員": "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('" + m.key + "')\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + short + "</a>",
+      "_ig": first === null ? 9999 : first,
+      "首次點火": first === null ? "—" : dates[first].slice(5),
+      "點火次數": ig.length,
+      "最新排名": r1 !== undefined ? r1 : null,
+      "4週排名Δ": (r1 !== undefined && r5 !== undefined) ? r5 - r1 : null,
+      "金額連漲週": streak,
+      "佔題材台股%": totLast > 0 ? +((m.amt[L - 1] || 0) / totLast * 100).toFixed(1) : 0,
+    };
+  });
+  rows.sort(function(a, b) { return a._ig - b._ig || b["佔題材台股%"] - a["佔題材台股%"]; });
+  if (rows.length && rows[0]._ig < 9999) rows[0]["成員"] = "🐑 " + rows[0]["成員"];
+  tableEl._sortState = {colIndex: 1, dir: 1};
+  buildTable(tableEl, [
+    {key: "成員", label: "成員(點跳單股)"},
+    {key: "首次點火", label: "首次點火(範圍內)", sortKey: "_ig", numeric: true},
+    {key: "點火次數", label: "點火次數", numeric: true},
+    {key: "最新排名", label: "最新排名", numeric: true},
+    {key: "4週排名Δ", label: "4週排名Δ", numeric: true},
+    {key: "金額連漲週", label: "金額連漲週", numeric: true},
+    {key: "佔題材台股%", label: "佔題材台股%", numeric: true},
+  ], rows);
 }
 
 function renderCompanyHistory() {
@@ -1935,6 +2101,12 @@ function buildFundHTML(l) {
 // ── 產業鏈視圖(上中下游) ─────────────────────────────────────────────
 let scView = "anchor";
 let currentChain = null;
+let chainCountry = "全部";
+
+function selectChainCountry(c) {
+  chainCountry = c;
+  renderChainView();
+}
 
 function switchSCView(v) {
   scView = v;
@@ -2002,11 +2174,23 @@ function renderChainView() {
     return "<button class=\"anchor-btn" + (c === currentChain ? " active" : "") + "\" onclick=\"selectChain('" + c + "')\">" + c + "</button>";
   }).join("");
   const links = (DATA.industry_chains || []).filter(function(l) { return l.chain === currentChain; });
+  // 國別篩選鈕(附家數)；換鏈後若原國別無成員則退回全部
+  const cCnt = {全部: links.length};
+  links.forEach(function(l) { cCnt[l.supplier_country] = (cCnt[l.supplier_country] || 0) + 1; });
+  if (!cCnt[chainCountry]) chainCountry = "全部";
+  document.getElementById("chainCountryBtns").innerHTML = ["全部", "台", "美", "日", "韓", "陸"]
+    .filter(function(c) { return cCnt[c]; })
+    .map(function(c) {
+      return "<button class=\"anchor-btn" + (c === chainCountry ? " active" : "") + "\" onclick=\"selectChainCountry('" + c + "')\">" + c + "(" + cCnt[c] + ")</button>";
+    }).join("");
+  const onlyRanked = document.getElementById("chainOnlyRanked").checked;
   const stages = ["上游", "中游", "下游"];
   const stageIcons = {上游: "⛏️", 中游: "🏭", 下游: "📦"};
   let html = "";
   stages.forEach(function(st) {
-    const items = links.filter(function(l) { return l.stage === st; });
+    let items = links.filter(function(l) { return l.stage === st; });
+    if (chainCountry !== "全部") items = items.filter(function(l) { return l.supplier_country === chainCountry; });
+    if (onlyRanked) items = items.filter(function(l) { return l.supplier_rank; });
     if (!items.length) return;
     items.sort(function(a, b) { return (a.supplier_rank || 9999) - (b.supplier_rank || 9999); });
     const hot = items.filter(function(l) { return (l.supplier_tier || "").indexOf("前50") >= 0; }).length;
@@ -2641,8 +2825,9 @@ function renderHealthBar() {
   const items = DATA.health || [];
   if (!items.length) { el.style.display = "none"; return; }
   const nWarn = items.filter(function(h) { return h.s !== "ok"; }).length;
-  let html = "<span style=\"font-weight:600;color:var(--tx2)\">資料健康" +
-             (nWarn ? " <span class=\"health-dot warn\"></span>" + nWarn + "項待更新" : " <span class=\"health-dot ok\"></span>全部正常") + "：</span>";
+  let html = DATA.version ? "<span style=\"color:var(--tx3)\">" + DATA.version + "</span>" : "";
+  html += "<span style=\"font-weight:600;color:var(--tx2)\">資料健康" +
+          (nWarn ? " <span class=\"health-dot warn\"></span>" + nWarn + "項待更新" : " <span class=\"health-dot ok\"></span>全部正常") + "：</span>";
   html += items.map(function(h) {
     const tip = "更新節奏：" + h.c + (h.a !== undefined ? "｜距今" + h.a + "天" : "");
     return "<span class=\"health-item\" title=\"" + tip + "\"><span class=\"health-dot " + h.s + "\"></span>" + h.n + " " + h.d + "</span>";
