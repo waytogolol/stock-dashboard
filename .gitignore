@@ -10,3 +10,9 @@ theme_rank.json
 research_*.db
 research_2022_report.html
 tmp_backfill_research_*
+bear_test_2022.py
+micro_bear_2022.py
+pattern_mining_2022.py
+pattern_micro_check.py
+pattern_holdout_2022.py
+pattern_check.py

@@ -488,12 +488,35 @@ def build():
             chk["eps_up_pct"] = int(eps_up / eps_tot * 100) if eps_tot else None
             chk["rg_up_pct"] = int(rg_up / rg_tot * 100) if rg_tot else None
             chk["n_ok"] = sum([chk["streak_ok"], chk["breadth_ok"], chk["rising_ok"], chk["share_ok"]])
-            if chk["n_ok"] == 4:
-                chk["verdict"] = "🟢 黃金訊號" if chk["pos"] < 70 else "🟡 觸發(高位階慎追)"
-            else:
-                chk["verdict"] = ""
             sig_current.append(chk)
         sig_current.sort(key=lambda x: (-x["n_ok"], -x["score"]))
+
+        # ⑤型態門檻(由內部模組計算，公式不進版控；頁面僅顯示✓/—)
+        try:
+            from pattern_check import evaluate as _pat_eval
+            _tw_latest = sig_rank[(sig_rank["snapshot_date"] == sig_rank["snapshot_date"].max())
+                                  & (sig_rank["country"] == "台")]
+            _need_p = {}
+            for c in sig_current:
+                if c["n_ok"] < 3:
+                    continue
+                _memtw = set(sig_cls[(sig_cls["main_group"] == c["theme"])
+                                     & (sig_cls["country"] == "台")]["code"])
+                _top = _tw_latest[_tw_latest["code"].isin(_memtw)].nlargest(3, "twd")["code"].tolist()
+                if len(_top) >= 2:
+                    _need_p[c["theme"]] = _top
+            _pats = _pat_eval(_need_p) if _need_p else {}
+            print(f"⑤型態門檻評估 {len(_pats)} 題材，通過 {sum(1 for v in _pats.values() if v)}")
+        except Exception as e:
+            _pats = {}
+            print(f"⑤型態門檻未計算(不影響其他): {e}")
+        for c in sig_current:
+            c["pat"] = _pats.get(c["theme"])
+            if c["n_ok"] == 4:
+                c["verdict"] = ("🔔 強訊號" if c["pat"]
+                                else ("👀 觸發·⑤未過" if c["pat"] is False else "觸發(⑤未評估)"))
+            else:
+                c["verdict"] = ""
         sig_history.sort(key=lambda x: x["date"], reverse=True)
         data["signal_current"] = sig_current
         data["signal_history"] = sig_history
@@ -1364,9 +1387,9 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     <div class="rule-item">② <b>廣度 ≥50% 且連續兩週</b>——題材內過半個股排名上升，全族群行情而非一兩檔獨秀</div>
     <div class="rule-item">③ <b>≥3 國子分數同步上升</b>——跨市場共振（記憶體9月真起漲=4國齊升）</div>
     <div class="rule-item">④ <b>最大單國佔比 &lt;80%</b>——排除單國獨撐假訊號（2025年5-8月記憶體假訊號=韓國佔85%+）</div>
-    <div class="rule-item">⑤ 四條全過後看位階：<b>位階 &lt;70% = 🟢 黃金訊號</b>（歷史勝率~6成、所有大倍率案例都在這組）；<b>位階 ≥70% = 🟡 慎追</b>（勝率~3成半，要求廣度連3週等更嚴確認）</div>
+    <div class="rule-item">⑤ <b>型態門檻（內部標準）</b>——資金四關通過後，再驗證成員價格結構是否同步確認。✓ = 2022-2026樣本外驗證中勝率顯著提升的結構條件成立。位階改為<b>參考值</b>：高位階的洗盤回檔=蓄勢；題材長期趨勢向下＋低位階=⚠接刀風險——不再作為進場評級。</div>
     <div class="rule-item">⑥ <b>基本面確認（僅輔助，勿當主決策）</b>——訊號觸發時看題材成員「EPS預估成長比例」與「季營收YoY為正比例」：兩者過半=資金與基本面共振；資金熱但比例低=純題材炒作警覺。<b>資料源限制務必留意</b>：EPS欄=yfinance分析師共識的forward vs trailing比較（是「預估成長」非嚴格「上修」）；小型股可能僅1-2位分析師覆蓋、台股上櫃與陸股品質更弱、共識調整常滯後於行情；且無法回測（歷史預估不可得）。營收YoY為已公告實績，可信度高於EPS欄。</div>
-    <div class="rule-item" style="color:var(--tx3)">回測基礎：2025-04~2026-07共43次觸發，+8週熱度上漲比例42.5%，賺賠比不對稱（贏1.5-3.9x/輸0.7-0.9x）。倍率為熱度分數非股價。台股跟隨美韓約5週：「美韓子分數高檔+台股低檔」=預備窗。已知盲點：微題材（ABF載板/導線架等細分產品層級）的脈衝式行情會被規則①②漏接，微題材專用規則開發中。</div>
+    <div class="rule-item" style="color:var(--tx3)">回測基礎（2022-2026共234週，含熊市壓力測試，以成員實際股價驗證）：資金四關訊號在多頭期股價勝率54-80%；加上⑤型態門檻後，樣本外(2025-26)勝率72-90%。賺賠比約2.8（平均賺+23%/賠-8%）。已知弱點：熊市中成交金額型熱度會被賣壓觸發（2022年勝率27%），建議依大盤相對月線/季線位置調整倉位（月線下六成、季線下三成，回測夏普1.56優於滿倉1.29）。台股跟隨美韓約5週；微題材脈衝行情由下方微題材雷達補接。</div>
   </div>
   <h3 class="sec-title">本週檢查表（每次資料更新自動重算）</h3>
   <div class="hint">依通過條數排序。✓/✗ 對應規則①~④；觸發中的題材可去「產業鏈視圖」看上中下游誰先動、動能雷達看象限位置。</div>
@@ -2516,7 +2539,7 @@ function renderBanner() {
   if (s.new_count) parts.push("新進榜 <b>" + s.new_count + "</b> 檔");
   const sigs = (DATA.signal_current || []).filter(function(c) { return c.verdict; });
   if (sigs.length) {
-    parts.push("🔔 進場訊號 <b class=\"wb-up\">" + sigs.map(function(c) { return themeLink(c.theme) + (c.pos < 70 ? "🟢" : "🟡"); }).join("、") + "</b>");
+    parts.push("🔔 進場訊號 <b class=\"wb-up\">" + sigs.map(function(c) { return themeLink(c.theme) + (c.pat ? "✓" : ""); }).join("、") + "</b>");
   }
   const mic = (DATA.micro_current || []).filter(function(c) { return c.level; });
   if (mic.length) {
@@ -2627,6 +2650,9 @@ function renderSignalTab() {
       "②廣度": pf(c.breadth_ok, (c.breadth === null ? "-" : c.breadth + "%") + "/" + (c.breadth_prev === null ? "-" : c.breadth_prev + "%")),
       "③升國": pf(c.rising_ok, c.rising + "國"),
       "④單國佔比": pf(c.share_ok, c.max_share + "%"),
+      "⑤型態門檻": c.pat === true ? "<span class=\"sig-pass\">✓ 通過</span>"
+                 : (c.pat === false ? "<span class=\"sig-fail\">✗ 未過</span>" : "—"),
+      "_pat": c.pat === true ? 1 : 0,
       "位階": c.pos,
       "熱度分數": c.score,
       "階段": c.stage,
@@ -2638,7 +2664,8 @@ function renderSignalTab() {
     {key: "題材", label: "題材", sortKey: "_g"}, {key: "判定", label: "判定", sortKey: "n_ok", numeric: true},
     {key: "①連漲", label: "①連漲≥2週"}, {key: "②廣度", label: "②廣度≥50%×2週"},
     {key: "③升國", label: "③≥3國同升"}, {key: "④單國佔比", label: "④單國<80%"},
-    {key: "位階", label: "位階%", numeric: true}, {key: "熱度分數", label: "熱度分數", numeric: true},
+    {key: "⑤型態門檻", label: "⑤型態門檻", sortKey: "_pat", numeric: true},
+    {key: "位階", label: "位階%(參考)", numeric: true}, {key: "熱度分數", label: "熱度分數", numeric: true},
     {key: "基本面", label: "⑥基本面確認", sortKey: "eps_up_pct", numeric: true},
     {key: "階段", label: "階段"},
   ];
@@ -2650,7 +2677,7 @@ function renderSignalTab() {
     return {"日期": h.date, "題材": themeLink(h.theme), "_g": h.theme, "分數": h.score, "位階%": h.pos,
             "廣度%": h.breadth, "升國": h.rising,
             "+8週倍率": h.fwd8x, "13週最大": h.max13x,
-            "評價": h.pos < 70 ? "🟢低中位階" : "🟡高位階"};
+            "評價": h.pos < 70 ? "低位階" : "高位階"};
   });
   const hcols = [
     {key: "日期", label: "日期"}, {key: "題材", label: "題材", sortKey: "_g"}, {key: "評價", label: "評價"},
