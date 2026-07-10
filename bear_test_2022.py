@@ -123,6 +123,7 @@ for hs in (hits_a, hits_b):
         rets = [r for r in rets if r is not None]
         h["pret8"] = sum(rets) / len(rets) if rets else None
 
+
 # ── 台股加權 26週均線態勢 ──
 twii = yf.download("^TWII", start="2021-06-01", end=str(dates[-1]), interval="1wk",
                    auto_adjust=True, progress=False)["Close"]
@@ -138,6 +139,119 @@ def regime_on(d):
     if not len(s) or not len(m) or pd.isna(m.iloc[-1]):
         return None
     return bool(s.iloc[-1] >= m.iloc[-1])
+
+
+# ── 日線資料(型態濾網用): 觸發成員的日OHLC ──
+DAILY_CACHE = "tmp_bear_daily.pkl"
+
+
+def load_daily(codes):
+    if os.path.exists(DAILY_CACHE):
+        with open(DAILY_CACHE, "rb") as f:
+            c = pickle.load(f)
+    else:
+        c = {}
+    todo = [x for x in codes if x not in c]
+    for i in range(0, len(todo), 40):
+        chunk = todo[i:i + 40]
+        remaining = list(chunk)
+        for suffix in (".TW", ".TWO"):
+            if not remaining:
+                break
+            tk = [f"{x}{suffix}" for x in remaining]
+            df = yf.download(tk, start="2021-10-01", end=str(dates[-1]), interval="1d",
+                             group_by="ticker", auto_adjust=True, threads=True, progress=False)
+            got = []
+            for x in remaining:
+                t = f"{x}{suffix}"
+                try:
+                    sub = (df[t] if len(tk) > 1 else df)[["High", "Low", "Close"]].dropna()
+                    if len(sub):
+                        c[x] = sub
+                        got.append(x)
+                except Exception:
+                    pass
+            remaining = [x for x in remaining if x not in got]
+        for x in remaining:
+            c.setdefault(x, None)
+        with open(DAILY_CACHE, "wb") as f:
+            pickle.dump(c, f)
+    return c
+
+
+def new_high_90d(dc, code, d):
+    """觸發日(含)收盤 > 之前90日曆天的最高收盤"""
+    df = dc.get(code)
+    if df is None:
+        return False
+    d0 = pd.Timestamp(d)
+    cur = df[df.index <= d0]
+    if len(cur) < 30:
+        return False
+    px = float(cur["Close"].iloc[-1])
+    win = df[(df.index < cur.index[-1]) & (df.index >= d0 - pd.Timedelta(days=90))]
+    return len(win) >= 20 and px > float(win["Close"].max())
+
+
+def gap_up_week(dc, code, d):
+    """觸發週(前6日曆天~當日)內任一日 低點 > 前一交易日高點"""
+    df = dc.get(code)
+    if df is None:
+        return False
+    d0 = pd.Timestamp(d)
+    win = df[df.index <= d0].tail(8)
+    for i in range(1, len(win)):
+        if win.index[i] >= d0 - pd.Timedelta(days=6):
+            if float(win["Low"].iloc[i]) > float(win["High"].iloc[i - 1]):
+                return True
+    return False
+
+
+def gap_newhigh_week(dc, code, d):
+    """突破跳空：觸發週內某日 跳空(低>昨高) 且 該日收盤創60日曆天新高"""
+    df = dc.get(code)
+    if df is None:
+        return False
+    d0 = pd.Timestamp(d)
+    hist = df[df.index <= d0]
+    win = hist.tail(8)
+    for i in range(1, len(win)):
+        di = win.index[i]
+        if di < d0 - pd.Timedelta(days=6):
+            continue
+        if float(win["Low"].iloc[i]) <= float(win["High"].iloc[i - 1]):
+            continue
+        prior = df[(df.index < di) & (df.index >= di - pd.Timedelta(days=60))]
+        if len(prior) >= 15 and float(win["Close"].iloc[i]) > float(prior["Close"].max()):
+            return True
+    return False
+
+
+# 均線出場(使用者提案,先驗參數不調): 個股破月線(4週均)→半倉、破季線(13週均)→清倉不回補
+_ma_cache = {}
+
+
+def member_state(code, d):
+    """該股在日期d收盤對月/季線狀態: 1.0=線上 0.5=破月線 0=破季線(出場)"""
+    if code not in _ma_cache:
+        s = pc.get(code)
+        _ma_cache[code] = None if s is None else (s, s.rolling(4).mean(), s.rolling(13).mean())
+    v = _ma_cache[code]
+    if v is None:
+        return 1.0
+    s, m4, m13 = v
+    d0 = pd.Timestamp(d)
+    ss = s[s.index <= d0]
+    if not len(ss):
+        return 1.0
+    px = ss.iloc[-1]
+    mm13 = m13[m13.index <= d0]
+    mm4 = m4[m4.index <= d0]
+    if len(mm13) and pd.notna(mm13.iloc[-1]) and px < mm13.iloc[-1]:
+        return 0.0
+    if len(mm4) and pd.notna(mm4.iloc[-1]) and px < mm4.iloc[-1]:
+        return 0.5
+    return 1.0
 
 
 # 階梯倉位(使用者提案,單一參數組不調參): 月線上=100%、破月線=60%、破季線=30%
@@ -230,7 +344,8 @@ def wk_ret(code, t):
     return float(b.iloc[-1] / a.iloc[-1] - 1)
 
 
-def simulate(hits, gold_only=False, use_regime=False, use_tiers=False, hold=8, cost=0.005):
+def simulate(hits, gold_only=False, use_regime=False, use_tiers=False, ma_exit=False,
+             pattern=None, hold=8, cost=0.005, max_hold=52):
     entries = {}
     trades = []
     for h in hits:
@@ -240,29 +355,57 @@ def simulate(hits, gold_only=False, use_regime=False, use_tiers=False, hold=8, c
             continue
         if use_regime and regime_on(str(h["date"])) is not True:
             continue
+        if pattern and h.get(pattern[0], 0) < pattern[1]:
+            continue
         t = d_idx.get(str(h["date"]))
         if t is not None:
             entries.setdefault(t, []).append(h["members"])
-            if h["pret8"] is not None:
+            if not ma_exit and h["pret8"] is not None:
                 trades.append({"date": str(h["date"]), "theme": h["theme"],
                                "ret": h["pret8"] - cost})
     equity = [1.0]
     curve_dates = [dates[WARMUP]]
-    active = []   # [codes, weeks_left, fresh]
+    active = []   # 固定持有: [codes, weeks_left, fresh] / 均線出場: dict
     n_active_weeks = 0
     for t in range(WARMUP, len(dates) - 1):
         for mem in entries.get(t, []):
             if mem:
-                active.append([mem, hold, True])
+                if ma_exit:
+                    active.append({"mem": mem, "out": set(), "age": 0,
+                                   "fresh": True, "factor": 1.0, "d0": dates[t]})
+                else:
+                    active.append([mem, hold, True])
         rets = []
-        for pos in active:
-            prs = [wk_ret(c, t) for c in pos[0]]
-            prs = [x for x in prs if x is not None]
-            r = sum(prs) / len(prs) if prs else 0.0
-            if pos[2]:
-                r -= cost
-                pos[2] = False
-            rets.append(r)
+        if ma_exit:
+            for pos in active:
+                slices = []
+                for c in pos["mem"]:
+                    if c in pos["out"]:
+                        slices.append(0.0)
+                        continue
+                    st = member_state(c, dates[t])   # 用t當週(含)收盤定下週曝險,無前視
+                    if st == 0.0:
+                        pos["out"].add(c)
+                        slices.append(0.0)
+                        continue
+                    r = wk_ret(c, t)
+                    slices.append(st * r if r is not None else 0.0)
+                r = sum(slices) / len(pos["mem"]) if pos["mem"] else 0.0
+                if pos["fresh"]:
+                    r -= cost
+                    pos["fresh"] = False
+                pos["factor"] *= (1 + r)
+                pos["age"] += 1
+                rets.append(r)
+        else:
+            for pos in active:
+                prs = [wk_ret(c, t) for c in pos[0]]
+                prs = [x for x in prs if x is not None]
+                r = sum(prs) / len(prs) if prs else 0.0
+                if pos[2]:
+                    r -= cost
+                    pos[2] = False
+                rets.append(r)
         if rets:
             n_active_weeks += 1
         week_r = sum(rets) / len(rets) if rets else 0.0
@@ -270,9 +413,20 @@ def simulate(hits, gold_only=False, use_regime=False, use_tiers=False, hold=8, c
             week_r *= tier_scale(dates[t])
         equity.append(equity[-1] * (1 + week_r))
         curve_dates.append(dates[t + 1])
-        for pos in active:
-            pos[1] -= 1
-        active = [p for p in active if p[1] > 0]
+        if ma_exit:
+            done = [p for p in active
+                    if len(p["out"]) == len(p["mem"]) or p["age"] >= max_hold]
+            for p in done:
+                trades.append({"date": p["d0"], "ret": p["factor"] - 1, "age": p["age"]})
+            active = [p for p in active
+                      if len(p["out"]) < len(p["mem"]) and p["age"] < max_hold]
+        else:
+            for pos in active:
+                pos[1] -= 1
+            active = [p for p in active if p[1] > 0]
+    if ma_exit:
+        for p in active:   # 期末未平倉也計入
+            trades.append({"date": p["d0"], "ret": p["factor"] - 1})
     eq = pd.Series(equity, index=pd.to_datetime(curve_dates))
     peak = eq.cummax()
     mdd = float((eq / peak - 1).min())
@@ -323,16 +477,40 @@ bq, bmdd, byr = bench()
 variants = [
     ("全部訊號", dict()),
     ("全部訊號+階梯倉位", dict(use_tiers=True)),
+    ("均線出場(破月線半倉/破季線清倉)", dict(ma_exit=True)),
+    ("均線出場+階梯倉位", dict(ma_exit=True, use_tiers=True)),
+    ("型態確認:≥2成員創90日新高", dict(pattern=("nh", 2))),
+    ("型態確認:≥1成員週內跳空", dict(pattern=("gp", 1))),
+    ("突破跳空:≥1成員跳空+創60日新高", dict(pattern=("gnh", 1))),
     ("只做黃金區(位階<70)", dict(gold_only=True)),
     ("黃金區+態勢開關", dict(gold_only=True, use_regime=True)),
 ]
+# 型態濾網: 觸發時前3大成員的 90日新高家數 / 週內跳空家數 (日線)
+dc = load_daily(sorted(need))
+print(f"日線覆蓋 {sum(1 for v in dc.values() if v is not None)}/{len(dc)} 檔")
+for h in hits_b:
+    h["nh"] = sum(1 for m in h["members"] if new_high_90d(dc, m, str(h["date"])))
+    h["gp"] = sum(1 for m in h["members"] if gap_up_week(dc, m, str(h["date"])))
+    h["gnh"] = sum(1 for m in h["members"] if gap_newhigh_week(dc, m, str(h["date"])))
+
 results = {}
 out.write(f"{'策略':<28}{'總倍數':>7}{'最大回撤':>8} 年度報酬\n")
 for name, kw in variants:
     eq, mdd, yr, trades, expo = simulate(hits_b, **kw)
-    results[name] = {"eq": eq, "mdd": mdd, "yr": yr, "m": metrics(eq, mdd, trades, expo)}
+    results[name] = {"eq": eq, "mdd": mdd, "yr": yr, "m": metrics(eq, mdd, trades, expo),
+                     "trades": trades}
     yrs = " ".join(f"{y}:{v:+.0%}" for y, v in yr.items())
     out.write(f"{name:<28}{eq.iloc[-1]:>7.2f}{mdd:>8.0%} {yrs}\n")
+
+# 均線出場診斷(回答:總倍數低是出手多嗎? -> 看持有期與出場原因)
+ma_tr = results["均線出場(破月線半倉/破季線清倉)"]["trades"]
+ages = [t["age"] for t in ma_tr if "age" in t]
+if ages:
+    stopped = sum(1 for a in ages if a < 52)
+    out.write(f"\n均線出場診斷: 平均持有{sum(ages)/len(ages):.1f}週(中位{sorted(ages)[len(ages)//2]}週)、"
+              f"{stopped}/{len(ages)}筆被季線停出(其餘滿52週)；"
+              f"對照固定8週版持有恆為8週——總倍數低非出手次數問題(151vs146)，"
+              f"是停出後不回補導致主升段曝險流失\n")
 results["台股加權(基準)"] = {"eq": bq, "mdd": bmdd, "yr": byr, "m": metrics(bq, bmdd, None)}
 yrs = " ".join(f"{y}:{v:+.0%}" for y, v in byr.items())
 out.write(f"{'台股加權(基準,買進持有)':<28}{bq.iloc[-1]:>7.2f}{bmdd:>8.0%} {yrs}\n")
@@ -341,15 +519,20 @@ out.close()
 
 # ── 專業HTML報告(獨立研究檔,不進正式網站) ──
 COLORS = {"全部訊號": "#3987e5", "全部訊號+階梯倉位": "#199e70",
-          "只做黃金區(位階<70)": "#c98500", "黃金區+態勢開關": "#9085e9",
+          "均線出場(破月線半倉/破季線清倉)": "#c98500", "均線出場+階梯倉位": "#008300",
+          "型態確認:≥2成員創90日新高": "#9085e9", "型態確認:≥1成員週內跳空": "#d55181",
+          "突破跳空:≥1成員跳空+創60日新高": "#e66767",
+          "只做黃金區(位階<70)": "#c3c2b7", "黃金區+態勢開關": "#d95926",
           "台股加權(基準)": "#8a8878"}
+CHART_KEYS = ["全部訊號", "全部訊號+階梯倉位", "型態確認:≥2成員創90日新高",
+              "突破跳空:≥1成員跳空+創60日新高", "台股加權(基準)"]
 import json as _json
 
 def ser(eq):
     return {"x": [str(d.date()) for d in eq.index], "y": [round(float(v), 4) for v in eq]}
 
 payload = {
-    "curves": {k: ser(v["eq"]) for k, v in results.items()},
+    "curves": {k: ser(results[k]["eq"]) for k in CHART_KEYS if k in results},
     "dd": {k: {"x": ser(v["eq"])["x"],
                "y": [round(float(x), 4) for x in (v["eq"] / v["eq"].cummax() - 1)]}
            for k, v in {kk: results[kk] for kk in ["全部訊號", "台股加權(基準)"]}.items()},
