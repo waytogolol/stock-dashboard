@@ -140,6 +140,50 @@ for label, sel in [("A2 60日新高≥2/3", [h for h in mtrain if h["A2"]]),
     if len(pr):
         s += f"<tr><th>{label}</th><td>{len(pr)}</td><td>{(pr > 0).mean():.0%}</td><td>{pr.median():+.1%}</td></tr>"
 s += "</table>"
+# 五形狀中心長相圖 + 形狀0案例明細
+import json as _json
+cent_payload = {f"形狀{k}[{describe(cent[k])}]": [round(float(v), 3) for v in cent[k]] for k in range(K)}
+s += "<h2>五個形狀的長相（z正規化群中心，x=觸發前60個交易日）</h2><div id='pc1' style='height:340px'></div>"
+s += ("<script>const PD=" + _json.dumps(cent_payload, ensure_ascii=False) + ";"
+      "const PCOL=['#3987e5','#8a8878','#199e70','#e66767','#9085e9'];"
+      "Plotly.newPlot('pc1',Object.keys(PD).map((k,i)=>({y:PD[k],name:k,mode:'lines',"
+      "line:{color:PCOL[i],width:i===0?3.5:1.6}})),"
+      "{paper_bgcolor:'#1a1a19',plot_bgcolor:'#1a1a19',font:{color:'#c3c2b7',size:12},"
+      "xaxis:{title:'觸發前交易日(0=60日前,59=觸發週)',gridcolor:'#2c2c2a'},"
+      "yaxis:{title:'z分數(僅形狀,無單位)',gridcolor:'#2c2c2a'},legend:{orientation:'h',y:1.15},"
+      "margin:{t:10,b:48,l:56,r:20},hovermode:'x unified'},{responsive:true});</script>")
+
+s += "<h2>形狀0「升後回檔」案例明細（樣本內20筆）</h2>"
+s += ("<div class='note'>中段漲=觸發前40~20日成員均漲幅；近段回=前20日~觸發成員均報酬。點代碼可去XQ/TV對圖。<br>"
+      "<b>回檔深度測量(46檔次)</b>：波段高點→低點 平均-18.7%/中位-16.5%(四分位-13.5%~-23.7%)；"
+      "低點守10日線僅2%、守月線0%、守季線9%、<b>破季線89%</b>；觸發日距高點中位-11.9%——"
+      "這不是輕回踩，是跌破季線的深度洗盤後被資金訊號確認。這解釋了A8回踩不破/A6均線多頭為何失敗(要求守支撐反而篩掉贏家)，"
+      "也正是均線出場策略缺的「回補紀律」的形狀：破季線出場後，等形狀0+資金訊號=回補點。</div>")
+s += "<table><tr><th>日期</th><th>題材</th><th>中段漲</th><th>近段回</th><th>+8週股價</th><th>成員</th></tr>"
+shape0_rows = []
+for hi, l in sorted(trig_lab.items(), key=lambda x: str(train[x[0]]["date"])):
+    if l != 0:
+        continue
+    h = train[hi]
+    mids, recs = [], []
+    for m in h["members"]:
+        w = hist(m, str(h["date"]))
+        if w is None or len(w) < 60:
+            continue
+        c = w["Close"].tail(60).values
+        mids.append(c[39] / c[19] - 1)
+        recs.append(c[59] / c[39] - 1)
+    mid = float(np.mean(mids)) if mids else float("nan")
+    rec = float(np.mean(recs)) if recs else float("nan")
+    pret = format(h["pret8"], "+.1%") if h["pret8"] is not None else "—"
+    s += (f"<tr><th>{h['date']}</th><td>{h['theme']}</td><td>{mid:+.1%}</td><td>{rec:+.1%}</td>"
+          f"<td>{pret}</td><td>{'、'.join(h['members'])}</td></tr>")
+    shape0_rows.append((str(h["date"]), h["theme"], mid, rec, h["pret8"], h["members"]))
+s += "</table>"
+with io.open("tmp_shape0_cases.txt", "w", encoding="utf-8") as f0:
+    for d, th, mid, rec, p8, mems in shape0_rows:
+        f0.write(f"{d} {th:<14} 中段{mid:+.1%} 近段{rec:+.1%} +8週{p8:+.1%} {'、'.join(mems)}\n")
+
 s += ("<h2>入圍名單（待批准後開保留集，一次定案）</h2><div class='note'>"
       "大題材：A5突破跳空＋A2 60日新高＋形狀0(凍結中心最近鄰)；迴避=形狀3。"
       "微題材：A2 60日新高；形狀1/3觀察記錄。保留集=2025-26(大題材57筆+微題材14筆)，"
