@@ -3,7 +3,9 @@
 # 用法: 每週更新流程最後執行  powershell -File backup_db.ps1
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-Copy-Item (Join-Path $root "capital_flow.db") (Join-Path $root "db_backup\capital_flow.db") -Force
+Push-Location $root
+python make_backup.py    # 精簡備份: 排除可重爬大表(inst_flow/margin_flow), 守住GitHub 100MB限制
+Pop-Location
 Push-Location (Join-Path $root "db_backup")
 try {
     git add capital_flow.db
