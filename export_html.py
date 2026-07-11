@@ -2183,8 +2183,12 @@ function renderCompanyInfo(key) {
   const parts = key.split("|");
   let html = "<div class=\"rule-card\" style=\"margin:10px 0\">";
   html += "<div class=\"rule-item\"><b>" + e.label + "</b>　所屬題材：" +
-          (info.g.length ? info.g.map(function(g) { return "<span class=\"chip\" style=\"padding:1px 8px\">" + g + "</span>"; }).join(" ") : "未分類") +
-          (info.sub ? "　<span style=\"color:var(--tx3)\">" + info.sub + "</span>" : "") + "</div>";
+          (info.g.length ? info.g.map(function(g) {
+              const ok = DATA.theme_history && DATA.theme_history[g];
+              return "<span class=\"chip\" style=\"padding:1px 8px" + (ok ? ";cursor:pointer;border-bottom:1px dotted var(--tx3)" : "") + "\"" +
+                     (ok ? " onclick=\"jumpToRadar('" + g + "')\" title=\"跳動能雷達看題材熱度\"" : " title=\"此題材無熱度序列\"") + ">" + g + "</span>";
+            }).join(" ") : "未分類") +
+          (info.sub ? "　<span style=\"color:var(--tx3)\" title=\"細分產品=公司層級的產品標籤，非題材分類，無熱度序列可跳(微題材雷達以關鍵字比對這欄)\">細分：" + info.sub + "</span>" : "") + "</div>";
   if (!info.ch.length) {
     html += "<div class=\"rule-item\" style=\"color:var(--tx3);font-size:12px\">此公司不在已建的16條產業鏈中（產業鏈視圖僅涵蓋主要製造業供應鏈）</div>";
   }
