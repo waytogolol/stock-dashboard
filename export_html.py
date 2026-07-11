@@ -447,6 +447,20 @@ def build():
         cnts = sig_cls.groupby("main_group")["code"].count()
         sig_themes = sorted(g for g in sig_cls["main_group"].unique()
                             if g in tw_groups and cnts.get(g, 0) >= 3 and g not in SIG_BROAD)
+        # ⑥b 題材總營收動能：官方月營收成員加總YoY(>0且較上月改善=倉位加碼確認,回測弱加分不否決)
+        _rv_conn = sqlite3.connect(DB_PATH)
+        _rv = pd.read_sql("SELECT code, year_month, revenue, yoy_pct FROM tw_monthly_revenue", _rv_conn)
+        _rv_conn.close()
+        _rv_months = sorted(_rv.year_month.unique())
+
+        def _agg_yoy(month, twmem):
+            g = _rv[(_rv.year_month == month) & (_rv.code.isin(twmem))]
+            g = g[pd.notna(g.yoy_pct) & (g.yoy_pct > -100) & pd.notna(g.revenue)]
+            if len(g) < 3:
+                return None, 0
+            prev = (g.revenue / (1 + g.yoy_pct / 100)).sum()
+            return (float(g.revenue.sum() / prev - 1) * 100 if prev else None), len(g)
+
         sig_current, sig_history = [], []
         for th in sig_themes:
             sdf = add_signals(theme_series(sig_rank, sig_cls, th))
@@ -487,6 +501,17 @@ def build():
                         rg_up += 1
             chk["eps_up_pct"] = int(eps_up / eps_tot * 100) if eps_tot else None
             chk["rg_up_pct"] = int(rg_up / rg_tot * 100) if rg_tot else None
+            # ⑥b 題材總營收動能
+            chk["rev_mom_yoy"] = chk["rev_mom_ok"] = None
+            _twmem = set(sig_cls[(sig_cls["main_group"] == th) & (sig_cls["country"] == "台")]["code"])
+            if len(_rv_months) >= 2 and _twmem:
+                _ya, _na = _agg_yoy(_rv_months[-1], _twmem)
+                _yb, _nb = _agg_yoy(_rv_months[-2], _twmem)
+                if _ya is not None and _yb is not None and _na >= max(3, int(_nb * 0.6)):
+                    chk["rev_mom_yoy"] = round(_ya, 1)
+                    chk["rev_mom_ok"] = bool(_ya > 0 and _ya > _yb)
+                elif _yb is not None:      # 最新月覆蓋不足(如颱風延報)→僅顯示前月YoY不判方向
+                    chk["rev_mom_yoy"] = round(_yb, 1)
             chk["n_ok"] = sum([chk["streak_ok"], chk["breadth_ok"], chk["rising_ok"], chk["share_ok"]])
             sig_current.append(chk)
         sig_current.sort(key=lambda x: (-x["n_ok"], -x["score"]))
@@ -1459,7 +1484,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     <div class="rule-item">③ <b>≥3 國子分數同步上升</b>——跨市場共振（記憶體9月真起漲=4國齊升）</div>
     <div class="rule-item">④ <b>最大單國佔比 &lt;80%</b>——排除單國獨撐假訊號（2025年5-8月記憶體假訊號=韓國佔85%+）</div>
     <div class="rule-item">⑤ <b>型態門檻（內部標準）</b>——資金四關通過後，再驗證成員價格結構是否同步確認。✓ = 2022-2026樣本外驗證中勝率顯著提升的結構條件成立。位階改為<b>參考值</b>：高位階的洗盤回檔=蓄勢；題材長期趨勢向下＋低位階=⚠接刀風險——不再作為進場評級。</div>
-    <div class="rule-item">⑥ <b>基本面確認（僅輔助，勿當主決策）</b>——訊號觸發時看題材成員「EPS預估成長比例」與「季營收YoY為正比例」：兩者過半=資金與基本面共振；資金熱但比例低=純題材炒作警覺。<b>資料源限制務必留意</b>：EPS欄=yfinance分析師共識的forward vs trailing比較（是「預估成長」非嚴格「上修」）；小型股可能僅1-2位分析師覆蓋、台股上櫃與陸股品質更弱、共識調整常滯後於行情；且無法回測（歷史預估不可得）。營收YoY為已公告實績，可信度高於EPS欄。</div>
+    <div class="rule-item">⑥ <b>基本面確認（僅輔助，勿當主決策）</b>——訊號觸發時看題材成員「EPS預估成長比例」與「季營收YoY為正比例」：兩者過半=資金與基本面共振；資金熱但比例低=純題材炒作警覺。<b>資料源限制務必留意</b>：EPS欄=yfinance分析師共識的forward vs trailing比較（是「預估成長」非嚴格「上修」）；小型股可能僅1-2位分析師覆蓋、台股上櫃與陸股品質更弱、共識調整常滯後於行情；且無法回測（歷史預估不可得）。營收YoY為已公告實績，可信度高於EPS欄。<b>總營收欄(2026-07新增)</b>＝題材台股成員官方月營收加總的YoY：<b>↑✓＝YoY為正且較上月改善</b>——回測顯示觸發時總營收動能向上的題材後續表現較佳(弱加分)，定位=<b>倉位加碼的信心條件</b>，不是進場門檻；「·」＝最新月覆蓋不足僅供參考(如申報延後期間)。</div>
     <div class="rule-item" style="color:var(--tx3)">回測基礎（2022-2026共234週，含熊市壓力測試，以成員實際股價驗證）：資金四關訊號在多頭期股價勝率54-80%；加上⑤型態門檻後，樣本外(2025-26)勝率72-90%。賺賠比約2.8（平均賺+23%/賠-8%）。已知弱點：熊市中成交金額型熱度會被賣壓觸發（2022年勝率27%），建議依大盤相對月線/季線位置調整倉位（月線下六成、季線下三成，回測夏普1.56優於滿倉1.29）。台股跟隨美韓約5週；微題材脈衝行情由下方微題材雷達補接。</div>
   </div>
   <h3 class="sec-title">本週檢查表（每次資料更新自動重算）</h3>
@@ -2751,7 +2776,9 @@ function renderSignalTab() {
       "位階": c.pos,
       "熱度分數": c.score,
       "階段": c.stage,
-      "基本面": (c.eps_up_pct === null ? "—" : "EPS預估成長" + c.eps_up_pct + "%") + "｜" + (c.rg_up_pct === null ? "—" : "營收實績+" + c.rg_up_pct + "%"),
+      "基本面": (c.eps_up_pct === null ? "—" : "EPS預估成長" + c.eps_up_pct + "%") + "｜" + (c.rg_up_pct === null ? "—" : "營收實績+" + c.rg_up_pct + "%")
+              + "｜總營收" + (c.rev_mom_yoy === null || c.rev_mom_yoy === undefined ? "—"
+                : (c.rev_mom_yoy >= 0 ? "+" : "") + c.rev_mom_yoy + "%" + (c.rev_mom_ok === true ? "<span class=\"sig-pass\">↑✓</span>" : (c.rev_mom_ok === false ? "" : "·"))),
       "eps_up_pct": c.eps_up_pct,
     };
   });
