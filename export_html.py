@@ -1427,6 +1427,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   </div>
   <h4>美股財報 <span id="usEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
   <div class="scroll-box"><table id="usEarningsTable"></table></div>
+  <div class="hint"><b>財報季作戰指南(2026-07回測,觀察層)</b>：①<b>美股龍頭財報「後」10日=台鏈跟漲觀察窗</b>(+0.9%中位/55%，MSFT/AAPL系最明顯；NVDA鏈反向=行情多在財報前price in、開獎後留意獲利了結)。②<b>首發者效應</b>：同題材首家開法說者的市場反應會傳染給還沒開的同業——首發開差→短窗迴避同題材後發成員(PCB/封測/CPO系最靈)；首發開好→後發者進關注清單。記憶體例外(公開報價題材無此效應)。③<b>台積電法說前後</b>：事前2週方向=市場對半導體的預期放大器(多頭年正/熊市年負,環境給方向)。④法說隔日的環節暴衝多為短打資金,等週級資金流訊號接手才算數。<b>點公司名→跳公司歷史頁(題材/產業鏈歸屬+同鏈成員)。</b></div>
   <h4>台股法說會 <span id="twEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
   <div class="scroll-box"><table id="twEarningsTable"></table></div>
   <h4>日韓陸財報日 <span id="jpkrEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
@@ -2250,6 +2251,20 @@ function earningsTierClass(dateStr) {
   return "";
 }
 
+function linkifyEarn(rows, ctry) {
+  // 公司名可點 -> 公司歷史頁(題材chips+產業鏈上中下游成員, 一眼看懂這家是誰)
+  return (rows || []).map(function(r) {
+    const c = String(r["代碼"] || "").trim();
+    const key = (ctry || r["市場"] || "") + "|" + c;
+    if (c && DATA.company_history && DATA.company_history[key] && r["公司"]) {
+      const o = Object.assign({}, r);
+      o["公司"] = "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('" + key + "');showTab(2)\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + r["公司"] + "</a>";
+      return o;
+    }
+    return r;
+  });
+}
+
 function renderEarningsTab() {
   document.getElementById("usEarningsMtime").textContent = DATA.us_earnings.mtime ? `(最後查詢: ${DATA.us_earnings.mtime})` : "(尚未查詢過)";
   document.getElementById("twEarningsMtime").textContent = DATA.tw_earnings.mtime ? `(最後查詢: ${DATA.tw_earnings.mtime})` : "(尚未查詢過)";
@@ -2259,13 +2274,13 @@ function renderEarningsTab() {
     {key: "公司", label: "公司"}, {key: "成交金額排名", label: "排名", numeric: true},
     {key: "主族群", label: "主族群"}, {key: "市值", label: "市值"}, {key: "EPS預估", label: "EPS預估"},
   ];
-  buildTable(document.getElementById("usEarningsTable"), usCols, DATA.us_earnings.rows, r => earningsTierClass(r["日期"]));
+  buildTable(document.getElementById("usEarningsTable"), usCols, linkifyEarn(DATA.us_earnings.rows, "美"), r => earningsTierClass(r["日期"]));
 
   const twCols = [
     {key: "日期", label: "日期"}, {key: "時間", label: "時間"}, {key: "代碼", label: "代碼"},
     {key: "公司", label: "公司"}, {key: "成交金額排名", label: "排名", numeric: true}, {key: "主族群", label: "主族群"},
   ];
-  buildTable(document.getElementById("twEarningsTable"), twCols, DATA.tw_earnings.rows, r => earningsTierClass(r["日期"]));
+  buildTable(document.getElementById("twEarningsTable"), twCols, linkifyEarn(DATA.tw_earnings.rows, "台"), r => earningsTierClass(r["日期"]));
 
   const jpkr = DATA.jpkr_earnings || {rows: []};
   document.getElementById("jpkrEarningsMtime").textContent = jpkr.mtime ? `(最後查詢: ${jpkr.mtime})` : "(尚未查詢過)";
@@ -2273,7 +2288,7 @@ function renderEarningsTab() {
     {key: "日期", label: "日期"}, {key: "市場", label: "市場"}, {key: "代碼", label: "代碼"},
     {key: "公司", label: "公司"}, {key: "成交金額排名", label: "排名", numeric: true}, {key: "主族群", label: "主族群"},
   ];
-  buildTable(document.getElementById("jpkrEarningsTable"), jpkrCols, jpkr.rows, r => earningsTierClass(r["日期"]));
+  buildTable(document.getElementById("jpkrEarningsTable"), jpkrCols, linkifyEarn(jpkr.rows, null), r => earningsTierClass(r["日期"]));
 
   // 初始化日曆：顯示當月
   const _now = new Date();
