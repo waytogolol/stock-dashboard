@@ -543,6 +543,19 @@ def build():
             else:
                 c["verdict"] = ""
 
+        # 前3大資金成員(回測口徑=觸發時買題材前3大台股等權持8週), 每題材都算供訊號頁直接顯示
+        _twl = sig_rank[(sig_rank["snapshot_date"] == sig_rank["snapshot_date"].max())
+                        & (sig_rank["country"] == "台")]
+        for c in sig_current:
+            _mem = set(sig_cls[(sig_cls["main_group"] == c["theme"])
+                               & (sig_cls["country"] == "台")]["code"])
+            _top = _twl[_twl["code"].isin(_mem)].nlargest(3, "twd")["code"].tolist()
+            t3 = []
+            for k in _top:
+                info = latest_lookup.get(("台", k))
+                t3.append([k, info["中文名稱"] if info is not None else ""])
+            c["top3"] = t3
+
         # 大盤態勢(週線 vs 月線/季線 -> 建議倉位) + 推薦程度分級
         _tier, _tier_txt = 1.0, "月線上"
         try:
@@ -1520,7 +1533,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   </div>
   <h3 class="sec-title">本週檢查表（每次資料更新自動重算）</h3>
   <div class="hint" id="sigRegime" style="font-weight:600"></div>
-  <div class="hint">依通過條數排序。✓/✗ 對應規則①~④；推薦程度=綜合①~⑤與大盤態勢的信心分級（內部權重）：<b>⭐⭐⭐重點</b>=歷史最高勝率情境、<b>⭐⭐標準</b>、<b>⭐觀察</b>=等結構確認、<b>⚠</b>=退潮接刀警示（假說級，自動降一級）。分級是研究地圖，非投資建議。</div>
+  <div class="hint"><b>前3大成員=回測口徑</b>：歷次回測的買法就是「觸發時買題材前3大台股資金成員、等權持8週」——這欄就是「該做哪幾隻」的直接答案；點股名跳單股雙軸圖、🔎跳族群金流解剖看完整成員點火時序；名後✓/⚡=籌碼位階徽章(外資/券資比在自身一年高檔)。依通過條數排序。✓/✗ 對應規則①~④；推薦程度=綜合①~⑤與大盤態勢的信心分級（內部權重）：<b>⭐⭐⭐重點</b>=歷史最高勝率情境、<b>⭐⭐標準</b>、<b>⭐觀察</b>=等結構確認、<b>⚠</b>=退潮接刀警示（假說級，自動降一級）。分級是研究地圖，非投資建議。</div>
   <div class="scroll-box"><table id="signalNowTable"></table></div>
   <h3 class="sec-title">歷史訊號紀錄</h3>
   <div class="hint">+8週/13週最大 = 觸發後熱度分數倍率(非股價)。對照概念股名單見專案資料夾 tmp_scan_members.txt。</div>
@@ -2812,6 +2825,13 @@ function renderSignalTab() {
       "_gr": (GNUM[c.grade] || 0),
       "判定": c.verdict || (c.n_ok + "/4"),
       "n_ok": c.n_ok,
+      "前3大成員": (c.top3 || []).map(function(m) {
+          const ch = (DATA.chip || {})[m[0]] || {};
+          let b = "";
+          if (ch.f !== undefined && ch.f >= 80) b += "✓";
+          if (ch.s !== undefined && ch.s >= 80) b += "⚡";
+          return "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + m[0] + "');showTab(2)\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + m[0] + m[1] + "</a>" + b;
+        }).join("、") + ((c.top3 && c.top3.length) ? " <a href=\"javascript:void(0)\" onclick=\"jumpToAnatomy('" + c.theme + "')\" title=\"跳族群金流解剖看完整成員點火時序\">🔎</a>" : "—"),
       "①連漲": pf(c.streak_ok, c.streak + "週"),
       "②廣度": pf(c.breadth_ok, (c.breadth === null ? "-" : c.breadth + "%") + "/" + (c.breadth_prev === null ? "-" : c.breadth_prev + "%")),
       "③升國": pf(c.rising_ok, c.rising + "國"),
@@ -2832,6 +2852,7 @@ function renderSignalTab() {
     {key: "題材", label: "題材", sortKey: "_g"},
     {key: "推薦", label: "推薦程度", sortKey: "_gr", numeric: true},
     {key: "判定", label: "判定", sortKey: "n_ok", numeric: true},
+    {key: "前3大成員", label: "前3大成員(回測口徑)"},
     {key: "①連漲", label: "①連漲≥2週"}, {key: "②廣度", label: "②廣度≥50%×2週"},
     {key: "③升國", label: "③≥3國同升"}, {key: "④單國佔比", label: "④單國<80%"},
     {key: "⑤型態門檻", label: "⑤型態門檻", sortKey: "_pat", numeric: true},
@@ -2982,6 +3003,18 @@ function radarClearFocus() {
 }
 
 // 全站題材名稱可點：跳到動能雷達並聚焦該題材
+function jumpToAnatomy(g) {
+  const sel = document.getElementById("resTheme");
+  let has = false;
+  if (sel) for (let i = 0; i < sel.options.length; i++) if (sel.options[i].value === g) { has = true; break; }
+  if (!has) { jumpToRadar(g); return; }     // 題材不在解剖選單(成員<3)時退回動能雷達
+  sel.value = g;
+  showTab(2);
+  renderResonance();
+  const el = document.getElementById("anaChart");
+  if (el) el.scrollIntoView({behavior: "smooth"});
+}
+
 function jumpToRadar(g) {
   if (!DATA.theme_history || !DATA.theme_history[g]) return;
   const thematicSet = {};
