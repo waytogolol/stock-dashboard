@@ -99,7 +99,11 @@ def build():
     rankings["金額億台幣_num"] = rankings.apply(amount_twd_yi_num, axis=1)
     rankings["金額億台幣"] = rankings.apply(format_amount_twd_yi, axis=1)
 
-    all_dates = sorted(rankings["snapshot_date"].unique())
+    # 網頁payload歷史上限：只在「呈現層」截斷(快照每週+1會讓HTML線性膨脹到永遠)
+    # 訊號/研究計算不受影響(各自直接讀DB全史)。104週=2年,足撐52週位階/26週對比/接刀27週
+    PAYLOAD_WEEKS = 104
+    all_dates = sorted(rankings["snapshot_date"].unique())[-PAYLOAD_WEEKS:]
+    rankings = rankings[rankings["snapshot_date"].isin(all_dates)]
     latest_date = all_dates[-1]
     previous_date = all_dates[-2] if len(all_dates) >= 2 else None
     latest = rankings[rankings["snapshot_date"] == latest_date]
