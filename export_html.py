@@ -693,6 +693,37 @@ def build():
         data["micro_current"] = []
         data["micro_history"] = []
 
+    # 籌碼確認徽章(觀察層): 外資20日累計自身位階 / 券資比自身位階(近240交易日百分位)
+    try:
+        conn_c = sqlite3.connect(DB_PATH)
+        _flc = pd.read_sql("SELECT date, code, foreign_net FROM inst_flow "
+                           "WHERE date >= date((SELECT MAX(date) FROM inst_flow), '-420 day')", conn_c)
+        _mgc = pd.read_sql("SELECT date, code, short_fin_ratio FROM margin_flow "
+                           "WHERE date >= date((SELECT MAX(date) FROM margin_flow), '-420 day')", conn_c)
+        conn_c.close()
+        _fr = (_flc.pivot_table(index="date", columns="code", values="foreign_net")
+               .rolling(20, min_periods=10).sum()
+               .rolling(240, min_periods=120).rank(pct=True))
+        _sr = (_mgc.pivot_table(index="date", columns="code", values="short_fin_ratio")
+               .rolling(240, min_periods=120).rank(pct=True))
+        _fl_last, _sr_last = _fr.iloc[-1], (_sr.iloc[-1] if len(_sr) else pd.Series(dtype=float))
+        chip = {}
+        for code in set(_fl_last.index) | set(_sr_last.index):
+            rec = {}
+            fv, sv = _fl_last.get(code), _sr_last.get(code)
+            if pd.notna(fv):
+                rec["f"] = int(round(fv * 100))
+            if pd.notna(sv):
+                rec["s"] = int(round(sv * 100))
+            if rec:
+                chip[code] = rec
+        data["chip"] = chip
+        data["chip_date"] = str(_flc.date.max())
+        print(f"籌碼位階徽章 {len(chip)} 檔 (資料至 {data['chip_date']})")
+    except Exception as e:
+        data["chip"] = {}
+        print(f"籌碼徽章未計算(不影響其他): {e}")
+
     # 產業鏈(橫向上中下游)資料
     try:
         import industry_chains as ic
@@ -1338,7 +1369,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div id="resChart" style="height:620px"></div>
   <div id="resChips" class="chip-row"></div>
   <h3 class="sec-title">族群金流解剖（誰先動：市場層 → 台股成員層）</h3>
-  <div class="hint">上圖=該題材在五市場的資金份額子分數，◆=點火週(份額週變化&gt;1個標準差)——看哪個市場先動。中圖=集中度：台股第1大成員佔題材台股金額%，上升=龍頭獨走、下降=擴散(全員行情較健康)。下表=台股成員點火時序，最早點火標🐑。<b>提醒</b>：回測顯示跨市場接力僅弱訊號(最強=韓→台 lift 1.19)、領頭羊帶動整體 lift 1.15——先後順序是「觀察起點」不是「買進理由」，決策仍看位階+廣度。</div>
+  <div class="hint">上圖=該題材在五市場的資金份額子分數，◆=點火週(份額週變化&gt;1個標準差)——看哪個市場先動。中圖=集中度：台股第1大成員佔題材台股金額%，上升=龍頭獨走、下降=擴散(全員行情較健康)。下表=台股成員點火時序，最早點火標🐑。<b>提醒</b>：回測顯示跨市場接力僅弱訊號(最強=韓→台 lift 1.19)、領頭羊帶動整體 lift 1.15——先後順序是「觀察起點」不是「買進理由」，決策仍看位階+廣度。<b>籌碼欄(2026-07新增,觀察層)</b>：外資位階=該股「外資近20日累計買賣超」在自身近一年的百分位——回測顯示<b>中小型股(資金榜51名以後)起漲＋外資位階≥80(綠✓)為有效加分</b>，前50大該欄無資訊價值(顯示—)；不論真假外資皆讀作「聰明錢腳印」。券資比位階≥80(⚡)=空單水位在自身一年高檔=軋空燃料，證據等級較弱僅供參考。每週隨 fetch_t86/fetch_margin 更新。</div>
   <div id="anaChart" style="height:340px"></div>
   <div id="anaConc" style="height:130px"></div>
   <div class="scroll-box"><table id="anaTable"></table></div>
@@ -2030,7 +2061,14 @@ function renderAnatomy() {
     const r1 = m.rk[L - 1], r5 = m.rk[L - 5];
     const p = m.label.split(" ");
     const short = p.length >= 3 ? p[1] + p[2] : m.label;
+    const chip = (DATA.chip || {})[m.key.split("|")[1]] || {};
+    const fB = (chip.f === undefined || (r1 !== undefined && r1 !== null && r1 <= 50)) ? "—"
+             : (chip.f >= 80 ? "<span class=\"sig-pass\">" + chip.f + "✓</span>" : "" + chip.f);
+    const sB = chip.s === undefined ? "—"
+             : (chip.s >= 80 ? "<span class=\"sig-pass\">" + chip.s + "⚡</span>" : "" + chip.s);
     return {
+      "外資位階": fB, "_f": chip.f === undefined ? -1 : chip.f,
+      "券資比位階": sB, "_s": chip.s === undefined ? -1 : chip.s,
       "成員": "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('" + m.key + "')\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + short + "</a>",
       "_ig": first === null ? 9999 : first,
       "首次點火": first === null ? "—" : dates[first].slice(5),
@@ -2052,6 +2090,8 @@ function renderAnatomy() {
     {key: "4週排名Δ", label: "4週排名Δ", numeric: true},
     {key: "金額連漲週", label: "金額連漲週", numeric: true},
     {key: "佔題材台股%", label: "佔題材台股%", numeric: true},
+    {key: "外資位階", label: "外資位階(51名後有效)", sortKey: "_f", numeric: true},
+    {key: "券資比位階", label: "券資比位階", sortKey: "_s", numeric: true},
   ], rows);
 }
 
@@ -2682,7 +2722,13 @@ function renderSignalTab() {
       "優先序": ({A: "<span style=\"color:var(--amb);font-weight:700\">⭐⭐ 優先研究</span>",
                 B: "<span style=\"color:var(--tx2)\">⭐ 一般</span>"})[r.grade] || "—",
       "_gr": ({A: 2, B: 1})[r.grade] || 0,
-      "成員": "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + r.code + "')\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + r.code + " " + r.name + "</a>",
+      "成員": "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + r.code + "')\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + r.code + " " + r.name + "</a>"
+              + (function(ch) { if (!ch) return "";
+                  let t = [];
+                  if (ch.f !== undefined && ch.f >= 80) t.push("外資位階" + ch.f + "✓");
+                  if (ch.s !== undefined && ch.s >= 80) t.push("券資比" + ch.s + "⚡");
+                  return t.length ? " <span class=\"hm-score\">" + t.join("·") + "</span>" : "";
+                })((DATA.chip || {})[r.code]),
       "最新排名": r.rank, "PB": r.pb, "營收YoY%": r.yoy, "資金位階%": r.pos,
       "埋伏理由": r.tags.join("｜"), "_n": r.n_tags,
     };
