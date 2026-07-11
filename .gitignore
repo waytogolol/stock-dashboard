@@ -17,3 +17,5 @@ pattern_micro_check.py
 pattern_holdout_2022.py
 pattern_check.py
 finmind_token.txt
+capital_flow.db
+db_backup/
