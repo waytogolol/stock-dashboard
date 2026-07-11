@@ -571,9 +571,22 @@ def build():
         conn_m = sqlite3.connect(DB_PATH)
         subp = pd.read_sql("SELECT DISTINCT code, sub_product FROM classification WHERE country='台'", conn_m)
         mh = pd.read_sql("SELECT code, quarter, gm FROM margin_history", conn_m)
+        # 毛利方向：FinMind單季全史優先(2019起,已與MOPS對帳)，margin_history(yf)補未覆蓋成員
+        fmq = pd.read_sql(
+            "SELECT code, date, type, value FROM fm_income WHERE type IN ('GrossProfit','Revenue')", conn_m)
         conn_m.close()
         mdir = {}
+        if len(fmq):
+            fpv = fmq.pivot_table(index=["code", "date"], columns="type", values="value").reset_index()
+            fpv = fpv[(fpv["Revenue"] > 0) & fpv["GrossProfit"].notna()]
+            fpv["gm"] = fpv["GrossProfit"] / fpv["Revenue"] * 100
+            for code, g in fpv.groupby("code"):
+                v = g.sort_values("date")["gm"].tolist()
+                if len(v) >= 2:
+                    mdir[code] = {"d": round(v[-1] - v[-2], 1), "gm": round(v[-1], 1)}
         for code, g in mh.groupby("code"):
+            if code in mdir:
+                continue
             v = g.sort_values("quarter")["gm"].dropna().tolist()
             if len(v) >= 2:
                 mdir[code] = {"d": round(v[-1] - v[-2], 1), "gm": round(v[-1], 1)}
@@ -618,7 +631,7 @@ def build():
             trig = bool(pulse is not None and pulse >= 2.5 and j is not None and j >= 35)
             level = ""
             if trig:
-                level = "🅰 脈衝+毛利升" if nd and up * 2 >= nd else "🅱 脈衝(待季報驗證)"
+                level = "🅰 脈衝+毛利升" if nd and up * 2 > nd else "🅱 脈衝(待季報驗證)"
             prior8 = max(svals[max(0, i - 8):i]) if i >= 1 else 0
             members = []
             for c in codes:
@@ -1463,7 +1476,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div class="rule-card">
     <div class="rule-item">① <b>脈衝倍率 ≥2.5</b>——本週台股分數 / 前4週中位數（微題材是脈衝行情，不適用大題材的連漲規則）</div>
     <div class="rule-item">② <b>成員排名跳升中位數 ≥ +35名</b>——全員同週大幅躍升</div>
-    <div class="rule-item">③ 毛利率方向分級：<b>🅰 = 有資料成員過半最新季毛利QoQ走升</b>（漲價週期確認）；<b>🅱 = 尚未轉升</b>（資金先行，把下個季報日當驗證點：Q1→5月中/Q2→8月中/Q3→11月中/Q4→3月底）</div>
+    <div class="rule-item">③ 毛利率方向分級：<b>🅰 = 有資料成員過半最新季毛利QoQ走升</b>（漲價週期確認）；<b>🅱 = 尚未轉升</b>（資金先行，把下個季報日當驗證點：Q1→5月中/Q2→8月中/Q3→11月中/Q4→3月底）。<b>回測註記(2026-07)</b>：🅱 的歷史虧損集中在<b>大盤非多頭時期</b>，樣本內顯著劣於🅰——非多頭環境建議直接跳過🅱只做🅰，多頭環境🅱才可小倉位試單（樣本小，隨資料累積持續驗證）。毛利資料源：FinMind單季全史優先、yf補缺。</div>
     <div class="rule-item">⚠ = 前8週內有更高分數峰值（二次脈衝，出貨疑慮——基本面再好也要警惕）</div>
     <div class="rule-item" style="color:var(--tx3)">回測60週全樣本：43次觸發21次延續(49%)，但賺賠比極不對稱(贏家sustain 1.8~25x/輸家0.8~1.0)——定位是「提醒你去看」的警示訊號，配合③毛利分級與⚠二次脈衝過濾後精選案例勝率約68%。案例驗證：順德2026/3脈衝=毛利連兩季走升確認當口；ABF 2025/12假脈衝=2/3成員毛利下滑。毛利資料=yfinance季報+MOPS官方季報。</div>
   </div>
