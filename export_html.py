@@ -1230,14 +1230,16 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div class="scroll-box"><table id="themePivotTable"></table></div>
   <div class="controls" style="margin-top:12px">
     對比期間：<select id="moverPeriod" onchange="renderMoversChart()">
-      <option value="1" selected>上一次快照</option>
+      <option value="1" selected>1週前(上次快照)</option>
       <option value="2">2週前</option>
       <option value="4">4週前(月)</option>
       <option value="8">8週前</option>
       <option value="12">12週前(季)</option>
+      <option value="26">26週前(半年)</option>
     </select>
     <label><input type="checkbox" id="hmIncludeBroad" checked onchange="renderMoversChart(); renderRotationHeatmap()"> 含金融/傳產等廣義分類(觀察避險資金)</label>
   </div>
+  <div class="hint">建議觀察 <b>4週(月)</b>：回測驗證過的脈衝基準——本週熱度達前4週的2.5倍以上才算真脈衝(微題材規則實測勝率68%)。<b>1週前</b>適合掃「本週誰動了」，但單週雜訊大，確認要靠連漲2週＋廣度＋多國同步(見進場訊號頁)。<b>26週前(半年)</b>用來分辨「回檔還是退潮」：Δ為<b>正</b>＝題材仍在半年上升週期，短線降溫較可能是洗盤；Δ為<b>負</b>＝熱度連半年前都不如＝退潮題材，裡面看似便宜的低位階成員多半是接刀(2022航運教訓：退潮題材低位階四次進場全賠)。</div>
   <div id="moversChart" style="height:550px"></div>
   <h3 class="sec-title">資金輪動熱力圖（題材 × 時間）</h3>
   <div class="controls">
@@ -1257,7 +1259,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     </select>
     <label><input type="checkbox" id="hmShowAll" onchange="renderRotationHeatmap()"> 顯示全部題材(預設前20)</label>
   </div>
-  <div class="hint">列標籤附「目前分數·自身位階%」(位階=目前分數在顯示範圍內自身高低的百分位)。建議配對：<b>位階排序+相對色階</b>=看錢往哪動(正在發動的在上)；<b>熱度排序+絕對色階</b>=看錢在哪(資金量層次)。只含有台股公司的題材，滑鼠停留可看實際分數。</div>
+  <div class="hint">列標籤附「目前分數·52週位階%」(與推薦程度表同一把尺；位階管<b>倉位大小</b>，不是進場門票)。表頭下「共振」列=該週點火題材數(點火=熱度週變化z>1，與族群金流解剖◆同定義)，<b>紅字=點火數超過全期平均+1SD的異常共振週</b>(門檻隨資料與題材篩選自動重算，滑鼠停留可看當前門檻；歷史紅標例：2025-09-14真起漲、2026-03-01行情22個題材齊點火，也含2025年6-8月假訊號期——共振是發現層，決策仍過檢查清單)——研究結論：資金不沿產業鏈爬行而是整條鏈同週點火，共振本身就是訊號。判讀優先序：<b>直欄同亮(共振)＞橫帶連暖(連漲2週)＞單格突亮(噪音)</b>；格子變暗是常態(高檔題材6週內回落15%的基準率84%)，關鍵看守不守點火前水準，別猜頭。建議配對：<b>位階排序+相對色階</b>=看錢往哪動；<b>熱度排序+絕對色階</b>=看錢在哪。只含有台股公司的題材，滑鼠停留可看實際分數。</div>
   <div class="heatmap-box" id="rotationHeatmap"></div>
   <div class="controls" style="margin-top:16px">
     選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
@@ -2781,13 +2783,30 @@ function renderRotationHeatmap() {
     return;
   }
   let themes = getVisibleThemes();
+  // 共振欄：每週點火題材數(點火=熱度週變化z>1，與族群金流解剖◆同定義)；用全部可見題材算，不受前20顯示限制
+  const igniteCount = {};
+  themes.forEach(function(g) {
+    const byD = {};
+    (DATA.theme_history[g] || []).forEach(function(r) { byD[r.snapshot_date] = r["熱度分數"]; });
+    const series = DATA.snapshot_dates.map(function(d) { return byD[d] || 0; });
+    anaIgn(series).forEach(function(w) {
+      const dd = DATA.snapshot_dates[w];
+      igniteCount[dd] = (igniteCount[dd] || 0) + 1;
+    });
+  });
+  // 紅標門檻自校準：點火數 ≥ 全期平均+1SD 才算異常共振週(z>1基率~16%，固定門檻會週週標紅)
+  const igCounts = DATA.snapshot_dates.slice(1).map(function(d) { return igniteCount[d] || 0; });
+  const igMu = igCounts.reduce(function(s, v) { return s + v; }, 0) / (igCounts.length || 1);
+  const igThr = igMu + Math.sqrt(igCounts.reduce(function(s, v) { return s + (v - igMu) * (v - igMu); }, 0) / (igCounts.length || 1));
   const latestScore = {}, posMap = {};
+  // 位階固定用近52週計算，與顯示範圍脫鉤(跟推薦程度表/全站位階同一把尺)
+  const posDates = DATA.snapshot_dates.slice(-52);
   themes.forEach(function(g) {
     const s = {};
     (DATA.theme_history[g] || []).forEach(function(r) { s[r.snapshot_date] = r["熱度分數"]; });
     latestScore[g] = s[DATA.latest_date] || 0;
     let mn = Infinity, mx = -Infinity;
-    dates.forEach(function(d) { const v = s[d]; if (v !== undefined) { if (v < mn) mn = v; if (v > mx) mx = v; } });
+    posDates.forEach(function(d) { const v = s[d]; if (v !== undefined) { if (v < mn) mn = v; if (v > mx) mx = v; } });
     posMap[g] = (mx > mn && latestScore[g] > 0) ? (latestScore[g] - mn) / (mx - mn) : 0;
   });
   // 排序：位階優先(量化10級，同級再比熱度) 或 熱度優先
@@ -2822,13 +2841,20 @@ function renderRotationHeatmap() {
     html += "<th class=\"hm-date\"" + cur + ">" + d.slice(5) + "</th>";
   });
   html += "</tr>";
+  html += "<tr><td class=\"hm-name\" style=\"font-size:10px;color:var(--tx3)\">共振(點火題材數)</td>";
+  dates.forEach(function(d) {
+    const k = igniteCount[d] || 0;
+    const st = (k > 0 && k >= igThr) ? "color:var(--red);font-weight:700" : "color:var(--tx3)";
+    html += "<td class=\"hm-cell\" style=\"text-align:center;font-size:10px;" + st + "\" title=\"" + d + "：" + k + " 個題材點火(週變化z>1)；紅標門檻=全期平均+1SD≈" + igThr.toFixed(0) + "\">" + (k || "") + "</td>";
+  });
+  html += "</tr>";
   themes.forEach(function(g) {
     const byDate = {};
     (DATA.theme_history[g] || []).forEach(function(r) { byDate[r.snapshot_date] = r["熱度分數"]; });
     const vals = dates.map(function(d) { return byDate[d]; }).filter(function(v) { return v !== undefined; });
     if (!vals.length) return;
     const mx = Math.max.apply(null, vals), mn = Math.min.apply(null, vals);
-    html += "<tr><td class=\"hm-name\">" + themeLink(g) + " <span class=\"hm-score\">" + latestScore[g].toFixed(1) + "·位階" + Math.round(posMap[g] * 100) + "%</span></td>";
+    html += "<tr><td class=\"hm-name\">" + themeLink(g) + " <span class=\"hm-score\">" + latestScore[g].toFixed(1) + "·52週位階" + Math.round(posMap[g] * 100) + "%</span></td>";
     dates.forEach(function(d) {
       const v = byDate[d];
       if (v === undefined) { html += "<td class=\"hm-cell hm-empty\"></td>"; return; }
