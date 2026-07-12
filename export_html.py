@@ -22,6 +22,72 @@ BROAD_GROUPS = {
 UNIT_YI_LABEL = {"TWD": "億元", "KRW": "億韓元", "JPY_million": "億日圓", "CNY": "億人民幣", "USD": "億美元"}
 COUNTRIES = ["台", "日", "美", "韓", "陸"]
 
+# 展覽效應研究(2026-07)：官方產業分類宇宙+2022-2025歷史事件研究常客名單，日期需每年手動更新(比照tw_earnings_watch.csv)
+def _expo_window_open(start_str, trading_days=40):
+    """展覽開始日往回推N個「平常日」(週一到週五,未扣除國定假日,近似值)當觀察窗開啟日"""
+    from datetime import datetime as _dt, timedelta as _td
+    d = _dt.strptime(start_str, "%Y-%m-%d")
+    n = 0
+    while n < trading_days:
+        d -= _td(days=1)
+        if d.weekday() < 5:
+            n += 1
+    return d.strftime("%Y-%m-%d")
+
+
+EXPO_CALENDAR = {
+    "biotech": {
+        "label": "BIO Asia-Taiwan(亞洲生技大展)",
+        "dates": [
+            {"year": 2022, "start": "2022-07-28", "end": "2022-07-31"},
+            {"year": 2023, "start": "2023-07-26", "end": "2023-07-30"},
+            {"year": 2024, "start": "2024-07-25", "end": "2024-07-28"},
+            {"year": 2025, "start": "2025-07-24", "end": "2025-07-27"},
+            {"year": 2026, "start": "2026-07-16", "end": "2026-07-19"},
+        ],
+        "watchlist": [
+            {"code": "6796", "name": "晉弘", "hits": ["2022:+109%", "2023:+36%", "2024:+14%"]},
+            {"code": "6472", "name": "保瑞", "hits": ["2022:+39%(40日)", "2023:+32%", "2024:+11%"]},
+            {"code": "6446", "name": "藥華藥", "hits": ["2022:+49%(40日)", "2024:+21%", "2026:進行中"]},
+            {"code": "6861", "name": "睿生光電", "hits": ["2022:+26%", "2023:+19%", "2025:+8%"]},
+            {"code": "4771", "name": "望隼", "hits": ["2022:+21%", "2023:+18%"]},
+            {"code": "1786", "name": "科妍", "hits": ["2023:+16%", "2025:+28%"]},
+            {"code": "4169", "name": "泰宗", "hits": ["2023:+11%", "2025:+29%"]},
+        ],
+    },
+    "computex": {
+        "label": "COMPUTEX Taipei(台北國際電腦展)",
+        "dates": [
+            {"year": 2022, "start": "2022-05-24", "end": "2022-05-27"},
+            {"year": 2023, "start": "2023-05-30", "end": "2023-06-02"},
+            {"year": 2024, "start": "2024-06-03", "end": "2024-06-07"},
+            {"year": 2025, "start": "2025-05-20", "end": "2025-05-23"},
+            {"year": 2026, "start": "2026-06-02", "end": "2026-06-05"},
+        ],
+        "watchlist": [
+            {"code": "3017", "name": "奇鋐", "hits": ["2022:+7%", "2023:+24%", "2025:+48%"]},
+            {"code": "3013", "name": "晟銘電", "hits": ["2022:+23%", "2025:+33%"]},
+        ],
+    },
+    "semicon": {
+        "label": "SEMICON Taiwan(國際半導體展)",
+        "dates": [
+            {"year": 2022, "start": "2022-09-14", "end": "2022-09-16"},
+            {"year": 2023, "start": "2023-09-06", "end": "2023-09-08"},
+            {"year": 2024, "start": "2024-09-04", "end": "2024-09-06"},
+            {"year": 2025, "start": "2025-09-10", "end": "2025-09-12"},
+            {"year": 2026, "start": "2026-09-02", "end": "2026-09-04"},
+        ],
+        "watchlist": [
+            {"code": "3661", "name": "世芯-KY", "hits": ["2022:+19%", "2023:+20%", "2024:+18%"]},
+            {"code": "6515", "name": "穎崴", "hits": ["2022:+8%", "2024:+28%", "2025:+55%"]},
+        ],
+    },
+}
+for _expo in EXPO_CALENDAR.values():
+    for _d in _expo["dates"]:
+        _d["window_open"] = _expo_window_open(_d["start"])
+
 
 def rank_tier(rank):
     if rank <= 50:
@@ -263,6 +329,7 @@ def build():
         "tw_earnings": load_earnings_csv("tw_earnings_watch.csv"),
         "jpkr_earnings": load_earnings_csv("jp_kr_earnings_watch.csv"),
         "theme_news": pd.read_csv("theme_news.csv").to_dict("records") if os.path.exists("theme_news.csv") else [],
+        "expo_calendar": EXPO_CALENDAR,
     }
 
     # 本週摘要橫幅：最熱/最退潮題材 + 新進榜檔數
@@ -950,6 +1017,35 @@ def build():
         print(f"資料健康列計算失敗: {e}")
         data["health"] = []
 
+    # 精簡訊號摘要匯出(供gen_xq_watchlist.py讀取,不含完整payload,避免重算)
+    try:
+        rule_hits = [{"theme": c["theme"], "grade": c.get("grade"),
+                     "top3": [code for code, _ in c.get("top3", [])]}
+                    for c in data.get("signal_current", []) if c.get("verdict")]
+        micro_hits = [{"theme": c["theme"], "grade": c.get("grade"),
+                       "members": [m["code"] for m in c.get("members", [])]}
+                      for c in data.get("micro_current", []) if c.get("grade") in ("A", "B")]
+        catchup_hits = [{"theme": r["theme"], "code": r["code"], "grade": r.get("grade")}
+                        for r in data.get("catchup_radar", {}).get("rows", [])
+                        if r.get("grade") in ("A", "B")]
+        chip = data.get("chip", {})
+        _rk_conn = sqlite3.connect(DB_PATH)
+        _rk_latest = pd.read_sql(
+            "SELECT code, rank FROM rankings WHERE country='台' AND "
+            "snapshot_date=(SELECT MAX(snapshot_date) FROM rankings WHERE country='台')", _rk_conn)
+        _rk_conn.close()
+        _rank_map = dict(zip(_rk_latest.code, _rk_latest["rank"]))
+        chip_hits = [code for code, v in chip.items()
+                    if v.get("f", -1) >= 80 and _rank_map.get(code, 0) > 50]
+        with open("signals_export.json", "w", encoding="utf-8") as f:
+            json.dump({"rule_hits": rule_hits, "micro_hits": micro_hits,
+                      "catchup_hits": catchup_hits, "chip_hits": chip_hits,
+                      "snapshot_date": data.get("latest_date")}, f, ensure_ascii=False)
+        print(f"訊號摘要已匯出 signals_export.json "
+              f"(規則{len(rule_hits)}/微題材{len(micro_hits)}/補漲{len(catchup_hits)}/籌碼{len(chip_hits)})")
+    except Exception as e:
+        print(f"訊號摘要匯出失敗(不影響dashboard): {e}")
+
     return data
 
 
@@ -1128,7 +1224,11 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 .cal-evt.tw { background: var(--red-bg); color: var(--red); border-left: 2px solid var(--red); }
 .cal-evt.us { background: var(--ac-bg); color: var(--ac); border-left: 2px solid var(--ac); }
 .cal-evt.jpkr { background: rgba(52,184,122,.1); color: var(--grn); border-left: 2px solid var(--grn); }
+.cal-evt.expo { background: rgba(180,120,220,.15); color: #b478dc; border-left: 2px solid #b478dc; }
 .cal-evt.fire { animation: pulse 1.2s infinite; }
+.expo-watch-table td, .expo-watch-table th { font-size: 12px; }
+.expo-watch-card { border: 1px solid var(--bd); border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; }
+.expo-watch-card.active { border-color: #b478dc; background: rgba(180,120,220,.06); }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.55} }
 
 /* ── Search dropdown ───────────────────────────────────────────── */
@@ -1429,6 +1529,9 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     </div>
     <div class="cal-grid" id="calGrid"></div>
   </div>
+  <h4>展覽效應觀察 🎪</h4>
+  <div class="hint">研究依據(2026-07回測,觀察層,樣本2022-2025各4年)：題材裡不是全體齊漲,只有少數個股會展前提前動,且常客股逐年重複出現；效應約從<b>展前40個交易日(約2個月)</b>開始累積,不是展前一週才發動；用「漲停/單日爆量」當偵測門檻經測試無效(跟非展覽期比沒有鑑別力)——真正的卡位是安靜緩慢的累積,不是明顯的噴出日。展後多數常客會回吐(利多出盡),藥華藥/泰宗展後續漲屬少數例外。日期需每年手動更新此檔。</div>
+  <div id="expoWatchPanel"></div>
   <h4>美股財報 <span id="usEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
   <div class="scroll-box"><table id="usEarningsTable"></table></div>
   <div class="hint"><b>財報季作戰指南(2026-07回測,觀察層)</b>：①<b>美股龍頭財報「後」10日=台鏈跟漲觀察窗</b>(+0.9%中位/55%，MSFT/AAPL系最明顯；NVDA鏈反向=行情多在財報前price in、開獎後留意獲利了結)。②<b>首發者效應</b>：同題材首家開法說者的市場反應會傳染給還沒開的同業——首發開差→短窗迴避同題材後發成員(PCB/封測/CPO系最靈)；首發開好→後發者進關注清單。記憶體例外(公開報價題材無此效應)。③<b>台積電法說前後</b>：事前2週方向=市場對半導體的預期放大器(多頭年正/熊市年負,環境給方向)。④法說隔日的環節暴衝多為短打資金,等週級資金流訊號接手才算數。<b>點公司名→跳公司歷史頁(題材/產業鏈歸屬+同鏈成員)。</b></div>
@@ -2301,6 +2404,35 @@ function renderEarningsTab() {
   // 初始化日曆：顯示當月
   const _now = new Date();
   renderCalendar(_now.getFullYear(), _now.getMonth());
+  renderExpoWatch();
+}
+
+function renderExpoWatch() {
+  const el = document.getElementById("expoWatchPanel");
+  const entries = Object.values(DATA.expo_calendar || {});
+  if (!entries.length) { el.innerHTML = ""; return; }
+  let html = "";
+  entries.forEach(function(expo) {
+    const upcoming = expo.dates.filter(function(dr) { return daysUntil(dr.end) >= 0; })
+                                .sort(function(a, b) { return daysUntil(a.start) - daysUntil(b.start); })[0];
+    if (!upcoming) return;
+    const n1 = daysUntil(upcoming.window_open), n2 = daysUntil(upcoming.start), n3 = daysUntil(upcoming.end);
+    const active = n1 <= 0 && n3 >= 0;
+    const statusTxt = active ? (n2 > 0 ? ("🔥 觀察窗已開，倒數" + n2 + "天") : "🔥 展覽進行中")
+                              : ("觀察窗將於" + upcoming.window_open + "開啟(還有" + Math.max(n1, 0) + "天)");
+    const watchRows = expo.watchlist.map(function(w) {
+      const key = "台|" + w.code;
+      const hasHist = DATA.company_history && DATA.company_history[key];
+      const nameHtml = hasHist
+        ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('" + key + "');showTab(2)\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + w.name + "</a>"
+        : w.name;
+      return "<tr><td>" + w.code + " " + nameHtml + "</td><td>" + w.hits.join("、") + "</td></tr>";
+    }).join("");
+    html += "<div class=\"expo-watch-card" + (active ? " active" : "") + "\">" +
+            "<b>" + expo.label + "</b>　" + upcoming.start + " ~ " + upcoming.end + "　" + statusTxt +
+            "<table class=\"expo-watch-table\"><tr><th>常客股</th><th>歷年展前報酬(20/40日窗)</th></tr>" + watchRows + "</table></div>";
+  });
+  el.innerHTML = html;
 }
 
 // ── 法說會日曆 ──────────────────────────────────────────────
@@ -2324,6 +2456,12 @@ function buildEvtMap() {
     const d = r["日期"]; if (!d) return;
     if (!m[d]) m[d] = [];
     m[d].push({label: r["市場"] + " " + (r["公司"] || r["代碼"]), market: "jpkr", date: d});
+  });
+  Object.values(DATA.expo_calendar || {}).forEach(expo => {
+    expo.dates.forEach(dr => {
+      if (!m[dr.start]) m[dr.start] = [];
+      m[dr.start].push({label: "🎪 " + expo.label, market: "expo", date: dr.start});
+    });
   });
   return m;
 }
@@ -2718,6 +2856,18 @@ function renderBanner() {
   if (mic.length) {
     parts.push("🔔 微題材脈衝 <b class=\"wb-up\">" + mic.map(function(c) { return c.theme + (c.level.indexOf("🅰") >= 0 ? "🅰" : "🅱") + (c.second ? "⚠" : ""); }).join("、") + "</b>");
   }
+  Object.values(DATA.expo_calendar || {}).forEach(function(expo) {
+    const active = expo.dates.find(function(dr) {
+      const n1 = daysUntil(dr.window_open), n2 = daysUntil(dr.end);
+      return n1 <= 0 && n2 >= 0;
+    });
+    if (!active) return;
+    const n = daysUntil(active.start);
+    const names = expo.watchlist.map(function(w) { return w.name; }).join("、");
+    const statusTxt = n > 0 ? ("倒數約" + n + "天") : "展覽進行中";
+    parts.push("🎪 <a href=\"javascript:void(0)\" onclick=\"showTab(3)\" class=\"wb-up\">" + expo.label +
+               statusTxt + "，觀察窗已開，常客：" + names + "</a>");
+  });
   if (!parts.length) return;
   const el = document.getElementById("weeklyBanner");
   el.innerHTML = "📌 " + parts.join("<span class=\"wb-sep\"> · </span>");

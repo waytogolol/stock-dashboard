@@ -14,6 +14,7 @@ gen_xq_watchlist.py
   python gen_xq_watchlist.py --top 10 --per 5
 """
 import argparse
+import json
 import sqlite3
 from pathlib import Path
 
@@ -21,6 +22,7 @@ import pandas as pd
 
 DB = "capital_flow.db"
 OUT_DIR = "XQ檔案匯入"
+SIGNALS_FILE = "signals_export.json"
 
 SUFFIX = {
     "台": ".TW",
@@ -191,6 +193,51 @@ def build_xq_lines(conn, snapshot_date, previous_date, markets, top_n, top_n_per
     return all_lines, len(all_rows), summary
 
 
+def build_signal_lines(name_map):
+    """讀 signals_export.json(由export_html.py每次匯出時同步寫出)，組出「系統訊號候選」分類。
+    來源＝規則①~⑤觸發題材前3大成員 / 微題材A・B級成員 / 補漲雷達A・B級 / 外資位階>=80中小型股(排名>50)。
+    這組是「系統認為現在該盯著看」的名單，跟熱度Δ組（什麼題材在變熱/變冷）互補，不重複。"""
+    path = Path(SIGNALS_FILE)
+    if not path.exists():
+        print(f"[提醒] 找不到 {SIGNALS_FILE}，請先跑過 export_html.py 再產生本分類（跳過不影響熱度Δ組）")
+        return [], []
+    sig = json.loads(path.read_text(encoding="utf-8"))
+
+    lines, rows = [], []
+    seen_codes = set()   # 同一檔股票在系統訊號組只放一次(以第一次出現的來源為準),避免XQ清單重複灌水
+
+    def add_group(label, codes_with_theme, source):
+        codes_with_theme = [(c, t) for c, t in codes_with_theme if c not in seen_codes]
+        if not codes_with_theme:
+            return
+        # 數字用這組成員數，純整數不帶小數點(小數點在XQ匯入格式裡也會導致失敗)
+        lines.append(f"{label}_{len(codes_with_theme)}:")
+        for code, theme in codes_with_theme:
+            code_xq = xq_code("台", code)
+            lines.append(code_xq)
+            seen_codes.add(code)
+            rows.append({"方向": "系統訊號", "來源": source, "題材": theme,
+                        "市場": "台", "代碼": code, "XQ代碼": code_xq,
+                        "公司": name_map.get(("台", code), "")})
+
+    # XQ標籤慣例是「名稱_數字分數:」結尾必須是數字，不能放等第字母(或加後綴變成空字串)，
+    # 等第資訊只留在CSV摘要，標籤本身保持乾淨字串(比照既有題材Δ標籤的安全字元處理)
+    for h in sig.get("rule_hits", []):
+        safe_theme = h["theme"].translate(_BAD_CHARS)
+        add_group(f"訊號規則_{safe_theme}",
+                  [(c, h["theme"]) for c in h["top3"]], "規則①~⑤觸發前3大")
+    for h in sig.get("micro_hits", []):
+        safe_theme = h["theme"].translate(_BAD_CHARS)
+        add_group(f"微題材_{safe_theme}",
+                  [(c, h["theme"]) for c in h["members"]], "微題材脈衝")
+    add_group("補漲雷達候選",
+              [(h["code"], h["theme"]) for h in sig.get("catchup_hits", [])], "補漲雷達A/B級")
+    add_group("籌碼位階確認",
+              [(c, "") for c in sig.get("chip_hits", [])], "外資位階>=80(排名>50)")
+
+    return lines, rows
+
+
 def main():
     parser = argparse.ArgumentParser(description="生成XQ題材熱度變化自選股匯入檔")
     parser.add_argument("--top", type=int, default=15,
@@ -210,6 +257,13 @@ def main():
     lines, total, summary = build_xq_lines(
         conn, snapshot, prev_snapshot, args.markets, args.top, args.per
     )
+    # company_names表沒有台股(只有日/美/陸/韓)，台股中文名要從rankings表拿(該表本身就存中文名)；
+    # 取每檔最近一次出現的名字，避免訊號候選裡有代碼剛好不在最新一週快照裡而查無名字
+    tw_name_map = {("台", r.code): r.name for r in pd.read_sql(
+        "SELECT code, name FROM (SELECT code, name, snapshot_date FROM rankings "
+        "WHERE country='台' ORDER BY snapshot_date) GROUP BY code",
+        conn, dtype={"code": str}
+    ).itertuples()}
     conn.close()
 
     date_tag = snapshot.replace("-", "")
@@ -223,6 +277,18 @@ def main():
 
     print(f"已輸出 XQ 匯入檔：{out_xq}（共 {total} 筆）")
     print(f"已輸出 個股摘要：{out_summary}\n")
+
+    # ── 系統訊號候選(規則觸發/微題材/補漲雷達/籌碼位階)，獨立一份XQ檔 ──
+    sig_lines, sig_rows = build_signal_lines(tw_name_map)
+    if sig_lines:
+        out_sig_xq = Path(OUT_DIR) / f"XQ_系統訊號_{date_tag}.csv"
+        sig_content = "\r\n".join(sig_lines) + "\r\n"
+        with open(out_sig_xq, "wb") as f:
+            f.write(sig_content.encode("big5", errors="replace"))
+        out_sig_summary = Path(OUT_DIR) / f"系統訊號_個股名單_{date_tag}.csv"
+        pd.DataFrame(sig_rows).to_csv(out_sig_summary, index=False, encoding="utf-8-sig")
+        print(f"已輸出 系統訊號XQ檔：{out_sig_xq}（共 {len(sig_rows)} 筆，{len(set(r['代碼'] for r in sig_rows))} 檔不重複）")
+        print(f"已輸出 系統訊號摘要：{out_sig_summary}\n")
 
     print(f"{'方向':<4} {'排':>2} {'題材':<18} {'熱度Δ':>7}")
     print("-" * 40)
