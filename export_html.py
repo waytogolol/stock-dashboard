@@ -2128,11 +2128,11 @@ function renderAnatomy() {
     chartEl.innerHTML = "<div class=\"hint\">此題材無國別子分數資料。</div>";
   } else {
     Plotly.newPlot(chartEl, traces, {
-      title: {text: theme + "　五市場子分數與點火週（◆）", font: {size: 14}},
+      title: {text: theme + "　五市場子分數與點火週（◆）", font: {size: 14}, y: 0.97, yanchor: "top"},
       yaxis: {title: {text: "子分數(份額%)", font: {size: 11}}},
       paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
-      legend: {orientation: "h", y: 1.14, font: {size: 11}},
-      hovermode: "x unified", margin: {t: 46, b: 36},
+      legend: {orientation: "h", y: 1.1, yanchor: "bottom", font: {size: 11}},
+      hovermode: "x unified", margin: {t: 78, b: 36},
     }, {responsive: true});
   }
 

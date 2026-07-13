@@ -82,7 +82,7 @@ AI/軟體服務,AI行銷科技,美,40,APP,Applovin Corporation Class A Common St
 科技(綜合),Computer Software: Prepackaged Software,美,41,CRWD,CrowdStrike Holdings Inc. Class A Common Stock,(底層分類，來自Nasdaq官方sector/industry)
 AI雲端/軟體,AI驅動終端資安(EDR),美,41,CRWD,CrowdStrike Holdings Inc. Class A Common Stock,AI驅動雲端原生終端安全防護EDR絕對龍頭(CrowdStrike)
 科技(綜合),Electronic Components,美,42,KLAC,KLA Corporation Common Stock,(底層分類，來自Nasdaq官方sector/industry)
-封測(OSAT/測試),前段製程檢測設備,美,42,KLAC,KLA Corporation Common Stock,晶圓製程良率檢測設備
+半導體設備,前段製程檢測設備,美,42,KLAC,KLA Corporation Common Stock,晶圓製程良率檢測設備巨頭
 金融,Finance: Consumer Services,美,43,SOFI,SoFi Technologies Inc. Common Stock  ,(底層分類，來自Nasdaq官方sector/industry)
 金融科技,純網銀與學生貸款,美,43,SOFI,SoFi Technologies Inc. Common Stock  ,美國知名數位原生個人金融與純網銀平台(SoFi)
 金融,Finance: Consumer Services,美,44,NU,Nu Holdings Ltd. Class A Ordinary Shares,(底層分類，來自Nasdaq官方sector/industry)
@@ -302,7 +302,7 @@ CPO/光通訊,光網路系統設備,美,153,CIEN,Ciena Corporation Common Stock,
 金融,信用評級與金融數據(標普),美,160,SPGI,S&P Global Inc. Common Stock,全球三大信評機構之一/標普指數與金融市場數據
 消費(非必需),RETAIL: Building Materials,美,161,QXO,QXO Inc. Common Stock,(底層分類，來自Nasdaq官方sector/industry)
 工業,Electrical Products,美,162,TER,Teradyne Inc. Common Stock,(底層分類，來自Nasdaq官方sector/industry)
-封測(OSAT/測試),半導體測試設備(ATE),美,162,TER,Teradyne Inc. Common Stock,半導體測試設備大廠
+半導體設備,測試設備(ATE),美,162,TER,Teradyne Inc. Common Stock,半導體測試設備龍頭
 工業,Engineering & Construction,美,163,PWR,Quanta Services Inc. Common Stock,(底層分類，來自Nasdaq官方sector/industry)
 電力設備,電網與通訊基建工程,美,163,PWR,Quanta Services Inc. Common Stock,北美最大特高壓電網基礎設施統包商/AI電網升級核心受惠者(Quanta)
 科技(綜合),Electronic Components,美,164,NTAP,NetApp Inc. Common Stock,(底層分類，來自Nasdaq官方sector/industry)

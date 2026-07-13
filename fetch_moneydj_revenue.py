@@ -104,7 +104,8 @@ def query_day(session, day_str, name_map, log):
             continue
         code = name_map.get(parsed["name"])
         if code is None:
-            log["unmatched_names"].add(parsed["name"])
+            log["unmatched_names"][parsed["name"]] = log["unmatched_names"].get(parsed["name"], 0) + 1
+            log["unmatched_last_seen"][parsed["name"]] = day_str
             continue
         recs.append({
             "code": code, "name_matched": parsed["name"], "year_month": parsed["year_month"],
@@ -124,6 +125,9 @@ def main(months):
         revenue REAL, yoy_pct REAL, announce_dt TEXT, raw_title TEXT)""")
     conn.commit()
     conn.execute("""CREATE TABLE IF NOT EXISTS tw_revenue_news_done_days (day TEXT PRIMARY KEY)""")
+    conn.commit()
+    conn.execute("""CREATE TABLE IF NOT EXISTS tw_revenue_news_unmatched (
+        name TEXT PRIMARY KEY, n_seen INTEGER, last_seen TEXT)""")
     conn.commit()
 
     today = date.today()
@@ -151,7 +155,7 @@ def main(months):
     session = requests.Session()
     session.headers.update({"User-Agent": UA})
 
-    log = {"unmatched_names": set(), "n_rows_seen": 0, "n_skipped": 0}
+    log = {"unmatched_names": {}, "unmatched_last_seen": {}, "n_rows_seen": 0, "n_skipped": 0}
     total_new = 0
     for i, day in enumerate(days_todo):
         day_str = str(day)
@@ -170,14 +174,22 @@ def main(months):
             existing.update(r["article_id"] for r in new_recs)
             total_new += len(new_recs)
         conn.execute("INSERT OR IGNORE INTO tw_revenue_news_done_days VALUES (?)", (day_str,))
+        if log["unmatched_names"]:
+            conn.executemany(
+                """INSERT INTO tw_revenue_news_unmatched VALUES (?,?,?)
+                   ON CONFLICT(name) DO UPDATE SET
+                       n_seen = tw_revenue_news_unmatched.n_seen + excluded.n_seen,
+                       last_seen = excluded.last_seen""",
+                [(name, cnt, log["unmatched_last_seen"][name]) for name, cnt in log["unmatched_names"].items()])
+            log["unmatched_names"].clear()
+            log["unmatched_last_seen"].clear()
         conn.commit()
         print(f"  [{i+1}/{len(days_todo)}] {day_str}: 抓到{len(recs)}筆可解析, 新增{len(new_recs)}筆")
         time.sleep(DELAY + random.uniform(0, 1.5))
 
+    n_unmatched_total = conn.execute("SELECT COUNT(*) FROM tw_revenue_news_unmatched").fetchone()[0]
     print(f"\n完成。新增 {total_new} 筆。累計解析跳過 {log['n_skipped']} 則(格式不符,如季獲利/多子公司/純公告)。")
-    if log["unmatched_names"]:
-        print(f"對不到代碼的公司名({len(log['unmatched_names'])}個,節錄前20): "
-              f"{sorted(log['unmatched_names'])[:20]}")
+    print(f"對不到代碼的公司名累計 {n_unmatched_total} 個,已存入 tw_revenue_news_unmatched 表(name/n_seen/last_seen),可事後盤點補別名。")
     conn.close()
 
 
