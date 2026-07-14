@@ -1621,7 +1621,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
       <option value="999">全部(2019起)</option>
     </select>
   </div>
-  <div class="hint">柱＝題材成員(FinMind覆蓋)月營收<b>加總</b>(億台幣)；線＝MoM%/YoY%(右軸)；<b>▲＝至該營收月止構成score=4訊號</b>(進場口徑=公告月的次月15號、持有60交易日——訊號規則與回測數據詳「進場訊號」頁的「題材營收動能」檢視)。下表＝前5大營收成員(12月平均占比，中位涵蓋97%題材營收)。題材下拉選單「▲」＝本月觸發中。</div>
+  <div class="hint">柱＝題材成員(FinMind覆蓋)月營收<b>加總</b>(億台幣)；線＝MoM%/YoY%(右軸)；<b>▲＝至該營收月止構成「月營收訊號」</b>(=連3月月增+近3月年增均值為正,4項條件全過；進場口徑=公告月的次月15號、持有60交易日——訊號規則與回測數據詳「進場訊號」頁的「題材營收動能」檢視)。下表＝前5大營收成員(12月平均占比，中位涵蓋97%題材營收)。題材下拉選單「▲」＝本月觸發中。</div>
   <div id="revmomChart" style="height:380px"></div>
   <table id="revmomMembers"></table>
   </div>
@@ -1785,7 +1785,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   </div>
 
   <div id="sigRevmomView" style="display:none">
-  <h3 class="sec-title">題材月營收動能（score訊號，2026-07-14上線·live驗證中）</h3>
+  <h3 class="sec-title">題材月營收動能——月營收訊號（2026-07-14上線·live驗證中）</h3>
   <div class="rule-card">
     <div class="rule-item">訊號＝把題材成員(FinMind覆蓋)月營收<b>加總</b>後看兩件事：① <b>連續3個月月增(MoM)為正</b>——中斷歸零的連續計數，給0~3分　② <b>近3個月年增率(YoY)平均為正</b>——排除低基期反彈，+1分。<b>滿分4分才是訊號</b>。時序口徑(凍結回測版)：營收月r於次月(r+1)10-15號公告、<b>再次月(r+2)的15號進場</b>——進場日只用早已公告的數字，無偷看未來(此口徑比「公告後立刻用」再保守一個月，回測數字皆基於此)。</div>
     <div class="rule-item">信心分級：<b style="color:var(--red)">⭐⭐⭐ 極高＝score 4</b>(唯一回測有超額報酬的層級)；<b>⭐ 觀察＝score 3</b>(差一分，表中標示缺哪個條件——回測無超額，僅供追蹤接近觸發的題材)；<b>score≤2不列</b>：回測顯示0-2分是雜訊不是「中等信心」，劑量反應是斷崖不是階梯，給星等會誤導。</div>
@@ -3648,8 +3648,8 @@ function revmomMemberLinks(t) {
   return (t.top5 || []).map(function(m) {
     const ch = (DATA.chip || {})[m[0]] || {};
     let b = "";
-    if (ch.f !== undefined && ch.f >= 80) b += "✓";
-    if (ch.s !== undefined && ch.s >= 80) b += "⚡";
+    if (ch.f !== undefined && ch.f >= 80) b += "<span title=\"外資位階≥80：近20日外資累計買賣超在自身一年高檔=聰明錢腳印(回測加分,中小型股有效)\">✓</span>";
+    if (ch.s !== undefined && ch.s >= 80) b += "<span title=\"券資比位階≥80：空單/融資比在自身一年高檔=軋空燃料(證據較弱,僅供參考)\">⚡</span>";
     const label = m[0] + m[1] + "(" + (m[2] === null ? "?" : m[2]) + "%)";
     return (DATA.company_history && DATA.company_history["台|" + m[0]])
       ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + m[0] + "');showTab(2)\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + label + "</a>" + b
@@ -3750,7 +3750,7 @@ function renderRevmomChart() {
     {x: months, y: rev, type: "bar", name: "月營收(億)", marker: {color: "rgba(60,140,240,.55)"}},
     {x: months, y: mom, mode: "lines", name: "MoM%", yaxis: "y2", line: {color: "#d49610", width: 1.5}},
     {x: months, y: yoy, mode: "lines", name: "YoY%", yaxis: "y2", line: {color: "#34b87a", width: 1.5}},
-    {x: sigX, y: sigY, mode: "markers", name: "score=4訊號", marker: {symbol: "triangle-up", size: 11, color: "#e84545"}},
+    {x: sigX, y: sigY, mode: "markers", name: "月營收訊號▲", marker: {symbol: "triangle-up", size: 11, color: "#e84545"}},
   ], {
     title: {text: g + "　月營收動能（成員" + t.n + "家加總）", font: {size: 14}},
     yaxis: {title: {text: "營收(億)", font: {size: 11}}},
