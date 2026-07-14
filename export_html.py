@@ -1484,7 +1484,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <button class="tab-btn" id="signalTabBtn" onclick="showTab(7)">進場訊號</button>
   <button class="tab-btn" onclick="showTab(6)">動能雷達</button>
   <button class="tab-btn" onclick="showTab(5)">供應鏈</button>
-  <button class="tab-btn" onclick="showTab(2)">公司/產業歷史趨勢</button>
+  <button class="tab-btn" onclick="showTab(2);if(document.getElementById('histRevmomView').style.display!=='none')renderRevmomChart()">公司/產業歷史趨勢</button>
   <button class="tab-btn" onclick="showTab(1)">排行榜明細</button>
   <button class="tab-btn" onclick="showTab(3)">財報/法說會提醒</button>
   <button class="tab-btn" onclick="showTab(4)">新聞/目標價</button>
@@ -1550,6 +1550,12 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 </div>
 
 <div class="tab-content" id="tab2">
+  <div class="sc-view-switch">
+    <button class="view-btn active" id="histViewRevmomBtn" onclick="switchHistView('revmom')">產業月營收動能</button>
+    <button class="view-btn" id="histViewResBtn" onclick="switchHistView('res')">族群共振/金流解剖</button>
+    <button class="view-btn" id="histViewCompanyBtn" onclick="switchHistView('company')">個股/題材歷史</button>
+  </div>
+  <div id="histResView" style="display:none">
   <h3 class="sec-title" style="margin-top:0">族群共振（前幾大成員是否齊漲）</h3>
   <div class="controls">
     題材：<select id="resTheme" onchange="renderResonance()"></select>
@@ -1573,7 +1579,9 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div id="anaChart" style="height:340px"></div>
   <div id="anaConc" style="height:130px"></div>
   <div class="scroll-box"><table id="anaTable"></table></div>
-  <hr style="border:none;border-top:1px solid var(--bd);margin:20px 0">
+  </div>
+
+  <div id="histCompanyView" style="display:none">
   <h3 class="sec-title" style="margin-top:0">個股/題材歷史</h3>
   <div class="controls">
     追蹤對象：
@@ -1600,8 +1608,10 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div id="historyChart" style="height:420px"></div>
   <div id="companyInfoPanel"></div>
   <table id="historyTable"></table>
-  <hr style="border:none;border-top:1px solid var(--bd);margin:20px 0">
-  <h3 class="sec-title">產業(題材)月營收動能</h3>
+  </div>
+
+  <div id="histRevmomView">
+  <h3 class="sec-title" style="margin-top:0">產業(題材)月營收動能</h3>
   <div class="controls">
     題材：<select id="revmomTheme" onchange="renderRevmomChart()"></select>
     範圍：<select id="revmomRange" onchange="renderRevmomChart()">
@@ -1612,6 +1622,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div class="hint">柱＝題材成員(FinMind覆蓋)月營收<b>加總</b>(億台幣)；線＝MoM%/YoY%(右軸)；<b>▲＝至該營收月止構成score=4訊號</b>(進場口徑=公告月的次月15號、持有60交易日——訊號規則與回測數據詳「進場訊號」頁的「題材營收動能」檢視)。下表＝前5大營收成員(12月平均占比，中位涵蓋97%題材營收)。題材下拉選單「▲」＝本月觸發中。</div>
   <div id="revmomChart" style="height:380px"></div>
   <table id="revmomMembers"></table>
+  </div>
 </div>
 
 <div class="tab-content" id="tab3">
@@ -2387,6 +2398,7 @@ function renderCompanyHistory() {
 
 function jumpToCompany(key) {
   if (!DATA.company_history[key]) return;
+  switchHistView("company");
   histCompanies = [key];
   document.getElementById("companyPick").value = key;
   document.getElementById("companySearch").value = DATA.company_history[key].label;
@@ -3295,7 +3307,7 @@ function jumpToAnatomy(g) {
   if (!has) { jumpToRadar(g); return; }     // 題材不在解剖選單(成員<3)時退回動能雷達
   sel.value = g;
   showTab(2);
-  renderResonance();
+  switchHistView("res");
   const el = document.getElementById("anaChart");
   if (el) el.scrollIntoView({behavior: "smooth"});
 }
@@ -3762,8 +3774,21 @@ function renderRevmomChart() {
   ], rows);
 }
 
+function switchHistView(v) {
+  ["Revmom", "Res", "Company"].forEach(function(k) {
+    const on = v === k.toLowerCase();
+    document.getElementById("histView" + k + "Btn").classList.toggle("active", on);
+    document.getElementById("hist" + k + "View").style.display = on ? "" : "none";
+  });
+  // 切到可見後重繪,避免Plotly在display:none容器下的尺寸問題
+  if (v === "revmom") renderRevmomChart();
+  else if (v === "res") renderResonance();
+  else if (v === "company") renderCompanyHistory();
+}
+
 function jumpToRevmom(g) {
   showTab(2);
+  switchHistView("revmom");
   const sel = document.getElementById("revmomTheme");
   if (sel) { sel.value = g; renderRevmomChart(); }
   const el = document.getElementById("revmomChart");
