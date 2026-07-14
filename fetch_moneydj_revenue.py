@@ -28,11 +28,17 @@ PAT = re.compile(
 )
 
 
+SUFFIX_ALIASES = ["-創", "-DR", "-KY創"]  # 創新板/TDR官方登記名內建這些後綴,但MoneyDJ標題常省略,兩種都要能對到
+
+
 def load_name_map():
     df = pd.read_csv("tw_all_listed.csv", dtype={"code": str})
     m = {}
     for _, r in df.iterrows():
         m.setdefault(r["name"], r["code"])
+        for suf in SUFFIX_ALIASES:
+            if r["name"].endswith(suf):
+                m.setdefault(r["name"][:-len(suf)], r["code"])
     return m
 
 
