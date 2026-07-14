@@ -1003,7 +1003,7 @@ def build():
             _msc[_s1 & _s2 & _s3] = 3
             _ty3 = _yoy.rolling(3).mean()
             _sig = _msc + _ty3.gt(0).astype(int)
-            _tail = _tot.index[-36:]
+            _tail = _tot.index  # 全史(fm起2019,約90個月);範圍裁切在前端做
             _trail12 = _wide.tail(12).mean()
             _base = _trail12.sum()
             _top5_rows = []
@@ -1617,6 +1617,8 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     範圍：<select id="revmomRange" onchange="renderRevmomChart()">
       <option value="24" selected>近24月</option>
       <option value="36">近36月</option>
+      <option value="60">近60月</option>
+      <option value="999">全部(2019起)</option>
     </select>
   </div>
   <div class="hint">柱＝題材成員(FinMind覆蓋)月營收<b>加總</b>(億台幣)；線＝MoM%/YoY%(右軸)；<b>▲＝至該營收月止構成score=4訊號</b>(進場口徑=公告月的次月15號、持有60交易日——訊號規則與回測數據詳「進場訊號」頁的「題材營收動能」檢視)。下表＝前5大營收成員(12月平均占比，中位涵蓋97%題材營收)。題材下拉選單「▲」＝本月觸發中。</div>
