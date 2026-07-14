@@ -3708,12 +3708,15 @@ function renderRevmomTab() {
       if (today > expiry) continue;
       hold.push({"題材": themeLink(g), "_g": g, "訊號月": sm,
                  "進場日(口徑)": sm + "-15" + (today < entry ? "（等進場）" : ""),
-                 "約到期": expiry.toISOString().slice(0, 10)});
+                 "約到期": expiry.toISOString().slice(0, 10),
+                 "前5大營收成員": revmomMemberLinks(t) +
+                   " <a href=\"javascript:void(0)\" onclick=\"jumpToRevmom('" + g + "')\" title=\"跳公司/產業歷史趨勢頁看營收圖\">📈</a>"});
     }
   });
   buildTable(document.getElementById("revmomHoldTable"), [
     {key: "題材", label: "題材", sortKey: "_g"}, {key: "訊號月", label: "訊號月"},
     {key: "進場日(口徑)", label: "進場日(口徑)"}, {key: "約到期", label: "約到期(60交易日)"},
+    {key: "前5大營收成員", label: "前5大營收成員(12月平均占比,回測口徑=全成員等權)"},
   ], hold);
 }
 
