@@ -1,22 +1,20 @@
 # -*- coding: utf-8 -*-
-"""正式報告:「題材月營收動能」(2026-07-14凌晨研究線最終版本)
-規格(吸取一整晚的教訓,逐條寫明)：
-1. 產業/題材分組=project自己的細分題材分類(classification.main_group,如PCB/CCL/記憶體/CPO光通訊)，
-   不是TWSE官方34類粗分類——官方分類太粗會把訊號稀釋掉(使用者發現)。
-2. 趨勢訊號=題材月加總營收(FinMind fm_month_rev,911檔全市場成交值>=5000萬公司)的MoM/YoY，
-   加總後才算比率(不是先算個股比率再平均)——避免小公司YoY%波動大帶偏中位數(使用者發現)。
-3. 進場點=每月15號(不是1號)。原因：訊號用的是「上個月」的營收數字，但上個月營收要到這個月10-15號
-   才公告，1號進場等於假裝已經知道還沒公布的數字，是look-ahead bug(使用者發現)。
-4. 出場=固定60個交易日(不是月底)。原因：事件研究法(看不同天數offset的報酬路徑)發現這批訊號的優勢
-   會隨時間持續擴大而非提前打完收工，抱到月底反而抓不到大部分報酬(使用者建議做事件研究法查證)。
-5. 訊號種類：mom_streak3(連續3個月MoM為正)、mom_streak2(連續2個月)。
+"""正式報告:「題材月營收動能」判決版(2026-07-14,取代凌晨的待驗證版)。
+資料=修復後全宇宙panel(tmp_theme_momentum_v2_panel.pkl,由build_theme_momentum_v2.py產生,
+無新聞look-ahead條件);訊號=score(0-4)分層,主推score=4。
 
-權益曲線建構教訓(2026-07-14修正)：60天持有期遠長於進場間隔(124筆分散在33個不同月份，意味著同時間
-常有多筆持有中的部位重疊)，若把每筆交易的60天報酬整包記在「進場當天」再逐日鏈接，會產生不可能達成的
-虛假複利(第一版algo算出82倍/年化176%，明顯不合理)。正確做法：把每筆交易展開成「持有期間內每一天的
-真實日報酬」，逐日對齊，同一天有多個部位同時持有就等權平均——這樣才反映「同時間資金會被多筆部位分食」
-的真實限制，跟本系列研究一貫做法(gap-dip/revenue-diffusion等)的每日組合構建邏輯一致，只是把窗口從
-1天/月底延伸到完整60天。
+score定義(題材-月層級,tmp_theme_score.pkl,shift(1)口徑=進場日只用已公布月份;
+2026-07-14逆向工程驗證100%,正式builder=build_theme_score_topn.py):
+  mom_score  = 從最近已公布月往回數「連續加總MoM>0」的月數(巢狀streak,0~3)
+  trend_yoy3 = 最近3個已公布月加總YoY的平均
+  score      = mom_score + (trend_yoy3>0 ? 1 : 0)  → 0~4
+  score=4 ⟺ 連續3個月MoM為正 且 近3月YoY均值為正(=mom_streak3加YoY趨勢確認,重疊92%)
+
+規格教訓(全程使用者校正,詳研究紀錄20260714):細分題材分組/加總後算比率/15號進場/
+60交易日持有(事件研究法)/權益曲線逐日展開等權平均(避免82x虛假複利)。
+驗證狀態:LOTO+題材-月cluster bootstrap雙通過(build_theme_momentum_validate.py);
+季節性=觸發率成立報酬否定;trailing新聞熱度=否定(build_news_heat_test.py)。
+用法: python build_theme_momentum_report.py
 """
 import pickle
 import sqlite3
@@ -25,32 +23,14 @@ import pandas as pd
 
 from research_report_tmpl import build_report
 
-MAX_GAP_DAYS = 5
 HOLD_DAYS = 60
-
-
-def get_close(cache, code, date, mode="onOrAfter"):
-    df = cache.get(code)
-    if df is None:
-        return None
-    c = df["Close"]
-    if hasattr(c, "columns"):
-        c = c.iloc[:, 0]
-    target = pd.Timestamp(date)
-    idx = c.index[c.index <= target] if mode == "onOrBefore" else c.index[c.index >= target]
-    if len(idx) == 0:
-        return None
-    found = idx[0] if mode == "onOrAfter" else idx[-1]
-    if abs((target - found).days) > MAX_GAP_DAYS:
-        return None
-    return found
-
 
 with open("tmp_revenue_price_cache.pkl", "rb") as f:
     cache = pickle.load(f)
 
-panel = pd.read_pickle("tmp_theme_trend_streak_panel.pkl")
-panel["entry_date_fixed"] = panel.month_start + pd.Timedelta(days=14)
+panel = pd.read_pickle("tmp_theme_momentum_v2_panel.pkl").copy()
+panel["y"] = panel.year_month.str[:4]
+print(f"判決版panel: {len(panel)}筆, score分布:\n{panel.score.value_counts().sort_index().to_string()}")
 
 twii = pd.read_pickle("tmp_twii_daily.pkl")
 twii.columns = twii.columns.get_level_values(0)
@@ -61,15 +41,17 @@ all_days = [str(d.date()) for d in all_days_idx]
 
 
 def daily_returns_for_trade(row):
-    """展開單筆交易成『持有期每日報酬』的Series(index=日期字串),而不是單一總報酬數字"""
-    entry_pos = get_close(cache, row.code, row.entry_date_fixed, "onOrAfter")
-    if entry_pos is None:
-        return None
+    """展開單筆交易成『持有期每日報酬』Series(index=日期字串)。entry_day=panel已算好的實際進場日"""
     df = cache.get(row.code)
+    if df is None:
+        return None
     c = df["Close"]
     if hasattr(c, "columns"):
         c = c.iloc[:, 0]
-    start_i = c.index.get_loc(entry_pos)
+    entry = pd.Timestamp(row.entry_day)
+    if entry not in c.index:
+        return None
+    start_i = c.index.get_loc(entry)
     end_i = start_i + HOLD_DAYS
     if end_i >= len(c):
         return None
@@ -80,16 +62,12 @@ def daily_returns_for_trade(row):
 
 
 def build_equity(tdf):
-    """逐日對齊:同一天多個部位同時持有就等權平均當天報酬,無部位的日子=0(現金)"""
-    daily_frames = []
-    for row in tdf.itertuples():
-        dr = daily_returns_for_trade(row)
-        if dr is not None:
-            daily_frames.append(dr)
+    """逐日對齊:同日多部位等權平均,無部位日=0(現金)"""
+    daily_frames = [dr for row in tdf.itertuples() if (dr := daily_returns_for_trade(row)) is not None]
     if not daily_frames:
         return None
     all_ret = pd.concat(daily_frames, axis=1)
-    port_ret = all_ret.mean(axis=1)  # 同一天多部位=等權平均;NaN(當天沒部位)視為0
+    port_ret = all_ret.mean(axis=1)
     port = pd.Series(0.0, index=all_days)
     idx = port_ret.index.intersection(port.index)
     port.loc[idx] = port_ret.loc[idx]
@@ -104,8 +82,7 @@ def build_equity(tdf):
     tmp["y"] = tmp.date.str[:4]
     yearly = {y: ((1 + g.ret / 100).prod() - 1) * 100 for y, g in tmp.groupby("y")}
     st = dict(trades=len(tdf), win=(tdf.ret60 > 0).mean() * 100, avg=tdf.ret60.mean(), med=tdf.ret60.median(),
-              wl=None, pf=None,
-              mult=mult, ann=ann, sharpe=mu / sdv * 252 ** 0.5 if sdv else 0,
+              wl=None, pf=None, mult=mult, ann=ann, sharpe=mu / sdv * 252 ** 0.5 if sdv else 0,
               mdd=ddv.min(), calmar=ann / abs(ddv.min()) if ddv.min() else None,
               expo=(tmp.n > 0).mean() * 100)
     aw = tdf.ret60[tdf.ret60 > 0].mean()
@@ -115,32 +92,12 @@ def build_equity(tdf):
     return all_days, [round(x, 4) for x in eq], yearly, st
 
 
-def calc_ret60(row):
-    entry_pos = get_close(cache, row.code, row.entry_date_fixed, "onOrAfter")
-    if entry_pos is None:
-        return None, None
-    df = cache.get(row.code)
-    c = df["Close"]
-    if hasattr(c, "columns"):
-        c = c.iloc[:, 0]
-    start_i = c.index.get_loc(entry_pos)
-    end_i = start_i + HOLD_DAYS
-    if end_i >= len(c):
-        return None, None
-    return (c.iloc[end_i] / c.iloc[start_i] - 1) * 100, str(entry_pos.date())
-
-
-panel[["ret60", "entry_day"]] = panel.apply(lambda r: pd.Series(calc_ret60(r)), axis=1)
-panel = panel.dropna(subset=["ret60"]).copy()
-print(f"可計算報酬筆數: {len(panel)}")
-
-r1 = build_equity(panel[panel.mom_streak3])
-d1, e1, y1, s1 = r1
-strat1 = dict(name="連續3個月MoM為正(主推)", dates=d1, equity=e1, yearly=y1, stats=s1)
-r2 = build_equity(panel[panel.mom_streak2])
-d2, e2, y2, s2 = r2
-strat2 = dict(name="連續2個月MoM為正", dates=d2, equity=e2, yearly=y2, stats=s2)
-strategies = [strat1, strat2]
+strategies = []
+for sel, name in [(panel.score == 4, "score=4(主推:連3月MoM正+近3月YoY均值正)"),
+                  (panel.score == 3, "score=3(差一分,對照)"),
+                  (panel.score <= 2, "score≤2(其餘,對照)")]:
+    d, e, yr, st = build_equity(panel[sel])
+    strategies.append(dict(name=name, dates=d, equity=e, yearly=yr, stats=st))
 
 txr = c_twii.pct_change().fillna(0)
 txe = (1 + txr).cumprod()
@@ -150,47 +107,96 @@ for y, g in txr.groupby(txr.index.year):
     g2 = g[g.index.map(lambda d: str(d.date())) >= "2022-01-01"]
     if len(g2):
         txy[str(y)] = ((1 + g2).prod() - 1) * 100
-bench_twii = dict(name="加權指數^TWII買進持有", dates=[str(d.date()) for d in txe.index],
-                   equity=[round(float(x), 4) for x in txe / txe.iloc[0]], yearly=txy)
+benchmarks = [dict(name="加權指數^TWII買進持有", dates=[str(d.date()) for d in txe.index],
+                   equity=[round(float(x), 4) for x in txe / txe.iloc[0]], yearly=txy)]
 
-benchmarks = [bench_twii]
+# ---------- 附表:score分層統計/逐年/季節性/新聞熱度 ----------
+def stat_row(g, col):
+    return (f"<td>{len(g)}</td><td>{g[col].median():+.2f}%</td>"
+            f"<td>{g[col].mean():+.2f}%</td><td>{(g[col] > 0).mean() * 100:.0f}%</td>")
+
+score_tbl = ("<p><b>score分層統計(單筆60日,左=原始/右=TWII超額)</b></p>"
+             "<table><tr><th>score</th><th>n</th><th>中位</th><th>均值</th><th>勝率</th>"
+             "<th>n</th><th>超額中位</th><th>超額均值</th><th>超額勝率</th></tr>")
+for sc in range(5):
+    g = panel[panel.score == sc]
+    score_tbl += f"<tr><th>{sc}</th>{stat_row(g, 'ret60')}{stat_row(g, 'excess60')}</tr>"
+score_tbl += "</table>"
+
+yr_tbl = ("<p><b>score=4逐年(TWII超額)</b></p><table><tr><th>年</th><th>n</th><th>群數</th>"
+          "<th>超額中位</th><th>勝率</th><th>其他score中位</th></tr>")
+s4 = panel[panel.score == 4]
+for y in sorted(panel.y.unique()):
+    a = s4[s4.y == y]
+    b = panel[(panel.y == y) & (panel.score < 4)]
+    yr_tbl += (f"<tr><th>{y}</th><td>{len(a)}</td>"
+               f"<td>{a.groupby(['industry', 'year_month']).ngroups}</td>"
+               f"<td>{a.excess60.median():+.2f}%</td><td>{(a.excess60 > 0).mean() * 100:.0f}%</td>"
+               f"<td>{b.excess60.median():+.2f}%</td></tr>")
+yr_tbl += "</table>"
+
+nh = pd.read_pickle("tmp_news_heat_panel.pkl")
+nh_tbl = ("<p><b>⑫b新聞熱度判決表(TWII超額中位/勝率)——否定</b></p>"
+          "<table><tr><th>組別</th><th>1M窗口</th><th>3M窗口</th></tr>")
+for label, sel in [("①score4×有新聞", lambda c: (nh.score == 4) & nh[c]),
+                   ("②score4×無新聞", lambda c: (nh.score == 4) & ~nh[c]),
+                   ("③有新聞單獨(全score)", lambda c: nh[c]),
+                   ("　無新聞(全score)", lambda c: ~nh[c])]:
+    cells = ""
+    for c in ["news_1M(35d)", "news_3M(95d)"]:
+        g = nh[sel(c)]
+        cells += f"<td>n={len(g)} 中位{g.excess60.median():+.2f}% 勝{(g.excess60 > 0).mean() * 100:.0f}%</td>"
+    nh_tbl += f"<tr><th>{label}</th>{cells}</tr>"
+nh_tbl += "</table>"
 
 rdb = sqlite3.connect("research_2022.db")
 names = dict(rdb.execute("SELECT code, name FROM (SELECT code, name, snapshot_date FROM rankings "
                           "WHERE country='台' ORDER BY snapshot_date) GROUP BY code"))
-trades_show = panel[panel.mom_streak3].sort_values("entry_day").tail(150)
+trades_show = s4.sort_values("entry_day").tail(150)
 rows = "".join(
-    f"<tr><th>{t.entry_day}</th><td>{t.industry}</td><td>{t.code} {names.get(t.code,'')}</td>"
-    f"<td class='{'good' if t.ret60>0 else 'bad'}'>{t.ret60:+.1f}%</td></tr>"
+    f"<tr><th>{t.entry_day}</th><td>{t.industry}</td><td>{t.code} {names.get(t.code, '')}</td>"
+    f"<td class='{'good' if t.ret60 > 0 else 'bad'}'>{t.ret60:+.1f}%</td>"
+    f"<td class='{'good' if t.excess60 > 0 else 'bad'}'>{t.excess60:+.1f}%</td></tr>"
     for t in trades_show.itertuples())
-trades_html = ("<table><tr><th>進場日(15號)</th><th>題材</th><th>個股</th><th>60日報酬(單筆,非投組)</th></tr>"
+trades_html = (score_tbl + yr_tbl + nh_tbl +
+               "<p><b>score=4逐筆明細(近150筆)</b></p>"
+               "<table><tr><th>進場日</th><th>題材</th><th>個股</th><th>60日報酬</th><th>TWII超額</th></tr>"
                + rows + "</table>")
 
+s1 = strategies[0]["stats"]
 verdicts = [
-    ("主推:連續3個月MoM為正", f"複利{s1['mult']:.2f}x/年化{s1['ann']:+.1f}%/夏普{s1['sharpe']:.2f}/MDD{s1['mdd']:.0f}%/"
-                        f"{s1['trades']}筆/勝率{s1['win']:.0f}%/單筆中位{s1['med']:+.1f}%/平均同時曝險{s1['expo']:.0f}%的交易日"),
-    ("對照:連續2個月MoM為正", f"複利{s2['mult']:.2f}x/年化{s2['ann']:+.1f}%/夏普{s2['sharpe']:.2f}/MDD{s2['mdd']:.0f}%/"
-                        f"{s2['trades']}筆/勝率{s2['win']:.0f}%"),
-    ("權益曲線修正說明", "第一版把每筆60天報酬整包記在進場當天再逐日鏈接，算出複利82倍/年化176%這種不可能"
-                    "達成的數字(124筆分散在33個月但每筆抱60個交易日≈3個月，必然大量同時持有)。"
-                    "已修正為逐日展開、同時持有的部位當天等權平均——這是本系列一貫的投組構建邏輯，只是"
-                    "窗口從1天/月底延伸到完整60天"),
-    ("時間點修正的重要性", "進場點從月初改到15號(避免用還沒公布的上月營收做決策)，出場從月底改成事件研究法"
-                     "找出的60個交易日(訊號優勢隨時間持續擴大，月底出場只抓到一小部分)"),
-    ("下一步", "n=120-124仍小，樣本外驗證(2022-24訓練/2025-26測試)、多題材重複計算問題，都還沒處理，"
-             "這是初篩結果不是可上線策略"),
+    ("主推:score=4", f"複利{s1['mult']:.2f}x/年化{s1['ann']:+.1f}%/夏普{s1['sharpe']:.2f}/MDD{s1['mdd']:.0f}%/"
+                    f"{s1['trades']}筆/勝率{s1['win']:.0f}%/單筆中位{s1['med']:+.1f}%；TWII超額中位+2.55%(唯一超額為正的分層)"),
+    ("為何只推score=4", "劑量反應不是線性而是斷崖:score 0-3超額全歸零或轉負,只有4分(連3月MoM正+近3月YoY均值正)突出。"
+                     "score=4與mom_streak3重疊92%=同一資訊加YoY確認,不是獨立新因子——訊號本質是二元(全有或全無)"),
+    ("LOTO集中度檢查=通過", "無單一題材撐盤:最壞剔除(散熱/結構件101筆)後剩餘中位仍+1.69%/勝率54%;"
+                        "剔除最大題材PCB/CCL(151筆,18%)中位反升至+3.12%=它在拖後腿(build_theme_momentum_validate.py)"),
+    ("cluster bootstrap=通過", "題材-月群層級(115群,B=10000):score=4超額中位+2.55% CI[+0.28,+4.78];"
+                            "vs score<4中位差+3.82pp CI[+1.39,+6.09] 單尾p=0.0004"),
+    ("逐年=regime依賴", "超額逐年CI:2025[+2.49,+15.06]獨立顯著/2024[-5.32,+0.43]偏負/其餘跨0——"
+                     "題材行情年放大器非全天候,與台積電法說環境版/H-融資同構"),
+    ("態勢階梯疊加=縮放可用/門檻否定(2026-07-14補測)",
+     "進場門檻版(tier=1.0才進)=否定:被擋的288筆中位+12.17%/勝率77%全是大魚(訊號在大盤破線時觸發"
+     "=最強反彈批),複利9.42x→3.40x且MDD反惡化到-39%——「位階不擋大魚」再度應驗;"
+     "組合縮放版(日報酬×當日tier,訊號照進)=採用:夏普1.90→2.07/MDD-29.8%→-21.6%/Calmar 2.27→2.31,"
+     "代價複利9.42→5.79x——凸性哲學標準用法,與S3⑤+階梯同構(build_theme_momentum_tier.py,"
+     "tier=週線vs4週/13週均凍結口徑,上一完成週生效無look-ahead)"),
+    ("季節性=報酬面否定", "10-11月觸發率11.1%vs其他月6.7%(Q4庫存回補確認),但報酬10-11月中位+1.01%/勝51%"
+                      "反而低於其他月+2.84%/58%——訊號變多≠變好,不上儀表板(build_theme_momentum_seasonal.py)"),
+    ("⑫b新聞熱度=否定", "trailing新聞覆蓋(進場前1/3個月被MoneyDJ報導)無溢價且略偏負(見附表)——"
+                     "舊版panel高報酬=look-ahead選樣artifact,勿再引用(build_news_heat_test.py)"),
 ]
-limits = ("樣本2022-2026；進場點=每月15號(或當月第一個>=15號的交易日)，出場=固定60個交易日後；"
-          "權益曲線已修正為逐日展開等權平均，反映同時持有多部位時的資金分食，但仍是簡化模型"
-          "(未設資金曝險上限，理論上可無限多部位同時開,實務會受本金限制)；"
-          "股票可能同時屬於多個題材，同一筆營收公告可能在不同題材下被重複計算；"
-          "size proxy/題材分組門檻(>=3家FinMind覆蓋公司)為使用者裁示，未做門檻穩健性掃描；"
-          "未做樣本外訓練/測試切分，本報告數字為全樣本回測，過擬合風險未排除；未建停損。")
-prereg = ("2026-07-14研究(使用者多輪校正)：細分題材(classification.main_group)+FinMind加總營收"
-          "算MoM/YoY(避免個股比率失真)+連續3個月MoM為正當進場訊號+進場點修正到15號(避免look-ahead)+"
-          "60個交易日固定持有(事件研究法找出的最佳窗口，非任意選定)+權益曲線逐日展開避免虛假複利。"
-          "產生器=build_theme_momentum_report.py。")
-build_report("research_theme_momentum.html", "題材月營收動能策略（連續MoM為正,60日持有）",
+limits = ("樣本2022-2026;進場=每月15號後首個交易日(訊號只用已公布月份,shift(1)口徑),出場=固定60交易日;"
+          "權益曲線逐日展開等權平均,未設曝險上限(理論可無限部位,實務受本金限制);"
+          "同一股票可屬多題材=同筆營收可能重複入場;宇宙=FinMind覆蓋∩題材分類表僅283檔,"
+          "分類表為現狀快照套用到歷史有存活者/分類漂移偏差(本系統既有簡化);"
+          "score=4樣本828筆但獨立單位僅115個題材-月群/27題材;全樣本回測無訓練/測試切分"
+          "(2022-24 vs 2025-26逐年表可當粗略代理);未建停損。")
+prereg = ("2026-07-14判決版(取代凌晨待驗證版):panel修復兩個致命問題(移除新聞覆蓋look-ahead條件/"
+          "改用FinMind全覆蓋宇宙283檔)後重測,加TWII超額報酬判準+LOTO+cluster bootstrap+季節性複驗+"
+          "新聞熱度假說判決。產生器=build_theme_momentum_report.py,panel=build_theme_momentum_v2.py,"
+          "驗證=build_theme_momentum_validate.py,詳細=封存/研究_20260714/研究紀錄。")
+build_report("research_theme_momentum.html", "題材月營收動能策略（score=4,60日持有）判決版",
              prereg, strategies, benchmarks, trades_html, verdicts, limits)
 print("done -> research_theme_momentum.html")
 for s in strategies:

@@ -958,6 +958,87 @@ def build():
         print(f"補漲雷達計算失敗: {e}")
         data["catchup_radar"] = {"themes": [], "rows": []}
 
+    # ---- ⑫題材月營收動能score(2026-07-14上線;凍結研究口徑,正式builder=build_theme_score_topn.py) ----
+    # score=巢狀MoM streak(0-3)+近3月YoY均值>0加1分;sig[i]=以資料月i收口的訊號,進場=次月15號(全shift無look-ahead)
+    # 回測:score=4 TWII超額中位+2.55%/勝率56%(828筆/115題材-月,LOTO+cluster bootstrap通過);V2倉位=訊號照進×大盤tier
+    try:
+        _c2 = sqlite3.connect(DB_PATH)
+        _fmr = pd.read_sql("SELECT code, date, revenue FROM fm_month_rev", _c2, dtype={"code": str})
+        _c2.close()
+        _fmr["m"] = pd.to_datetime(_fmr["date"])
+        # FinMind date=公告月(營收月+1,已比對官方表證實:fm 2026-06-01=官方11505五月營收)。
+        # 最新公告月FinMind常只回補部分公司→截斷到覆蓋完整的月份,避免殘缺加總污染MoM
+        _cnt = _fmr.groupby("m")["code"].nunique()
+        _typ = _cnt.tail(13).head(12).median()
+        _ok_months = _cnt[_cnt >= _typ * 0.7].index
+        _fmr = _fmr[_fmr["m"] <= _ok_months.max()]
+        # 顯示用月份=營收月(公告月-1);凍結回測口徑:營收月r公告於r+1月10-15號,進場=r+2月15號
+        _fmr["m"] = _fmr["m"] - pd.offsets.MonthBegin(1)
+        _cls_tw = classification[classification["country"] == "台"][["code", "main_group"]].drop_duplicates()
+        _twn = (rankings[rankings["country"] == "台"].drop_duplicates("code", keep="last")
+                .set_index("code")["中文名稱"].to_dict())
+        tm_themes = {}
+        for _g, _mem in _cls_tw.groupby("main_group"):
+            _rv = _fmr[_fmr["code"].isin(_mem["code"])]
+            if _rv["code"].nunique() < 3:  # 題材>=3家FinMind覆蓋(回測門檻)
+                continue
+            _wide = _rv.pivot_table(index="m", columns="code", values="revenue", aggfunc="first").sort_index()
+            # 該月「完整」=前5大營收成員(占題材金額中位97%)全數已申報——家數覆蓋率會漏掉
+            # 「缺大戶」情境(如fm最新月2330未回補=缺4千億),用價值覆蓋判斷;缺口>2月退回原序列防死鎖
+            _t5c = list(_wide.tail(12).mean().sort_values(ascending=False).head(5).index)
+            _full = _wide[_t5c].notna().all(axis=1)
+            if _full.any():
+                _cut = _full[_full].index.max()
+                if (_wide.index.max().to_period("M") - _cut.to_period("M")).n <= 2:
+                    _wide = _wide[_wide.index <= _cut]
+                else:
+                    print(f"  ⚠題材{_g}: 前5大成員申報缺口>2月,未截斷(檢查是否有成員停止申報)")
+            _tot = _wide.sum(axis=1, min_count=1)
+            _mom = _tot.pct_change(fill_method=None) * 100
+            _yoy = _tot.pct_change(12, fill_method=None) * 100
+            _s1, _s2, _s3 = _mom.gt(0), _mom.shift(1).gt(0), _mom.shift(2).gt(0)
+            _msc = pd.Series(0, index=_tot.index)
+            _msc[_s1] = 1
+            _msc[_s1 & _s2] = 2
+            _msc[_s1 & _s2 & _s3] = 3
+            _ty3 = _yoy.rolling(3).mean()
+            _sig = _msc + _ty3.gt(0).astype(int)
+            _tail = _tot.index[-36:]
+            _trail12 = _wide.tail(12).mean()
+            _base = _trail12.sum()
+            _top5_rows = []
+            for _cd, _avg in _trail12.sort_values(ascending=False).head(5).items():
+                _col = _wide[_cd]
+                _lr = _col.iloc[-1]
+                _ly = None
+                if len(_col) >= 13 and pd.notna(_col.iloc[-1]) and pd.notna(_col.iloc[-13]) and _col.iloc[-13]:
+                    _ly = round(float(_col.iloc[-1] / _col.iloc[-13] - 1) * 100, 1)
+                _top5_rows.append([_cd, _twn.get(_cd, ""),
+                                   round(float(_avg / _base * 100), 1) if _base else None,
+                                   round(float(_lr) / 1e8, 1) if pd.notna(_lr) else None, _ly])
+
+            def _ser(s):
+                return [None if pd.isna(v) else round(float(v), 1) for v in s.reindex(_tail)]
+
+            tm_themes[_g] = {
+                "months": [d.strftime("%Y-%m") for d in _tail],
+                "rev": [None if pd.isna(v) else round(float(v) / 1e8, 1) for v in _tot.reindex(_tail)],
+                "mom": _ser(_mom), "yoy": _ser(_yoy),
+                "sig": [int(v) for v in _sig.reindex(_tail).fillna(0)],
+                "score": int(_sig.iloc[-1]), "msc": int(_msc.iloc[-1]),
+                "ty3": None if pd.isna(_ty3.iloc[-1]) else round(float(_ty3.iloc[-1]), 1),
+                "mom3": [None if pd.isna(v) else round(float(v), 1)
+                         for v in [_mom.iloc[-1], _mom.iloc[-2], _mom.iloc[-3]]],
+                "top5": _top5_rows, "n": int(_rv["code"].nunique()),
+            }
+        _asof = max(v["months"][-1] for v in tm_themes.values()) if tm_themes else None
+        data["theme_momentum"] = {"asof": _asof, "themes": tm_themes}
+        _trig = [g for g, v in tm_themes.items() if v["score"] == 4 and v["months"][-1] == _asof]
+        print(f"題材營收動能: {len(tm_themes)}題材, 資料至{_asof}, score=4觸發={_trig}")
+    except Exception as e:
+        print(f"題材營收動能未產生: {e}")
+        data["theme_momentum"] = {"asof": None, "themes": {}}
+
     # 資料健康狀態列：各資料源最新日期+新鮮度(門檻依各源的正常更新節奏)
     try:
         from datetime import date as _date
@@ -986,6 +1067,8 @@ def build():
             _item("資金排行", _q("SELECT MAX(snapshot_date) FROM rankings"), 9, 16, "每週"),
             _item("週收盤價", _q("SELECT MAX(snapshot_date) FROM weekly_close"), 9, 16, "每週"),
             _item("匯率", _q("SELECT MAX(snapshot_date) FROM fx_rates"), 9, 16, "每週"),
+            # FinMind月營收(題材營收動能訊號源):公告月+15天內=正常,>45天=訊號已過期一輪
+            _item("FinMind月營收", _q("SELECT MAX(date) FROM fm_month_rev"), 45, 75, "每月10-15號後"),
         ]
         ym = _q("SELECT MAX(year_month) FROM tw_monthly_revenue")   # 民國YYYMM
         if ym:
@@ -1401,7 +1484,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <button class="tab-btn" id="signalTabBtn" onclick="showTab(7)">進場訊號</button>
   <button class="tab-btn" onclick="showTab(6)">動能雷達</button>
   <button class="tab-btn" onclick="showTab(5)">供應鏈</button>
-  <button class="tab-btn" onclick="showTab(2)">公司歷史趨勢</button>
+  <button class="tab-btn" onclick="showTab(2)">公司/產業歷史趨勢</button>
   <button class="tab-btn" onclick="showTab(1)">排行榜明細</button>
   <button class="tab-btn" onclick="showTab(3)">財報/法說會提醒</button>
   <button class="tab-btn" onclick="showTab(4)">新聞/目標價</button>
@@ -1517,6 +1600,18 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <div id="historyChart" style="height:420px"></div>
   <div id="companyInfoPanel"></div>
   <table id="historyTable"></table>
+  <hr style="border:none;border-top:1px solid var(--bd);margin:20px 0">
+  <h3 class="sec-title">產業(題材)月營收動能</h3>
+  <div class="controls">
+    題材：<select id="revmomTheme" onchange="renderRevmomChart()"></select>
+    範圍：<select id="revmomRange" onchange="renderRevmomChart()">
+      <option value="24" selected>近24月</option>
+      <option value="36">近36月</option>
+    </select>
+  </div>
+  <div class="hint">柱＝題材成員(FinMind覆蓋)月營收<b>加總</b>(億台幣)；線＝MoM%/YoY%(右軸)；<b>▲＝至該營收月止構成score=4訊號</b>(進場口徑=公告月的次月15號、持有60交易日——訊號規則與回測數據詳「進場訊號」頁的「題材營收動能」檢視)。下表＝前5大營收成員(12月平均占比，中位涵蓋97%題材營收)。題材下拉選單「▲」＝本月觸發中。</div>
+  <div id="revmomChart" style="height:380px"></div>
+  <table id="revmomMembers"></table>
 </div>
 
 <div class="tab-content" id="tab3">
@@ -1627,6 +1722,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     <button class="view-btn active" id="sigViewMacroBtn" onclick="switchSigView('macro')">大題材檢查清單</button>
     <button class="view-btn" id="sigViewMicroBtn" onclick="switchSigView('micro')">微題材脈衝雷達</button>
     <button class="view-btn" id="sigViewCatchupBtn" onclick="switchSigView('catchup')">補漲雷達</button>
+    <button class="view-btn" id="sigViewRevmomBtn" onclick="switchSigView('revmom')">題材營收動能</button>
   </div>
   <div id="sigMacroView">
   <h3 class="sec-title">檢查清單規則（源自記憶體2025/9案例研究，勿刪）</h3>
@@ -1673,6 +1769,22 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   </div>
   <div class="hint" id="catchupThemes"></div>
   <div class="scroll-box"><table id="catchupTable"></table></div>
+  </div>
+
+  <div id="sigRevmomView" style="display:none">
+  <h3 class="sec-title">題材月營收動能（score訊號，2026-07-14上線·live驗證中）</h3>
+  <div class="rule-card">
+    <div class="rule-item">訊號＝把題材成員(FinMind覆蓋)月營收<b>加總</b>後看兩件事：① <b>連續3個月月增(MoM)為正</b>——中斷歸零的連續計數，給0~3分　② <b>近3個月年增率(YoY)平均為正</b>——排除低基期反彈，+1分。<b>滿分4分才是訊號</b>。時序口徑(凍結回測版)：營收月r於次月(r+1)10-15號公告、<b>再次月(r+2)的15號進場</b>——進場日只用早已公告的數字，無偷看未來(此口徑比「公告後立刻用」再保守一個月，回測數字皆基於此)。</div>
+    <div class="rule-item">信心分級：<b style="color:var(--red)">⭐⭐⭐ 極高＝score 4</b>(唯一回測有超額報酬的層級)；<b>⭐ 觀察＝score 3</b>(差一分，表中標示缺哪個條件——回測無超額，僅供追蹤接近觸發的題材)；<b>score≤2不列</b>：回測顯示0-2分是雜訊不是「中等信心」，劑量反應是斷崖不是階梯，給星等會誤導。</div>
+    <div class="rule-item">回測(2022-2026，828筆/115題材-月/27題材)：<b>次月15號進場、持有60個交易日</b>。單筆中位+7.4%/勝率67%/TWII超額中位+2.55%(唯一超額為正的分層)。<b>倉位用法(V2形態)</b>：訊號照進——大盤破線時觸發的批次反而是最強反彈(回測擋掉它們MDD惡化到-39%)——但<b>整體部位×大盤態勢係數</b>(月線上100%/月線下60%/季線下30%)：縮放版夏普2.07/MDD-21.6% vs 滿倉1.90/-29.8%。</div>
+    <div class="rule-item" style="color:var(--tx3)">警語：<b>regime依賴</b>——超額集中在題材行情年(2025年獨立顯著、2024年偏負)，屬「行情放大器」非全天候訊號；獨立樣本僅115個題材-月(LOTO+cluster bootstrap通過但n有限)；宇宙=FinMind覆蓋∩題材分類約283檔。成員欄列<b>前5大營收</b>(占題材營收中位97%，top-N等價測試佐證)——回測買法是題材全成員等權，前5大是聚焦顯示。📈=跳「公司/產業歷史趨勢」頁看該題材營收圖。</div>
+  </div>
+  <div class="hint" id="revmomTier" style="font-weight:600"></div>
+  <h3 class="sec-title">最新訊號（<span id="revmomSigMonth"></span>）</h3>
+  <div class="scroll-box"><table id="revmomNowTable"></table></div>
+  <h3 class="sec-title">持有中訊號</h3>
+  <div class="hint">回測口徑＝訊號月15號進場、持有60個交易日(約3個月)；到期日為近似值(進場+87日曆天)。訊號月15號尚未到＝「等進場」。</div>
+  <div class="scroll-box"><table id="revmomHoldTable"></table></div>
   </div>
 </div>
 
@@ -2876,7 +2988,7 @@ function renderBanner() {
 
 // ── 進場訊號頁籤 ──────────────────────────────────────────────────────
 function switchSigView(v) {
-  ["Macro", "Micro", "Catchup"].forEach(function(k) {
+  ["Macro", "Micro", "Catchup", "Revmom"].forEach(function(k) {
     const on = v === k.toLowerCase();
     document.getElementById("sigView" + k + "Btn").classList.toggle("active", on);
     document.getElementById("sig" + k + "View").style.display = on ? "" : "none";
@@ -3512,6 +3624,149 @@ function renderHealthBar() {
   el.innerHTML = html;
 }
 
+// ── ⑫題材月營收動能（score訊號，2026-07-14上線）───────────────────────
+function ymAdd(ym, k) {
+  const y = +ym.slice(0, 4), m0 = +ym.slice(5, 7) - 1 + k;
+  return (y + Math.floor(m0 / 12)) + "-" + String(m0 % 12 + 1).padStart(2, "0");
+}
+
+function revmomMemberLinks(t) {
+  return (t.top5 || []).map(function(m) {
+    const ch = (DATA.chip || {})[m[0]] || {};
+    let b = "";
+    if (ch.f !== undefined && ch.f >= 80) b += "✓";
+    if (ch.s !== undefined && ch.s >= 80) b += "⚡";
+    const label = m[0] + m[1] + "(" + (m[2] === null ? "?" : m[2]) + "%)";
+    return (DATA.company_history && DATA.company_history["台|" + m[0]])
+      ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + m[0] + "');showTab(2)\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + label + "</a>" + b
+      : label + b;
+  }).join("、");
+}
+
+function renderRevmomTab() {
+  const tm = DATA.theme_momentum || {};
+  const themes = tm.themes || {};
+  if (!tm.asof) return;
+  const sigMonth = ymAdd(tm.asof, 2);  // 營收月r→r+1月公告→r+2月15號進場(凍結回測口徑)
+  document.getElementById("revmomSigMonth").textContent =
+    "訊號月 " + sigMonth + "（進場口徑=" + sigMonth + "-15），使用營收月至 " + tm.asof;
+  const regime = DATA.market_tier || {};
+  const pct = Math.round((regime.tier || 1) * 100);
+  document.getElementById("revmomTier").innerHTML =
+    "🎚️ 建議倉位＝訊號照進 × 大盤態勢係數：加權指數<b>" + (regime.txt || "") + "</b> → <b style=\"color:var(--" +
+    (pct >= 100 ? "grn" : pct >= 60 ? "amb" : "red") + ")\">" + pct + "%</b>（V2回測：縮放版夏普2.07/MDD-21.6% vs 滿倉1.90/-29.8%）";
+  const rows = [];
+  Object.keys(themes).forEach(function(g) {
+    const t = themes[g];
+    const own = t.months[t.months.length - 1];
+    if (own !== tm.asof && ymAdd(own, 1) !== tm.asof) return;  // 落後>1月=可能有成員停報,不進表
+    if (t.score < 3) return;
+    const lagTag = own !== tm.asof ? "（資料至" + own + "）" : "";
+    const conf = t.score === 4
+      ? "<span style=\"color:var(--red);font-weight:700\">⭐⭐⭐ 極高</span>"
+      : "<span style=\"color:var(--tx2)\">⭐ 觀察</span>";
+    let miss = "";
+    if (t.score === 3) miss = t.msc === 3 ? "（缺：近3月YoY均值未轉正）" : "（缺：連續月增僅" + t.msc + "/3）";
+    rows.push({
+      "題材": themeLink(g), "_g": g,
+      "信心": conf, "_sc": t.score,
+      "score": t.score + "/4" + miss + lagTag,
+      "近3月MoM%": (t.mom3 || []).map(function(v) { return v === null ? "—" : (v > 0 ? "+" : "") + v; }).join(" / "),
+      "近3月YoY均%": t.ty3 === null ? "—" : (t.ty3 > 0 ? "+" : "") + t.ty3,
+      "_ty": t.ty3 === null ? -999 : t.ty3,
+      "成員數": t.n,
+      "前5大營收成員": revmomMemberLinks(t) +
+        " <a href=\"javascript:void(0)\" onclick=\"jumpToRevmom('" + g + "')\" title=\"跳公司/產業歷史趨勢頁看營收圖\">📈</a>",
+    });
+  });
+  const el = document.getElementById("revmomNowTable");
+  el._sortState = {colIndex: 1, dir: -1};
+  buildTable(el, [
+    {key: "題材", label: "題材", sortKey: "_g"},
+    {key: "信心", label: "信心", sortKey: "_sc", numeric: true},
+    {key: "score", label: "score"},
+    {key: "近3月MoM%", label: "近3月MoM%(新→舊)"},
+    {key: "近3月YoY均%", label: "近3月YoY均%", sortKey: "_ty", numeric: true},
+    {key: "成員數", label: "FinMind成員數", numeric: true},
+    {key: "前5大營收成員", label: "前5大營收成員(12月平均占比)"},
+  ], rows);
+  const trig = rows.filter(function(r) { return r._sc === 4; }).length;
+  const btn = document.getElementById("sigViewRevmomBtn");
+  if (btn && trig) btn.innerHTML = "題材營收動能 🔔" + trig;
+
+  // 持有中：近5個資料月中sig=4且今日在[進場,約到期]內；進場未到=等進場
+  const hold = [];
+  const today = new Date();
+  Object.keys(themes).forEach(function(g) {
+    const t = themes[g];
+    const L = t.months.length;
+    for (let i = Math.max(0, L - 5); i < L; i++) {
+      if (t.sig[i] !== 4) continue;
+      const sm = ymAdd(t.months[i], 2);
+      const entry = new Date(sm + "-15T00:00:00");
+      const expiry = new Date(entry.getTime() + 87 * 86400000);
+      if (today > expiry) continue;
+      hold.push({"題材": themeLink(g), "_g": g, "訊號月": sm,
+                 "進場日(口徑)": sm + "-15" + (today < entry ? "（等進場）" : ""),
+                 "約到期": expiry.toISOString().slice(0, 10)});
+    }
+  });
+  buildTable(document.getElementById("revmomHoldTable"), [
+    {key: "題材", label: "題材", sortKey: "_g"}, {key: "訊號月", label: "訊號月"},
+    {key: "進場日(口徑)", label: "進場日(口徑)"}, {key: "約到期", label: "約到期(60交易日)"},
+  ], hold);
+}
+
+function renderRevmomChart() {
+  const tm = DATA.theme_momentum || {};
+  const g = document.getElementById("revmomTheme").value;
+  const t = (tm.themes || {})[g];
+  const el = document.getElementById("revmomChart");
+  if (!t) { Plotly.purge(el); document.getElementById("revmomMembers").innerHTML = ""; return; }
+  const n = +document.getElementById("revmomRange").value;
+  const s = Math.max(0, t.months.length - n);
+  const months = t.months.slice(s), rev = t.rev.slice(s), mom = t.mom.slice(s),
+        yoy = t.yoy.slice(s), sig = t.sig.slice(s);
+  const sigX = [], sigY = [];
+  months.forEach(function(m, i) { if (sig[i] === 4) { sigX.push(m); sigY.push(rev[i]); } });
+  Plotly.newPlot(el, [
+    {x: months, y: rev, type: "bar", name: "月營收(億)", marker: {color: "rgba(60,140,240,.55)"}},
+    {x: months, y: mom, mode: "lines", name: "MoM%", yaxis: "y2", line: {color: "#d49610", width: 1.5}},
+    {x: months, y: yoy, mode: "lines", name: "YoY%", yaxis: "y2", line: {color: "#34b87a", width: 1.5}},
+    {x: sigX, y: sigY, mode: "markers", name: "score=4訊號", marker: {symbol: "triangle-up", size: 11, color: "#e84545"}},
+  ], {
+    title: {text: g + "　月營收動能（成員" + t.n + "家加總）", font: {size: 14}},
+    yaxis: {title: {text: "營收(億)", font: {size: 11}}},
+    yaxis2: {title: {text: "%", font: {size: 11}}, overlaying: "y", side: "right",
+             zeroline: true, zerolinecolor: "rgba(212,221,232,.25)"},
+    hovermode: "x unified",
+    paper_bgcolor: "#0c1118", plot_bgcolor: "#131c27", font: {color: "#d4dde8"},
+    legend: {orientation: "h", y: 1.12, font: {size: 11}},
+    margin: {t: 60, b: 40},
+  }, {responsive: true});
+  const rows = (t.top5 || []).map(function(m) {
+    const link = (DATA.company_history && DATA.company_history["台|" + m[0]])
+      ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + m[0] + "')\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + m[0] + " " + m[1] + "</a>"
+      : m[0] + " " + m[1];
+    return {"成員": link, "占題材營收%": m[2] === null ? "—" : m[2],
+            "最新月營收(億)": m[3] === null ? "—" : m[3], "最新月YoY%": m[4] === null ? "—" : m[4]};
+  });
+  buildTable(document.getElementById("revmomMembers"), [
+    {key: "成員", label: "前5大營收成員"},
+    {key: "占題材營收%", label: "占題材營收%(12月平均)", numeric: true},
+    {key: "最新月營收(億)", label: "最新月營收(億)", numeric: true},
+    {key: "最新月YoY%", label: "最新月YoY%", numeric: true},
+  ], rows);
+}
+
+function jumpToRevmom(g) {
+  showTab(2);
+  const sel = document.getElementById("revmomTheme");
+  if (sel) { sel.value = g; renderRevmomChart(); }
+  const el = document.getElementById("revmomChart");
+  if (el) el.scrollIntoView({behavior: "smooth", block: "center"});
+}
+
 function init() {
   document.getElementById("latestDate").textContent = DATA.latest_date;
   if (DATA.previous_date) {
@@ -3554,6 +3809,18 @@ function init() {
   initSupplyChain();
   renderRadar();
   renderSignalTab();
+  const tmThemes = (DATA.theme_momentum || {}).themes || {};
+  const tmSel = document.getElementById("revmomTheme");
+  Object.keys(tmThemes).sort(function(a, b) {
+    return (tmThemes[b].score - tmThemes[a].score) || a.localeCompare(b);
+  }).forEach(function(g) {
+    const o = document.createElement("option");
+    o.value = g;
+    o.textContent = g + (tmThemes[g].score === 4 ? " ▲" : "");
+    tmSel.appendChild(o);
+  });
+  if (tmSel.options.length) renderRevmomChart();
+  renderRevmomTab();
   if (DATA.company_list.length) renderCompanyHistory();
   initResonance();
   renderHealthBar();

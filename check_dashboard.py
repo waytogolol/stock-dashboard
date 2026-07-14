@@ -22,7 +22,7 @@ js = "\n".join(scripts)
 # ① 必要鍵
 REQUIRED = ["snapshot_dates", "theme_history", "theme_pivot_all", "signal_current",
             "micro_current", "catchup_radar", "chip", "company_history", "market_tier",
-            "health", "latest_date", "industry_chains"]
+            "health", "latest_date", "industry_chains", "theme_momentum"]
 for k in REQUIRED:
     v = data.get(k)
     if v is None or (hasattr(v, "__len__") and len(v) == 0):
@@ -47,6 +47,14 @@ for code, rec in list(data.get("chip", {}).items())[:100000]:
 sd = data.get("snapshot_dates", [])
 if sd and data.get("latest_date") != sd[-1]:
     FAIL.append(f"latest_date({data.get('latest_date')}) != snapshot_dates末位({sd[-1]})")
+tmm = data.get("theme_momentum", {}).get("themes", {})
+for g, t in tmm.items():
+    if not (len(t["months"]) == len(t["rev"]) == len(t["mom"]) == len(t["yoy"]) == len(t["sig"])):
+        FAIL.append(f"theme_momentum {g} 序列長度不一致")
+    if not (0 <= t["score"] <= 4):
+        FAIL.append(f"theme_momentum {g} score={t['score']} 超出0-4")
+    if len(t.get("top5", [])) == 0:
+        WARN.append(f"theme_momentum {g} top5成員為空")
 
 # ③ JS 語法
 try:
