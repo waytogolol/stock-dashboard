@@ -230,6 +230,12 @@ def build_signal_lines(name_map):
         safe_theme = h["theme"].translate(_BAD_CHARS)
         add_group(f"微題材_{safe_theme}",
                   [(c, h["theme"]) for c in h["members"]], "微題材脈衝")
+    # 題材月營收動能score=4(2026-07-15加,使用者要求):成員=前5大營收(占題材金額中位97%),
+    # 回測口徑=訊號月15號進場持有60交易日,倉位=×大盤態勢係數,詳dashboard進場訊號頁
+    for h in sig.get("revmom_hits", []):
+        safe_theme = h["theme"].translate(_BAD_CHARS)
+        add_group(f"月營收訊號_{safe_theme}",
+                  [(c, h["theme"]) for c in h["top5"]], "題材月營收動能(前5大營收)")
     add_group("補漲雷達候選",
               [(h["code"], h["theme"]) for h in sig.get("catchup_hits", [])], "補漲雷達A/B級")
     add_group("籌碼位階確認",

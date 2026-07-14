@@ -1120,12 +1120,26 @@ def build():
         _rank_map = dict(zip(_rk_latest.code, _rk_latest["rank"]))
         chip_hits = [code for code, v in chip.items()
                     if v.get("f", -1) >= 80 and _rank_map.get(code, 0) > 50]
+        # 題材月營收動能score=4(容忍落後全域asof一個月,與儀表板觸發表同口徑),成員=前5大營收
+        _tm = data.get("theme_momentum", {})
+        _tm_asof = _tm.get("asof")
+
+        def _ym_diff(a, b):
+            return (int(a[:4]) - int(b[:4])) * 12 + int(a[5:7]) - int(b[5:7])
+
+        revmom_hits = []
+        if _tm_asof:
+            for _g, _t in (_tm.get("themes") or {}).items():
+                if _t["score"] == 4 and _ym_diff(_tm_asof, _t["months"][-1]) <= 1:
+                    revmom_hits.append({"theme": _g, "top5": [m[0] for m in _t["top5"]]})
         with open("signals_export.json", "w", encoding="utf-8") as f:
             json.dump({"rule_hits": rule_hits, "micro_hits": micro_hits,
                       "catchup_hits": catchup_hits, "chip_hits": chip_hits,
+                      "revmom_hits": revmom_hits,
                       "snapshot_date": data.get("latest_date")}, f, ensure_ascii=False)
         print(f"訊號摘要已匯出 signals_export.json "
-              f"(規則{len(rule_hits)}/微題材{len(micro_hits)}/補漲{len(catchup_hits)}/籌碼{len(chip_hits)})")
+              f"(規則{len(rule_hits)}/微題材{len(micro_hits)}/補漲{len(catchup_hits)}/籌碼{len(chip_hits)}"
+              f"/月營收{len(revmom_hits)})")
     except Exception as e:
         print(f"訊號摘要匯出失敗(不影響dashboard): {e}")
 
