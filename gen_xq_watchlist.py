@@ -240,6 +240,10 @@ def build_signal_lines(name_map):
               [(h["code"], h["theme"]) for h in sig.get("catchup_hits", [])], "補漲雷達A/B級")
     add_group("籌碼位階確認",
               [(c, "") for c in sig.get("chip_hits", [])], "外資位階>=80(排名>50)")
+    # 處置股觀察(2026-07-16加):處置中非毒格全列(盯盤用);V4=第3處置日尾盤買/V5=倒數第3日/
+    # 出關日開盤出,行動日與加分項見dashboard進場訊號頁「處置股觀察」
+    add_group("處置股觀察",
+              [(h["code"], "") for h in sig.get("dispo_hits", [])], "處置流動性凍結週期")
 
     return lines, rows
 

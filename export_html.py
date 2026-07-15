@@ -1039,6 +1039,94 @@ def build():
         print(f"題材營收動能未產生: {e}")
         data["theme_momentum"] = {"asof": None, "themes": {}}
 
+    # ---- 處置股觀察(2026-07-16上線;回測=build_disposition_event.py,bootstrap CI[+2.30,+4.91]p<1e-4) ----
+    # 口徑: V4=第3處置日尾盤買 / V5=倒數第3日尾盤買(前段跌更佳) / 出場=出關日開盤(出關起連三日負)
+    # 未來交易日以平日近似(遇休市順延,誤差1-2日屬正常),前端依當天日期高亮行動列
+    try:
+        _c5 = sqlite3.connect(DB_PATH)
+        _dsp = pd.read_sql("SELECT * FROM disposition", _c5)
+        for _cc in ("start_date", "end_date"):
+            _dsp[_cc] = pd.to_datetime(_dsp[_cc], errors="coerce")
+        _dsp = _dsp.dropna(subset=["start_date", "end_date"])
+        _today5 = pd.Timestamp.today().normalize()
+        _act = _dsp[_dsp.end_date >= _today5 - pd.Timedelta(days=7)].copy()
+        _cal5 = pd.to_datetime(pd.read_sql(
+            "SELECT DISTINCT date FROM fm_daily_price ORDER BY date", _c5)["date"]).tolist()
+        _dsp_rows = []
+        if len(_act) and _cal5:
+            _codes5 = sorted(_act.code.unique())
+            _px5 = pd.read_sql(
+                "SELECT code, date, close, money FROM fm_daily_price WHERE code IN (%s)"
+                % ",".join("?" * len(_codes5)), _c5, params=_codes5)
+            _px5["date"] = pd.to_datetime(_px5.date)
+            _pxmap = {c: g.sort_values("date") for c, g in _px5.groupby("code")}
+            _cls5 = classification[classification["country"] == "台"][["code", "main_group"]] \
+                .drop_duplicates("code").set_index("code")["main_group"].to_dict()
+            _nm5 = (rankings[rankings["country"] == "台"].drop_duplicates("code", keep="last")
+                    .set_index("code")["中文名稱"].to_dict())
+
+            def _next_tdays(base, n):
+                """base之後第n個交易日:日曆內用日曆,超出用平日近似"""
+                fut = [d for d in _cal5 if d > base]
+                if len(fut) >= n:
+                    return fut[n - 1]
+                d, left = (_cal5[-1] if _cal5[-1] > base else base), n - len(fut)
+                while left > 0:
+                    d += pd.Timedelta(days=1)
+                    if d.weekday() < 5:
+                        left -= 1
+                return d
+
+            for _, _e in _act.iterrows():
+                _sidx = [d for d in _cal5 if d >= _e.start_date]
+                if not _sidx:
+                    continue
+                _s0 = _sidx[0]
+                _inwin = [d for d in _cal5 if _e.start_date <= d <= _e.end_date]
+                _seq = len(_inwin)  # 資料日曆內已走的處置日數
+                _v4d = _next_tdays(_s0, 2) if _s0 in _cal5 else _next_tdays(_e.start_date, 3)
+                # 末日=處置迄日(官方公告含順延);倒數第3日/出關日用近似
+                _endd = _e.end_date
+                _v5d = _endd
+                _cnt = 0
+                _dv5 = _endd
+                while _cnt < 2:  # 末日往前退2個平日=倒數第3日(近似)
+                    _dv5 -= pd.Timedelta(days=1)
+                    if _dv5.weekday() < 5:
+                        _cnt += 1
+                _exitd = _endd + pd.Timedelta(days=1)
+                while _exitd.weekday() >= 5:
+                    _exitd += pd.Timedelta(days=1)
+                _g5 = _pxmap.get(_e.code)
+                _pre, _tv3, _last, _cap = None, None, None, None
+                if _g5 is not None and len(_g5):
+                    _w = _g5[_g5.date >= _s0]
+                    _b4 = _g5[_g5.date < _s0].tail(20)
+                    if len(_b4) >= 5:
+                        _cap = round(float(_b4.money.mean()) / 1e8, 1)  # 處置前20日均成交值=胃納量
+                    if len(_w) and _w.close.iloc[0] > 0:
+                        _pre = round(float(_w.close.iloc[-1] / _w.close.iloc[0] - 1) * 100, 1)
+                        if len(_w) >= 3 and _w.money.iloc[2] > 0:
+                            _tv3 = round(float(_w.money.iloc[2]) / 1e8, 2)
+                        _last = _w.date.iloc[-1].strftime("%Y-%m-%d")
+                _poison = "人工管制" in str(_e.reason)
+                _dsp_rows.append({
+                    "code": _e.code, "name": _nm5.get(_e.code, ""),
+                    "mkt": _e.market, "cum": int(_e.cum_count or 1), "mins": _e.match_min,
+                    "theme": _cls5.get(_e.code), "poison": _poison,
+                    "start": _e.start_date.strftime("%Y-%m-%d"), "end": _endd.strftime("%Y-%m-%d"),
+                    "seq": _seq, "pre": _pre, "tv3": _tv3, "cap": _cap, "px_asof": _last,
+                    "v4d": _v4d.strftime("%Y-%m-%d"), "v5d": _dv5.strftime("%Y-%m-%d"),
+                    "exitd": _exitd.strftime("%Y-%m-%d"),
+                })
+        _c5.close()
+        data["disposition"] = {"asof": _cal5[-1].strftime("%Y-%m-%d") if _cal5 else None,
+                               "rows": _dsp_rows}
+        print(f"處置股觀察: {len(_dsp_rows)}檔在窗(價格日曆至{data['disposition']['asof']})")
+    except Exception as e:
+        print(f"處置股觀察未產生: {e}")
+        data["disposition"] = {"asof": None, "rows": []}
+
     # 資料健康狀態列：各資料源最新日期+新鮮度(門檻依各源的正常更新節奏)
     try:
         from datetime import date as _date
@@ -1088,6 +1176,10 @@ def build():
         else:
             health.append(_item("季財報(官方)", None, 0, 0, "每季報後"))
         health += [
+            _item("日價(FinMind)", _q("SELECT MAX(date) FROM fm_daily_price"), 9, 16,
+                  "每週(fetch_daily_price增量)"),
+            _item("處置表", _q("SELECT MAX(announce_date) FROM disposition"), 12, 30,
+                  "每週(fetch_disposition)"),
             _item("PB估值(官方)", _q("SELECT MAX(updated) FROM tw_valuation"), 40, 80, "每月"),
             _item("五國基本面(yf)", _q("SELECT MAX(updated) FROM fundamentals"), 100, 150, "每季"),
             _item("微題材毛利", _q("SELECT MAX(updated) FROM margin_history"), 100, 150, "每季"),
@@ -1132,10 +1224,15 @@ def build():
             for _g, _t in (_tm.get("themes") or {}).items():
                 if _t["score"] == 4 and _ym_diff(_tm_asof, _t["months"][-1]) <= 1:
                     revmom_hits.append({"theme": _g, "top5": [m[0] for m in _t["top5"]]})
+        # 處置股觀察組(處置中非毒格,排除已出關;XQ盯盤用,行動日見儀表板)
+        _t6 = pd.Timestamp.today().strftime("%Y-%m-%d")
+        dispo_hits = [{"code": r["code"], "v4d": r["v4d"], "v5d": r["v5d"], "exitd": r["exitd"]}
+                      for r in data.get("disposition", {}).get("rows", [])
+                      if not r.get("poison") and r["end"] >= _t6]
         with open("signals_export.json", "w", encoding="utf-8") as f:
             json.dump({"rule_hits": rule_hits, "micro_hits": micro_hits,
                       "catchup_hits": catchup_hits, "chip_hits": chip_hits,
-                      "revmom_hits": revmom_hits,
+                      "revmom_hits": revmom_hits, "dispo_hits": dispo_hits,
                       "snapshot_date": data.get("latest_date")}, f, ensure_ascii=False)
         print(f"訊號摘要已匯出 signals_export.json "
               f"(規則{len(rule_hits)}/微題材{len(micro_hits)}/補漲{len(catchup_hits)}/籌碼{len(chip_hits)}"
@@ -1476,6 +1573,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 }
 .view-btn:hover { background: var(--sf2); color: var(--tx); }
 .view-btn.active { background: var(--ac-bg); border-color: var(--ac); color: var(--ac); font-weight: 600; }
+tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
 .chain-stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; align-items: start; }
 .stage-col { background: var(--sf2); border: 1px solid var(--bd); border-radius: var(--r); padding: 10px; }
 .stage-head {
@@ -1750,6 +1848,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
     <button class="view-btn" id="sigViewMicroBtn" onclick="switchSigView('micro')">微題材脈衝雷達</button>
     <button class="view-btn" id="sigViewCatchupBtn" onclick="switchSigView('catchup')">補漲雷達</button>
     <button class="view-btn" id="sigViewRevmomBtn" onclick="switchSigView('revmom')">題材營收動能</button>
+    <button class="view-btn" id="sigViewDispoBtn" onclick="switchSigView('dispo')">處置股觀察</button>
   </div>
   <div id="sigMacroView">
   <h3 class="sec-title">檢查清單規則（源自記憶體2025/9案例研究，勿刪）</h3>
@@ -1812,6 +1911,27 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   <h3 class="sec-title">持有中訊號</h3>
   <div class="hint">回測口徑＝訊號月15號進場、持有60個交易日(約3個月)；到期日為近似值(進場+87日曆天)。訊號月15號尚未到＝「等進場」。</div>
   <div class="scroll-box"><table id="revmomHoldTable"></table></div>
+  </div>
+
+  <div id="sigDispoView" style="display:none">
+  <h3 class="sec-title">處置股觀察——流動性凍結週期策略（2026-07-16上線·live驗證中）</h3>
+  <div class="rule-card">
+    <div class="rule-item">機制：處置＝監管製造的可預測流動性凍結（分盤撮合＋預收全額款券趕走投機資金→公告衝擊跌），期滿前資金搶跑回流。逐日解剖(~1,890事件)：<b>公告首日−1.87%→中段築底→倒數第2日+1.43%(全週期最強日)→出關起連三日負</b>。「出關行情」是迷思——出關日進場的人是本策略的出場流動性。</div>
+    <div class="rule-item">兩個進場形態(皆<b>尾盤收盤買</b>)：<b>V4＝第3個處置日</b>買、抱全段(~8交易日，淨中位+3.78%/勝率62%)；<b>V5＝倒數第3日</b>買、搶跑段(~4交易日，前段一直跌組+4.14%/66%——前段已大漲的別買，出關後是50/50肥尾樂透)。<b>出場鐵律＝出關日開盤，不戀棧</b>。</div>
+    <div class="rule-item">加分項(劑量單調)：<b>20分鐘分盤</b>(第2次處置)+6.96%/71% &gt; 5分鐘+2.26%；<b>題材成員</b>+6.88%/70%(名單有事後偏差,幅度打折看)；公告衝擊跌越深越好。<b>⚠避開</b>：「人工管制撮合」類(−4.71%/38%)、第3日成交值&lt;0.3億的小票、前段已漲&gt;10%的強勢票。</div>
+    <div class="rule-item">選件分層(回測V4淨額,倉位大小參考——T1給大份/T4給小份,取捨用先到先選+並發上限5)：
+      <table style="margin:6px 0 2px">
+        <tr><th>Tier</th><th>條件</th><th>淨中位</th><th>勝率</th><th>月均</th></tr>
+        <tr><td><b>T1</b></td><td style="text-align:left">題材成員∩20分盤</td><td><b>+8.77%</b></td><td>76%</td><td>3.1件</td></tr>
+        <tr><td>T2</td><td style="text-align:left">題材成員</td><td>+5.50%</td><td>66%</td><td>3.9件</td></tr>
+        <tr><td>T3</td><td style="text-align:left">20分盤</td><td>+5.63%</td><td>67%</td><td>3.7件</td></tr>
+        <tr><td>T4</td><td style="text-align:left">其餘</td><td>+1.53%</td><td>56%</td><td>9.2件</td></tr>
+      </table>
+    (題材成員欄有事後名單偏差,幅度打折看;下表「Tier」欄=每檔自動判定)。<b>胃納量梯度(2026-07-16補測)</b>：處置前20日均成交值越大效果越好——&lt;0.5億+0.70%/55%→0.5-2億+2.41%→2-10億+4.65%→<b>&gt;10億+6.76%/71%</b>；胃納≥2億×T1=+8.83%/78%=實戰甜蜜格(被凍結趕走的投機資金越多,回流越猛;大票可放大部位,小票本來就該跳過)。</div>
+    <div class="rule-item" style="color:var(--tx3)">回測(2019-2026,1,878事件,扣0.45%成本)：扣TWII超額八年全正(含2022熊市)；月群bootstrap CI95=[+2.30,+4.91] p&lt;0.0001；2026年反而史上最肥(擁擠化指紋不存在,預收款券+分盤=結構性護城河)。載具建議：並發上限5檔、先到先選、tier調倉位(題材∩20分盤給大份)。處置期間買賣皆需預收全額款券、5/20分鐘才撮合一次——掛單用限價、部位≤當日成交值1%。未來行動日以平日近似，遇休市順延1-2日屬正常，以XQ/券商公告為準。詳research_panic_liquidity.html。</div>
+  </div>
+  <div class="hint" id="dispoAsof" style="font-weight:600"></div>
+  <div class="scroll-box"><table id="dispoNowTable"></table></div>
   </div>
 </div>
 
@@ -3016,7 +3136,7 @@ function renderBanner() {
 
 // ── 進場訊號頁籤 ──────────────────────────────────────────────────────
 function switchSigView(v) {
-  ["Macro", "Micro", "Catchup", "Revmom"].forEach(function(k) {
+  ["Macro", "Micro", "Catchup", "Revmom", "Dispo"].forEach(function(k) {
     const on = v === k.toLowerCase();
     document.getElementById("sigView" + k + "Btn").classList.toggle("active", on);
     document.getElementById("sig" + k + "View").style.display = on ? "" : "none";
@@ -3748,6 +3868,67 @@ function renderRevmomTab() {
   ], hold);
 }
 
+// ── 處置股觀察(2026-07-16上線) ───────────────────────────────
+function renderDispoTab() {
+  const dp = DATA.disposition || {};
+  const el = document.getElementById("dispoNowTable");
+  if (!el) return;
+  const now = new Date();
+  const t = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" +
+            String(now.getDate()).padStart(2, "0");
+  let nAction = 0;
+  const rows = (dp.rows || []).map(function(r) {
+    let act, actRank;
+    if (r.poison) { act = "⚠避開（人工管制類，回測−4.7%/38%）"; actRank = 9; }
+    else if (t > r.exitd) { act = "已出關（" + r.exitd + " 開盤=出場點）"; actRank = 8; }
+    else if (t === r.exitd) { act = "⏰ 今日開盤出場（出關日）"; actRank = 0; }
+    else if (t === r.end) { act = "⏰ 持有者：明日（" + r.exitd + "）開盤出場"; actRank = 1; }
+    else if (t === r.v5d) { act = "🔔 今日尾盤＝V5買點（出關前倒數第3日）"; actRank = 0; }
+    else if (t === r.v4d) { act = "🔔 今日尾盤＝V4買點（第3處置日）"; actRank = 0; }
+    else if (t < r.v4d) { act = "等V4買點 " + r.v4d; actRank = 3; }
+    else if (t < r.v5d) { act = "V5買點 " + r.v5d + "｜持有者抱至出關"; actRank = 2; }
+    else { act = "持有至出關 " + r.exitd + " 開盤"; actRank = 2; }
+    if (actRank <= 1 && !r.poison) nAction++;
+    const nm = r.code + " " + (r.name || "");
+    const link = (DATA.company_history && DATA.company_history["台|" + r.code])
+      ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + r.code + "');showTab(2)\"" +
+        " style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + nm + "</a>"
+      : nm;
+    let warn = [];
+    if (r.tv3 !== null && r.tv3 < 0.3) warn.push("⚠量小" + r.tv3 + "億");
+    if (r.pre !== null && r.pre > 10) warn.push("⚠前段已漲(樂透格)");
+    const tier = (r.theme && r.mins === "20") ? 1 : (r.theme ? 2 : (r.mins === "20" ? 3 : 4));
+    return {
+      "股票": link, "_c": r.code,
+      "Tier": "T" + tier, "_tier": tier,
+      "題材": r.theme ? themeLink(r.theme) : "—", "_th": r.theme || "",
+      "處置": r.cum + "次/" + r.mins + "分盤" + (r.mkt === "上櫃" ? "·櫃" : ""),
+      "_sev": (r.mins === "20" ? 1 : 0),
+      "期間": r.start.slice(5) + "~" + r.end.slice(5) + "（已走" + r.seq + "日）",
+      "前段%": r.pre === null ? "—" : ((r.pre > 0 ? "+" : "") + r.pre + "%"), "_pre": r.pre === null ? 0 : r.pre,
+      "胃納": r.cap === null || r.cap === undefined ? "—" : r.cap + "億", "_cap": r.cap || 0,
+      "第3日值": r.tv3 === null ? "—" : r.tv3 + "億", "_tv": r.tv3 === null ? 0 : r.tv3,
+      "行動": act + (warn.length ? "　" + warn.join(" ") : ""), "_ar": actRank,
+    };
+  });
+  el._sortState = {colIndex: 8, dir: 1};
+  buildTable(el, [
+    {key: "股票", label: "股票", sortKey: "_c"},
+    {key: "Tier", label: "Tier", sortKey: "_tier", numeric: true},
+    {key: "題材", label: "題材(加分項)", sortKey: "_th"},
+    {key: "處置", label: "第N次/分盤", sortKey: "_sev", numeric: true},
+    {key: "期間", label: "處置期間"},
+    {key: "前段%", label: "前段報酬", sortKey: "_pre", numeric: true},
+    {key: "胃納", label: "胃納(前20日均值)", sortKey: "_cap", numeric: true},
+    {key: "第3日值", label: "第3日成交值", sortKey: "_tv", numeric: true},
+    {key: "行動", label: "行動（依今日日期自動判定）", sortKey: "_ar", numeric: true},
+  ], rows, function(r) { return r._ar === 0 ? "hl-row" : null; });
+  document.getElementById("dispoAsof").textContent =
+    "價格資料至 " + (dp.asof || "—") + "｜視窗內 " + rows.length + " 檔｜行動日為平日近似，遇休市順延，以官方公告為準";
+  const btn = document.getElementById("sigViewDispoBtn");
+  if (btn && nAction) btn.innerHTML = "處置股觀察 🔔" + nAction;
+}
+
 function renderRevmomChart() {
   const tm = DATA.theme_momentum || {};
   const g = document.getElementById("revmomTheme").value;
@@ -3865,6 +4046,7 @@ function init() {
   });
   if (tmSel.options.length) renderRevmomChart();
   renderRevmomTab();
+  renderDispoTab();
   if (DATA.company_list.length) renderCompanyHistory();
   initResonance();
   renderHealthBar();
