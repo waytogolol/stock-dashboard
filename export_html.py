@@ -1516,21 +1516,70 @@ def build():
             return "\n".join(out)
 
         _notes = []
+        _notes_raw = []  # (file, title, raw_text) 供下面提及個股交叉索引use，不進data
         for _f in sorted(_glob.glob("法說會筆記/*.md"), reverse=True):
             _bn = _f.replace("\\", "/").split("/")[-1]
             if _bn.startswith("_"):
                 continue
             _txt = open(_f, encoding="utf-8").read()
             _mt = _re.search(r"^# (.+)$", _txt, _re.M)
-            _notes.append({"file": _bn,
-                           "title": _mt.group(1).replace("法說會筆記：", "") if _mt else _bn[:-3],
-                           "html": _md2html(_txt)})
+            _title = _mt.group(1).replace("法說會筆記：", "") if _mt else _bn[:-3]
+            _notes.append({"file": _bn, "title": _title, "html": _md2html(_txt)})
+            _notes_raw.append((_bn, _title, _txt))
         data["conf_notes"] = _notes
         if _notes:
             print(f"法說會筆記嵌入 {len(_notes)} 篇")
     except Exception as e:
         _sec_fail("法說會筆記嵌入失敗", e)
         data["conf_notes"] = []
+        _notes_raw = []
+
+    # ---- 法說會提及/影射個股 交叉索引(2026-07-20使用者提案: 台積電暗示聯電成熟製程隔日跌停案例) ----
+    # 筆記內以 "- 代碼|國別|公司名|原因或引述摘要" 標記(人工判斷含隱晦影射,非逐字比對),
+    # 台股標的自動查price DB算T+1/T+5反應；用於公司歷史頁「曾被法說會提及」區塊。
+    try:
+        _mention_re = _re.compile(r"^-\s*(\d{2,6})\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*(.+?)\s*$", _re.M)
+        _c6 = sqlite3.connect(DB_PATH)
+        _px6 = pd.read_sql("SELECT code, date, close FROM fm_daily_price WHERE close > 0", _c6)
+        _c6.close()
+        _px6["date"] = pd.to_datetime(_px6.date)
+        _pxmap6 = {c: g.sort_values("date").reset_index(drop=True) for c, g in _px6.groupby("code")}
+
+        def _mention_reaction(code, base_date):
+            g = _pxmap6.get(code)
+            if g is None or not len(g):
+                return {}
+            fut = g[g.date >= base_date].reset_index(drop=True)
+            if not len(fut):
+                return {}
+            c0 = float(fut.close.iloc[0])
+            out = {"d0": fut.date.iloc[0].strftime("%Y-%m-%d")}
+            if len(fut) > 1:
+                out["r1"] = round((float(fut.close.iloc[1]) / c0 - 1) * 100, 1)
+            if len(fut) > 5:
+                out["r5"] = round((float(fut.close.iloc[5]) / c0 - 1) * 100, 1)
+            return out
+
+        _mentions = {}
+        for _bn, _title, _txt in _notes_raw:
+            _fdate = _bn[:8]
+            try:
+                _bd = pd.Timestamp(f"{_fdate[:4]}-{_fdate[4:6]}-{_fdate[6:8]}")
+            except ValueError:
+                continue
+            for _code, _ctry, _nm, _reason in _mention_re.findall(_txt):
+                _code, _ctry, _nm, _reason = _code.strip(), _ctry.strip(), _nm.strip(), _reason.strip()
+                _rec = {"from_title": _title, "from_file": _bn, "date": _fdate,
+                        "name": _nm, "reason": _reason}
+                if _ctry == "台":
+                    _rec.update(_mention_reaction(_code, _bd))
+                _mentions.setdefault(_ctry + "|" + _code, []).append(_rec)
+        data["company_mentions"] = _mentions
+        if _mentions:
+            print(f"法說會提及交叉索引: {sum(len(v) for v in _mentions.values())}筆/{len(_mentions)}檔")
+    except Exception as e:
+        _sec_fail("法說會提及交叉索引失敗", e)
+        data["company_mentions"] = {}
 
     # 精簡訊號摘要匯出(供gen_xq_watchlist.py讀取,不含完整payload,避免重算)
     try:
@@ -1859,6 +1908,7 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 }
 
 /* ── 法說會筆記 ───────────────────────────────────────────────── */
+#confNotesPanel { max-height: 580px; overflow-y: auto; padding: 2px 4px; }
 .conf-note { border: 1px solid var(--bd); border-radius: 8px; padding: 8px 12px; margin: 8px 0; background: var(--sf); }
 .conf-note summary { cursor: pointer; }
 .cn-body table { border-collapse: collapse; font-size: 12px; margin: 8px 0; }
@@ -2112,7 +2162,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div id="expoWatchPanel"></div>
   <h4>📝 重大法說會筆記</h4>
   <div class="hint">重大法說會隔天請Claude「補XX法說筆記」→ 存入 法說會筆記/*.md → 重跑 export_html.py 即上板。
-  結構：市場在意(共識vs實際=預期差) / 董座發言原文 / 供應鏈題材連動 / 會後價格驗收 / 操作含義。</div>
+  結構：市場在意(共識vs實際=預期差) / 董座發言原文 / 供應鏈題材連動 / 會後價格驗收 / 操作含義 / 與上次法說會的差異。</div>
   <div id="confNotesPanel"></div>
   <h4>美股財報 <span id="usEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
   <div class="scroll-box"><table id="usEarningsTable"></table></div>
@@ -2986,8 +3036,26 @@ function renderCompanyInfo(key) {
       html += "<div class=\"rule-item\" style=\"font-size:12px;line-height:2\">" + st + "：" + txt + "</div>";
     });
   });
+  const mentions = (DATA.company_mentions || {})[key] || [];
+  if (mentions.length) {
+    html += "<div class=\"rule-item\" style=\"margin-top:8px\"><b>📝 曾被法說會提及／影射</b></div>";
+    mentions.slice().reverse().forEach(function(m) {
+      const rx = (m.r1 !== undefined || m.r5 !== undefined)
+        ? " → T+1 " + fmtPct(m.r1) + " / T+5 " + fmtPct(m.r5)
+        : "";
+      html += "<div class=\"rule-item\" style=\"font-size:12px;line-height:1.7\">" + m.date + " " +
+        "<a href=\"javascript:void(0)\" onclick=\"jumpToConfNote('" + m.from_file + "')\" " +
+        "style=\"color:var(--tx2);text-decoration:none;border-bottom:1px dotted var(--tx3)\">《" + m.from_title + "》</a>" +
+        "：" + m.reason + "<span style=\"color:var(--tx3)\">" + rx + "</span></div>";
+    });
+  }
   html += "</div>";
   el.innerHTML = html;
+}
+
+function fmtPct(v) {
+  if (v === undefined || v === null) return "—";
+  return (v > 0 ? "+" : "") + v.toFixed(1) + "%";
 }
 
 function onHistModeChange() {
@@ -3559,9 +3627,19 @@ function renderConfNotes() {
     return;
   }
   el.innerHTML = notes.map(function(n, i) {
-    return "<details class=\"conf-note\"" + (i === 0 ? " open" : "") + "><summary><b>" + n.title +
-      "</b></summary><div class=\"cn-body\">" + n.html + "</div></details>";
+    return "<details class=\"conf-note\" id=\"confNote_" + n.file + "\"" + (i === 0 ? " open" : "") +
+      "><summary><b>" + n.title + "</b></summary><div class=\"cn-body\">" + n.html + "</div></details>";
   }).join("");
+}
+
+function jumpToConfNote(file) {
+  showTab(3);
+  setTimeout(function() {
+    const d = document.getElementById("confNote_" + file);
+    if (!d) return;
+    d.open = true;
+    d.scrollIntoView({behavior: "smooth", block: "start"});
+  }, 50);
 }
 
 // ── 大盤溫度計(2026-07-19上板): 市場層五燈+頁頂燈條 ─────────────────
