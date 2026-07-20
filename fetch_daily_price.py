@@ -33,6 +33,13 @@ def universe():
               "select distinct code from inst_flow"]:
         u |= set(r[0] for r in con.execute(q))
     con.close()
+    # 2026-07-19: 併入全市場名單補上櫃缺口399檔(跌停廣度分層考卷需要);
+    # 興櫃不納(無漲跌幅限制,漲跌停口徑不適用);inst_flow只有上市造成的偏差自此修正
+    import csv
+    with open("tw_all_listed.csv", encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            if row["market"] in ("上市", "上櫃"):
+                u.add(row["code"])
     # 只留4位純數字=個股(排除00xxxA債券ETF等303檔,漲停規則不同也非題材成員)
     return sorted(c for c in u if isinstance(c, str) and re.fullmatch(r"\d{4}", c))
 

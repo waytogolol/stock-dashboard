@@ -149,7 +149,7 @@ for label, sel in [("①score4×有新聞", lambda c: (nh.score == 4) & nh[c]),
     nh_tbl += f"<tr><th>{label}</th>{cells}</tr>"
 nh_tbl += "</table>"
 
-rdb = sqlite3.connect("research_2022.db")
+rdb = sqlite3.connect("研究報告/research_2022.db")
 names = dict(rdb.execute("SELECT code, name FROM (SELECT code, name, snapshot_date FROM rankings "
                           "WHERE country='台' ORDER BY snapshot_date) GROUP BY code"))
 trades_show = s4.sort_values("entry_day").tail(150)
@@ -196,7 +196,7 @@ prereg = ("2026-07-14判決版(取代凌晨待驗證版):panel修復兩個致命
           "改用FinMind全覆蓋宇宙283檔)後重測,加TWII超額報酬判準+LOTO+cluster bootstrap+季節性複驗+"
           "新聞熱度假說判決。產生器=build_theme_momentum_report.py,panel=build_theme_momentum_v2.py,"
           "驗證=build_theme_momentum_validate.py,詳細=封存/研究_20260714/研究紀錄。")
-build_report("research_theme_momentum.html", "題材月營收動能策略（score=4,60日持有）判決版",
+build_report("研究報告/research_theme_momentum.html", "題材月營收動能策略（score=4,60日持有）判決版",
              prereg, strategies, benchmarks, trades_html, verdicts, limits)
 print("done -> research_theme_momentum.html")
 for s in strategies:

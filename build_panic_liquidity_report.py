@@ -52,6 +52,47 @@ def dispo_daily_profile():
     return order, med, win
 
 
+def v4_v5_dated_curves():
+    """V4/V5單利累積曲線(每筆1單位,依出場日排序,剔人工管制毒格,扣0.45%成本)。
+    v4/v5 panel無日期欄→從disposition+價格重算日期化交易(口徑同原卷)。"""
+    conn = sqlite3.connect("capital_flow.db")
+    disp = pd.read_sql("SELECT * FROM disposition", conn)
+    px = pd.read_sql("SELECT code, date, open, close FROM fm_daily_price ORDER BY code, date", conn)
+    conn.close()
+    px["date"] = pd.to_datetime(px.date)
+    stocks = {c: g.sort_values("date").reset_index(drop=True) for c, g in px.groupby("code")}
+    for c in ("start_date", "end_date"):
+        disp[c] = pd.to_datetime(disp[c], errors="coerce")
+    disp = disp.dropna(subset=["start_date", "end_date"])
+    disp = disp[~disp.reason.astype(str).str.contains("人工管制")]
+    t4, t5 = [], []
+    for _, e in disp.iterrows():
+        g = stocks.get(e.code)
+        if g is None:
+            continue
+        dts = g.date
+        s = np.searchsorted(dts.values, np.datetime64(e.start_date))
+        en = np.searchsorted(dts.values, np.datetime64(e.end_date), side="right") - 1
+        n = len(g)
+        if s >= n or en <= s or en - s > 25 or en - s < 6 or en + 1 >= n:
+            continue
+        c_, o_ = g.close.values, g.open.values
+        if o_[en + 1] <= 0:
+            continue
+        d_exit = dts.iloc[en + 1]
+        if c_[s + 2] > 0:
+            t4.append((d_exit, (o_[en + 1] / c_[s + 2] - 1) * 100 - 0.45))
+        if en - 2 > s and c_[en - 2] > 0:
+            t5.append((d_exit, (o_[en + 1] / c_[en - 2] - 1) * 100 - 0.45))
+
+    def curve(tr):
+        s = pd.DataFrame(tr, columns=["d", "r"]).groupby("d").r.sum().sort_index().cumsum()
+        return s, len(tr)
+    c4, n4 = curve(t4)
+    c5, n5 = curve(t5)
+    return c4, n4, c5, n5
+
+
 def eq_trace(eq, name, color, weekly=True):
     s = eq.resample("W").last().dropna() if weekly else eq
     return {"x": [d.strftime("%Y-%m-%d") for d in s.index], "y": [round(float(v), 4) for v in s.values],
@@ -103,6 +144,24 @@ def main():
                    {"title": "獨立策略單利累積(每筆1單位,Σ淨額%)：c1/c13靠右尾彩券,c4/甜蜜格靠基準率",
                     "yaxis": {"title": "累積淨額%"}}))
 
+    # 圖5: V4 vs V5 單利累積曲線(2026-07-19 V5補章,使用者要求)
+    c4s, n4, c5s, n5 = v4_v5_dated_curves()
+    v5p = pd.read_pickle("tmp_disposition_v5_panel.pkl")
+    v5_all = v5p.v5.dropna()
+    b_dn = v5p[v5p.pre_path <= -5].v5.dropna()
+    b_md = v5p[(v5p.pre_path > -5) & (v5p.pre_path < 5)].v5.dropna()
+    b_up = v5p[v5p.pre_path >= 5].v5.dropna()
+
+    def _tr(s, name, col):
+        w = s.resample("W").last().dropna()
+        return {"x": [d.strftime("%Y-%m-%d") for d in w.index],
+                "y": [round(float(v), 1) for v in w.values], "name": name,
+                "type": "scatter", "mode": "lines", "line": {"color": col, "width": 2}}
+    charts.append(("chart_v5", [_tr(c4s, f"V4 第3日→出關開盤(n={n4:,})", BLUE),
+                                _tr(c5s, f"V5 倒數第3日→出關開盤(n={n5:,})", "#c3a55a")],
+                   {"title": "V4 vs V5 單利累積(每筆1單位,Σ淨額%,剔人工管制毒格,同尺對照)",
+                    "yaxis": {"title": "累積淨額%"}}))
+
     base_layout = {"paper_bgcolor": "#1a1a19", "plot_bgcolor": "#1a1a19",
                    "font": {"color": "#ddd", "family": "Noto Sans TC", "size": 12},
                    "xaxis": {"gridcolor": "#333"}, "yaxis": {"gridcolor": "#333"},
@@ -125,7 +184,7 @@ table{{border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums
 td,th{{border:1px solid #333;padding:5px 12px;text-align:right}} th{{text-align:left;color:#c3c2b7}}
 .note{{color:#8a8878;font-size:12px;line-height:1.7}} .good{{color:{GREEN}}} .bad{{color:{RED}}}
 .hl{{background:#2a2a28}}</style></head><body>
-<h1>恐慌流動性提供研究：漲停・恐慌梯度・處置股（判決版 2026-07-16）</h1>
+<h1>恐慌流動性提供研究：漲停・恐慌梯度・處置股（判決版 2026-07-16・V5補章 07-19）</h1>
 <p class="note">一句話：短線 alpha 不在「追強」而在「接非資訊性的被迫賣壓」——漲停後追買全滅；
 強勢股暴力回檔的尾盤接刀、處置股流動性凍結週期的中段進場，是兩個過驗證的口袋。
 本報告數字全部扣 0.45% 來回成本；產生器 build_panic_liquidity_report.py。</p>
@@ -176,6 +235,24 @@ td,th{{border:1px solid #333;padding:5px 12px;text-align:right}} th{{text-align:
 可信的是單筆分布(中位+3.77%/勝率62%/bootstrap CI[{v4['ci_lo']:+.2f},{v4['ci_hi']:+.2f}])、
 夏普{v4['sharpe']:.2f}、MDD{v4['mdd']:.1f}%(崩盤窗多部位同跌)、曝險{v4['exposure']:.0f}%、單利Σ{v4['simple_sum']:+.0f}%(n={v4['n']:,})。</p>
 
+<h2>V5 出關前搶跑段（倒數第3日尾盤買→出關日開盤出，持~4日；2026-07-19補章）</h2>
+<p class="note">首發判決在研究紀錄20260716-17場「處置分層補測」(tmp_disposition_v5_panel.pkl)，此前只上了儀表板行動欄
+(🔔V5買點鈴)沒進報告——本章補齊。<b>機制</b>：逐日解剖(上圖1)顯示<b>倒數第2日＝全處置週期最強日(+1.43%)</b>，
+搶跑資金在出關前回流；V5就只吃這一段，與V4共用同一個出場點(出關日開盤)，等於V4的「前段截短版」，
+持有~4日較合短打偏好。<b>使用者原始直覺</b>「倒數三天＋前面一直跌」獲數據證實：</p>
+<table>
+<tr><th>V5 分層(前段=首日→倒數4日)</th><th>淨中位</th><th>勝率</th><th>n</th></tr>
+<tr><td>全樣本</td><td class="good">{v5_all.median():+.2f}%</td><td>{(v5_all > 0).mean() * 100:.0f}%</td><td>{len(v5_all):,}</td></tr>
+<tr class="hl"><td>前段一直跌 &lt;−5%（彈簧壓縮）</td><td class="good">{b_dn.median():+.2f}%</td><td>{(b_dn > 0).mean() * 100:.0f}%</td><td>{len(b_dn):,}</td></tr>
+<tr><td>前段盤整 −5~+5%</td><td>{b_md.median():+.2f}%</td><td>{(b_md > 0).mean() * 100:.0f}%</td><td>{len(b_md):,}</td></tr>
+<tr><td>前段已漲 &gt;+5%（避開）</td><td>{b_up.median():+.2f}%</td><td>{(b_up > 0).mean() * 100:.0f}%</td><td>{len(b_up):,}</td></tr>
+</table>
+{chart_html.split(chr(10))[4]}
+<p class="note">曲線口徑＝單利累積(每筆1單位,Σ淨額%,依出場日排序,剔「人工管制」毒格,扣0.45%成本)，兩線同尺同期。
+判讀：V4肉厚(吃全段)、V5短平快(資金週轉率高,單位時間報酬率其實不輸)；<b>兩者同事件高度重疊,不是兩個獨立策略</b>——
+實戰擇一段做,或V4為主、錯過第3日買點的事件用V5補刀。加分項與V4同構：20分盤&gt;5分盤、題材成員、前段跌。
+毒格同樣適用：「人工管制撮合」類V5也是負(−4.7%族),儀表板已自動標⚠。</p>
+
 <h2>恐慌梯度甜蜜格（與XQ條件的關係：c1/c13淺回檔族獨立=死,活的只有深度恐慌族）</h2>
 <table>
 <tr><th>獨立策略(同框架)</th><th>淨中位</th><th>勝率</th><th>n</th><th>與甜蜜格重疊</th><th>判定</th></tr>
@@ -219,7 +296,7 @@ disposition表4,021筆、cb_info 1,799檔+cb_overview 45.7萬筆(2019起)、marg
 tdcc_weekly回補中(2013起)。面板:tmp_limitup_gap_panel/tmp_limitup_pullback_panel/tmp_panic_gradient_panel/
 tmp_disposition_panel+v4+v5/tmp_xq_dipbuy_panel+c4_raw/tmp_panic_sweetspot_events/tmp_panic_converge_results。</p>
 <script>{chart_js}</script></body></html>"""
-    open("research_panic_liquidity.html", "w", encoding="utf-8").write(html)
+    open("研究報告/research_panic_liquidity.html", "w", encoding="utf-8").write(html)
     print(f"報告已產出 research_panic_liquidity.html ({len(html):,} chars, {len(charts)}圖)")
 
 

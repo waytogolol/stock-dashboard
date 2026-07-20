@@ -4,13 +4,15 @@
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 Push-Location $root
-python make_backup.py    # 精簡備份: 排除可重爬大表(inst_flow/margin_flow), 守住GitHub 100MB限制
+python make_backup.py    # 精簡備份: 只留不可重建小表(大表歸冷備zip), 守住GitHub 100MB限制
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "make_backup.py 失敗 (exit $LASTEXITCODE) — 備份中止!" }
 Pop-Location
 Push-Location (Join-Path $root "db_backup")
 try {
     git add capital_flow.db
     git commit --amend -m "backup $(Get-Date -Format yyyy-MM-dd)" | Out-Null
     git push --force origin master
+    if ($LASTEXITCODE -ne 0) { throw "git push 被拒 (exit $LASTEXITCODE) — 備份未上傳, 遠端仍是舊版!" }
     Write-Output "備份完成 -> github.com/waytogolol/stock-db-backup ($(Get-Date -Format yyyy-MM-dd))"
 } finally {
     Pop-Location
