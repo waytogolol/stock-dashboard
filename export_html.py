@@ -12,6 +12,18 @@ import pandas as pd
 DB_PATH = "capital_flow.db"
 OUT_PATH = "dashboard.html"
 
+# 2026-07-20使用者裁示: 個股歷史趨勢圖先不上儀表板(company_history佔payload 57%≈4.4MB);
+# 題材歷史(theme_history)是熱力圖/共振欄的計算原料「必須留」; 產業月營收動能(theme_momentum)不受影響。
+# 要恢復個股歷史: 改False重跑 python export_html.py 即可(內部照算,只是不進payload)。
+SLIM_HISTORY = True
+
+BUILD_FAILS = []  # 各區塊建置失敗收集(2026-07-20健檢: 防「except吞錯→儀表板靜默缺角」,前端頂部banner)
+
+
+def _sec_fail(msg, e):
+    BUILD_FAILS.append(f"{msg}: {type(e).__name__}: {e}")
+    _sec_fail("{msg}", e)
+
 BROAD_GROUPS = {
     "金融", "科技(綜合)", "生技醫藥", "消費(非必需)", "工業", "傳統產業", "傳統消費", "公用事業", "能源",
     "不動產", "電信", "傳統產業/原材料", "電力設備", "控股公司", "航運", "造船", "商社", "商社/建設",
@@ -245,7 +257,7 @@ def build():
         close_lookup = {(r["country"], r["code"], r["snapshot_date"]): r["close"] for _, r in wc.iterrows()}
         print(f"週收盤價載入 {len(close_lookup)} 筆")
     except Exception as e:
-        print(f"週收盤價未載入(可先跑 fetch_prices.py): {e}")
+        _sec_fail("週收盤價未載入(可先跑 fetch_prices.py)", e)
     date_idx = {d: i for i, d in enumerate(all_dates)}
     history_cols = ["snapshot_date", "country", "code", "中文名稱", "rank", "金額億_num", "金額億台幣_num"]
     history = rankings[history_cols].sort_values(["country", "code", "snapshot_date"])
@@ -288,7 +300,7 @@ def build():
                 tch.setdefault(g, {})[c] = [round(float(v), 2) for v in s]
         data_theme_country = tch
     except Exception as e:
-        print(f"題材國別子分數計算失敗: {e}")
+        _sec_fail("題材國別子分數計算失敗", e)
         data_theme_country = {}
 
     def load_earnings_csv(path):
@@ -310,7 +322,7 @@ def build():
         "latest_date": latest_date,
         "previous_date": previous_date,
         "version": version,
-        "theme_country_history": data_theme_country,
+        "theme_country_history": {} if SLIM_HISTORY else data_theme_country,
         "countries": COUNTRIES,
         "snapshot_dates": sorted(rankings["snapshot_date"].unique().tolist()),
         "theme_pivot_all": theme_pivot_all,
@@ -320,8 +332,8 @@ def build():
         "theme_list": sorted(theme_history.keys()),
         "theme_list_thematic": sorted(g for g in theme_history.keys() if g not in BROAD_GROUPS),
         "full_records": full_records,
-        "company_history": company_history,
-        "company_list": sorted(
+        "company_history": {} if SLIM_HISTORY else company_history,
+        "company_list": [] if SLIM_HISTORY else sorted(
             [{"key": k, "label": v["label"]} for k, v in company_history.items()],
             key=lambda x: x["label"],
         ),
@@ -367,7 +379,7 @@ def build():
                 "eps_fwd": round(r["eps_fwd"], 2) if pd.notna(r.get("eps_fwd")) else None,
             }
     except Exception as e:
-        print(f"基本面資料未載入(可先跑 fetch_fundamentals.py): {e}")
+        _sec_fail("基本面資料未載入(可先跑 fetch_fundamentals.py)", e)
 
     # 陸股東財事件標籤(業績預告/快報/調研飆升，fetch_cn_eastmoney.py更新)
     cn_note = {}
@@ -407,7 +419,7 @@ def build():
         if cn_note:
             print(f"陸股東財標籤 {len(cn_note)} 檔")
     except Exception as e:
-        print(f"陸股東財標籤未載入(可先跑 fetch_cn_eastmoney.py): {e}")
+        _sec_fail("陸股東財標籤未載入(可先跑 fetch_cn_eastmoney.py)", e)
 
     # 資本支出(fetch_capex.py每季更新)：卡片擴產標籤 + 錨點客戶資本開支引擎
     def _fmt_b(v):
@@ -452,7 +464,7 @@ def build():
         data["capex_map"] = capex_map
         print(f"capex: 序列{len(capex_map)}檔，擴產/縮減標籤{sum(1 for x in capex_note.values() if x['n'])}檔")
     except Exception as e:
-        print(f"capex未載入(可先跑 fetch_capex.py): {e}")
+        _sec_fail("capex未載入(可先跑 fetch_capex.py)", e)
         data["capex_map"] = {}
 
     # 產業地位描述(取分類表第一筆非空值)
@@ -503,7 +515,7 @@ def build():
         data["supply_links"] = supply_links
         data["supply_last_updated"] = sc.LAST_UPDATED
     except Exception as e:
-        print(f"供應鏈資料載入失敗: {e}")
+        _sec_fail("供應鏈資料載入失敗", e)
         data["supply_links"] = []
         data["supply_last_updated"] = None
 
@@ -605,7 +617,7 @@ def build():
             print(f"⑤型態門檻評估 {len(_pats)} 題材，通過 {sum(1 for v in _pats.values() if v)}")
         except Exception as e:
             _pats = {}
-            print(f"⑤型態門檻未計算(不影響其他): {e}")
+            _sec_fail("⑤型態門檻未計算(不影響其他)", e)
         for c in sig_current:
             c["pat"] = _pats.get(c["theme"])
             if c["n_ok"] == 4:
@@ -642,7 +654,7 @@ def build():
             elif _px < _m4:
                 _tier, _tier_txt = 0.6, "月線下"
         except Exception as e:
-            print(f"大盤態勢未取得(預設月線上): {e}")
+            _sec_fail("大盤態勢未取得(預設月線上)", e)
         data["market_tier"] = {"tier": _tier, "txt": _tier_txt}
 
         _th_hist = {g: [x["熱度分數"] for x in h] for g, h in theme_history.items()}
@@ -668,7 +680,7 @@ def build():
         data["signal_current"] = sig_current
         data["signal_history"] = sig_history
     except Exception as e:
-        print(f"進場訊號計算失敗: {e}")
+        _sec_fail("進場訊號計算失敗", e)
         data["signal_current"] = []
         data["signal_history"] = []
 
@@ -773,7 +785,7 @@ def build():
         data["micro_current"] = micro_current
         data["micro_history"] = micro_hist
     except Exception as e:
-        print(f"微題材雷達計算失敗: {e}")
+        _sec_fail("微題材雷達計算失敗", e)
         data["micro_current"] = []
         data["micro_history"] = []
 
@@ -806,7 +818,7 @@ def build():
         print(f"籌碼位階徽章 {len(chip)} 檔 (資料至 {data['chip_date']})")
     except Exception as e:
         data["chip"] = {}
-        print(f"籌碼徽章未計算(不影響其他): {e}")
+        _sec_fail("籌碼徽章未計算(不影響其他)", e)
 
     # 產業鏈(橫向上中下游)資料
     try:
@@ -846,7 +858,7 @@ def build():
             chain_hist[chain] = vals
         data["chain_history"] = chain_hist
     except Exception as e:
-        print(f"產業鏈資料載入失敗: {e}")
+        _sec_fail("產業鏈資料載入失敗", e)
         data["industry_chains"] = []
         data["industry_chain_list"] = []
         data["chain_history"] = {}
@@ -873,7 +885,7 @@ def build():
             }
         data["company_info"] = comp_info
     except Exception as e:
-        print(f"公司資訊面板資料失敗: {e}")
+        _sec_fail("公司資訊面板資料失敗", e)
         data["company_info"] = {}
 
     # 補漲雷達：題材點火時，篩「尚未點火」且符合研究員邏輯(低PB/營收轉正/低位階)的台股成員
@@ -955,7 +967,7 @@ def build():
         catchup_rows.sort(key=lambda r: (-r["n_tags"], r["pb"] if r["pb"] is not None else 99))
         data["catchup_radar"] = {"themes": sorted(ignited), "rows": catchup_rows[:60]}
     except Exception as e:
-        print(f"補漲雷達計算失敗: {e}")
+        _sec_fail("補漲雷達計算失敗", e)
         data["catchup_radar"] = {"themes": [], "rows": []}
 
     # ---- ⑫題材月營收動能score(2026-07-14上線;凍結研究口徑,正式builder=build_theme_score_topn.py) ----
@@ -1036,7 +1048,7 @@ def build():
         _trig = [g for g, v in tm_themes.items() if v["score"] == 4 and v["months"][-1] == _asof]
         print(f"題材營收動能: {len(tm_themes)}題材, 資料至{_asof}, score=4觸發={_trig}")
     except Exception as e:
-        print(f"題材營收動能未產生: {e}")
+        _sec_fail("題材營收動能未產生", e)
         data["theme_momentum"] = {"asof": None, "themes": {}}
 
     # ---- 處置股觀察(2026-07-16上線;回測=build_disposition_event.py,bootstrap CI[+2.30,+4.91]p<1e-4) ----
@@ -1124,7 +1136,7 @@ def build():
                                "rows": _dsp_rows}
         print(f"處置股觀察: {len(_dsp_rows)}檔在窗(價格日曆至{data['disposition']['asof']})")
     except Exception as e:
-        print(f"處置股觀察未產生: {e}")
+        _sec_fail("處置股觀察未產生", e)
         data["disposition"] = {"asof": None, "rows": []}
 
     # 資料健康狀態列：各資料源最新日期+新鮮度(門檻依各源的正常更新節奏)
@@ -1158,6 +1170,17 @@ def build():
             # FinMind月營收(題材營收動能訊號源):公告月+15天內=正常,>45天=訊號已過期一輪
             _item("FinMind月營收", _q("SELECT MAX(date) FROM fm_month_rev"), 45, 75, "每月10-15號後"),
         ]
+        # 月營收完整度守門(2026-07-19漢唐案例:FinMind收晚申報者有時差→缺29檔→題材卡舊月+score觸發被漏)
+        # 評估月=最新一個「家數>=常態一半」的公告月(避開每月1-10號新cohort剛開的假警報)
+        _mc = conn_h.execute("SELECT date, COUNT(DISTINCT code) FROM fm_month_rev "
+                             "GROUP BY date ORDER BY date DESC LIMIT 14").fetchall()
+        if len(_mc) > 2:
+            _typ = sorted(n for _, n in _mc[1:])[len(_mc[1:]) // 2]
+            _eval = next(((d, n) for d, n in _mc if n >= _typ * 0.5), _mc[0])
+            _ratio = _eval[1] / _typ if _typ else 1
+            health.append({"n": "月營收完整度", "d": f"{_eval[1]}/{_typ}檔({_eval[0][:7]})",
+                           "s": "ok" if _ratio >= 0.95 else ("warn" if _ratio >= 0.85 else "crit"),
+                           "c": "缺漏→python fetch_month_rev_gap.py 後重跑export"})
         ym = _q("SELECT MAX(year_month) FROM tw_monthly_revenue")   # 民國YYYMM
         if ym:
             y, m = int(str(ym)[:-2]) + 1911, int(str(ym)[-2:])
@@ -1180,6 +1203,8 @@ def build():
                   "每週(fetch_daily_price增量)"),
             _item("處置表", _q("SELECT MAX(announce_date) FROM disposition"), 12, 30,
                   "每週(fetch_disposition)"),
+            _item("解質異動", _q("SELECT MAX(digest_date) FROM pledge_moves"), 9, 16,
+                  "每週(fetch_pledge)"),
             _item("PB估值(官方)", _q("SELECT MAX(updated) FROM tw_valuation"), 40, 80, "每月"),
             _item("五國基本面(yf)", _q("SELECT MAX(updated) FROM fundamentals"), 100, 150, "每季"),
             _item("微題材毛利", _q("SELECT MAX(updated) FROM margin_history"), 100, 150, "每季"),
@@ -1189,8 +1214,323 @@ def build():
         conn_h.close()
         data["health"] = health
     except Exception as e:
-        print(f"資料健康列計算失敗: {e}")
+        _sec_fail("資料健康列計算失敗", e)
         data["health"] = []
+
+    # 題材成員速查(2026-07-19使用者反饋: 熱力圖看得到「汽車零件」卻查不到成員——
+    # 台股成員<3不進解剖選單/供應鏈僅16條/產業歷史=公司維度,三處都查不到;
+    # 解法=classification全名單進payload,全站題材名旁👥彈窗列全市場成員)
+    try:
+        _tw_nm = (rankings[rankings.country == "台"].sort_values("snapshot_date")
+                  .drop_duplicates("code", keep="last").set_index("code")["中文名稱"].to_dict())
+        _nm_all = {}
+        for r in names.itertuples():
+            _n = getattr(r, "name_zh", None) or getattr(r, "name", None)
+            if isinstance(_n, str):
+                _nm_all[(r.country, r.code)] = _n
+        _rk_now = {(r.country, r.code): int(r.rank) for r in latest.itertuples()}
+        _morder = {"台": 0, "美": 1, "日": 2, "韓": 3, "陸": 4}
+        _tm_map = {}
+        for r in classification.itertuples():
+            _n = _tw_nm.get(r.code, "") if r.country == "台" else (_nm_all.get((r.country, r.code)) or "")
+            _sp = r.sub_product if isinstance(r.sub_product, str) else ""
+            _tm_map.setdefault(r.main_group, []).append(
+                [r.country, r.code, _n, _sp, _rk_now.get((r.country, r.code))])
+        for _g in _tm_map:
+            _tm_map[_g].sort(key=lambda x: (_morder.get(x[0], 9), x[1]))
+        data["theme_members"] = _tm_map
+    except Exception as e:
+        _sec_fail("題材成員速查未產生", e)
+        data["theme_members"] = {}
+
+    # ---- 大盤溫度計(2026-07-19使用者裁示上板: 市場層五燈+水位讀數) ----
+    # 口徑: 甜蜜格/跌停家數=研究池1379檔(與判決同尺,全市場版待複跑升級);跌停=前收×0.9進位至tick近似
+    try:
+        import math as _math
+
+        import numpy as np
+        _c6 = sqlite3.connect(DB_PATH)
+        _px6 = pd.read_sql(
+            "SELECT code, date, close, money FROM fm_daily_price WHERE close>0 "
+            "AND date >= (SELECT date(MAX(date), '-260 day') FROM fm_daily_price)",
+            _c6, parse_dates=["date"])
+        _idx6 = {m: pd.read_sql("SELECT date, close FROM index_daily WHERE market=? ORDER BY date",
+                                _c6, params=(m,), parse_dates=["date"]).set_index("date").close
+                 for m in ("TAIEX", "N225", "KOSPI", "SPX")}
+        _mm6 = pd.read_sql("SELECT date, ratio FROM margin_maintenance_official "
+                           "WHERE ratio>=100 ORDER BY date", _c6, parse_dates=["date"])
+        _c6.close()
+        _lf6 = pd.read_pickle("tmp_limit_flags.pkl")
+        _pool6 = set(_lf6[~_lf6.code.str.startswith("00")].code.unique())
+        _px6 = _px6[_px6.code.isin(_pool6)]
+
+        _twc = _idx6["TAIEX"]
+        _tw_dates = [d for d in _twc.index
+                     if d >= _px6.date.min() + pd.Timedelta(days=75) and d <= _px6.date.max()][-70:]
+        _sweet = {d: 0 for d in _tw_dates}
+        _ldcnt = {d: 0 for d in _tw_dates}
+
+        def _tick6(p):
+            return (0.01 if p < 10 else 0.05 if p < 50 else 0.1 if p < 100
+                    else 0.5 if p < 500 else 1 if p < 1000 else 5)
+
+        _dset6 = set(_tw_dates)
+        for _code, _g6 in _px6.groupby("code"):
+            _g6 = _g6.sort_values("date").reset_index(drop=True)
+            _cl = _g6.close
+            _c1 = _cl.shift(1)
+            _run = _cl.rolling(15).max() > _cl.rolling(40).min() * 1.2
+            _ddp = (_cl / _c1 - 1) * 100
+            _pull = (1 - _cl / _cl.rolling(10).max()) * 100
+            _tv = _g6.money / 1e8
+            _sw = (_run & (_tv > 1) & (_ddp <= -6) & (_ddp > -9) & (_pull >= 20)).fillna(False)
+            for _i in range(1, len(_g6)):
+                _d = _g6.date[_i]
+                if _d not in _dset6:
+                    continue
+                if _sw.iloc[_i]:
+                    _sweet[_d] += 1
+                _pv = _c1.iloc[_i]
+                if pd.notna(_pv) and _pv > 0:
+                    _raw = _pv * 0.9
+                    _t = _tick6(_raw)
+                    if _cl.iloc[_i] <= _math.ceil(_raw / _t - 1e-9) * _t + 1e-9:
+                        _ldcnt[_d] += 1
+
+        _twr6 = _twc.pct_change() * 100
+        _n2r6 = _idx6["N225"].pct_change() * 100
+        _kor6 = _idx6["KOSPI"].pct_change() * 100
+        _spr6 = _idx6["SPX"].pct_change() * 100
+        _dd250_6 = (_twc / _twc.rolling(250, min_periods=120).max() - 1) * 100
+        _drop10_6 = (_twc / _twc.shift(10) - 1) * 100
+
+        def _us_prev(d):
+            _si = _spr6.index.searchsorted(d) - 1
+            return float(_spr6.iloc[_si]) if _si >= 0 else np.nan
+
+        _bdays6, _conv6 = [], []
+        for _d in _twc.index[-30:]:
+            _nv = float(_n2r6[_d]) if _d in _n2r6.index else np.nan
+            _kv = float(_kor6[_d]) if _d in _kor6.index else np.nan
+            _uv = _us_prev(_d)
+            if (pd.notna(_nv) and pd.notna(_kv) and pd.notna(_uv)
+                    and _nv <= -2 and _kv <= -2 and _uv > -1):
+                _bdays6.append(_d)
+            _dv, _rv, _d10 = _dd250_6.get(_d), _twr6.get(_d), _drop10_6.get(_d)
+            if (pd.notna(_dv) and -20 < _dv <= -10 and pd.notna(_rv) and _rv <= -2
+                    and pd.notna(_d10) and _d10 <= -6):
+                _conv6.append(_d)
+
+        _pos6 = {d: i for i, d in enumerate(_twc.index)}
+        _tp6 = _pos6[_tw_dates[-1]]
+
+        def _remain6(days, hold):
+            _act = [_pos6[d] for d in days if d in _pos6 and _pos6[d] + hold > _tp6]
+            return (max(_act) + hold - _tp6) if _act else 0
+
+        _thd6 = [d for d in _tw_dates if _sweet[d] >= 20]
+        _ldd6 = [d for d in _tw_dates if _ldcnt[d] >= 20]
+        _last6 = _tw_dates[-1]
+        _mm_last = _mm6.iloc[-1]
+        _lit = {"thermo": _remain6(_thd6, 60) > 0, "b": _remain6(_bdays6, 10) > 0,
+                "warn": bool(_mm_last.ratio < 150), "conv": _remain6(_conv6, 20) > 0,
+                "ld": _remain6(_ldd6, 20) > 0}
+        _expo6 = min(1.0, 0.6 * _lit["thermo"] + 0.4 * _lit["b"] + 0.3 * _lit["warn"]
+                     + 0.3 * _lit["conv"] + 0.3 * _lit["ld"])
+        data["market_thermo"] = {
+            "asof": str(_last6.date()),
+            "series": [{"d": str(d.date())[5:], "sweet": _sweet[d], "ld": _ldcnt[d]}
+                       for d in _tw_dates[-10:]],
+            "thermo": {"today": _sweet[_last6], "lit": _lit["thermo"],
+                       "remain": _remain6(_thd6, 60),
+                       "last": str(_thd6[-1].date()) if _thd6 else None},
+            "b": {"lit": _lit["b"], "remain": _remain6(_bdays6, 10),
+                  "last": str(_bdays6[-1].date()) if _bdays6 else None,
+                  "n225": None if pd.isna(_n2r6.get(_last6, np.nan)) else round(float(_n2r6[_last6]), 2),
+                  "kospi": None if pd.isna(_kor6.get(_last6, np.nan)) else round(float(_kor6[_last6]), 2),
+                  "us": None if pd.isna(_us_prev(_last6)) else round(_us_prev(_last6), 2)},
+            "conv": {"lit": _lit["conv"], "remain": _remain6(_conv6, 20),
+                     "dd250": round(float(_dd250_6[_last6]), 1),
+                     "ret1": round(float(_twr6[_last6]), 2),
+                     "drop10": round(float(_drop10_6[_last6]), 1)},
+            "ld": {"today": _ldcnt[_last6], "lit": _lit["ld"], "remain": _remain6(_ldd6, 20),
+                   "last": str(_ldd6[-1].date()) if _ldd6 else None},
+            "warn": {"ratio": round(float(_mm_last.ratio), 1),
+                     "asof": str(_mm_last.date.date()), "lit": _lit["warn"]},
+            "exposure": round(_expo6, 2),
+            "n_lit": sum(_lit.values()),
+        }
+        print(f"大盤溫度計: {data['market_thermo']['n_lit']}燈亮 曝險{_expo6:.2f} "
+              f"(甜蜜格{_sweet[_last6]}/跌停{_ldcnt[_last6]}家 asof {_last6.date()})")
+    except Exception as e:
+        _sec_fail("大盤溫度計未產生", e)
+        data["market_thermo"] = None
+
+    # ---- 內部人解質警戒(2026-07-20使用者裁示上板,進場訊號第7檢視;判決=build_pledge_release.py:
+    #      主測x60超額-6.90%/36%,配對差-3.93pp CI上緣<0=✅;放空載具❌(均值+0.01%右尾屠殺)=僅減碼審查;
+    #      設質/存量/低檔補提皆無資訊=方向專一四度確認) ----
+    try:
+        from datetime import date as _pd7, timedelta as _td7
+        _cpl = sqlite3.connect(DB_PATH)
+        _pmw = pd.read_sql(
+            "SELECT digest_date, code, role, pledgor, set_lots, release_lots, cum_lots FROM pledge_moves "
+            "WHERE digest_date >= ?", _cpl, params=(str(_pd7.today() - _td7(days=130)),),
+            parse_dates=["digest_date"])
+        _asof7 = str(_pmw.digest_date.max().date()) if len(_pmw) else None
+        # 轉貸剔除(同日同人設質+解質同量級)
+        _grp7 = _pmw.groupby(["digest_date", "code", "pledgor"])[["set_lots", "release_lots"]].sum()
+        _b7 = _grp7[(_grp7.set_lots > 0) & (_grp7.release_lots > 0)]
+        _refi7 = set(_b7[(_b7.min(axis=1) / _b7.max(axis=1)) >= 0.5].index)
+        _pmw = _pmw[~_pmw.set_index(["digest_date", "code", "pledgor"]).index.isin(_refi7)]
+        _pmw = _pmw[_pmw.role.str.contains("董事長|大股東", na=False) & (_pmw.release_lots > 0)]
+        _ev7 = _pmw.groupby(["code", "digest_date"]).agg(
+            lots=("release_lots", "sum"), cum=("cum_lots", "sum"),
+            roles=("role", lambda s: "、".join(sorted(set(s))[:3])),
+            persons=("pledgor", "nunique")).reset_index()
+        _ev7 = _ev7[_ev7.lots >= 500]
+        _rows7 = []
+        if len(_ev7):
+            _in7 = "(" + ",".join(repr(c) for c in _ev7.code.unique()) + ")"
+            _pxp = pd.read_sql(
+                f"SELECT code, date, open, close FROM fm_daily_price WHERE code IN {_in7} AND date >= ?",
+                _cpl, params=(str(_pd7.today() - _td7(days=620)),), parse_dates=["date"])
+            _Cp = _pxp.pivot_table(index="date", columns="code", values="close")
+            _Op = _pxp.pivot_table(index="date", columns="code", values="open")
+            # 交叉比對現役訊號成員(持股減碼審查實戰入口)
+            _xref7 = {}
+            try:
+                for _sc in data.get("signal_current", []) or []:
+                    for _t3 in _sc.get("top3", []) or []:
+                        _xref7.setdefault(str(_t3[0]), set()).add("訊號前3大")
+                for _dr in (data.get("disposition") or {}).get("rows", []) or []:
+                    _xref7.setdefault(str(_dr.get("code")), set()).add("處置中")
+                for _g7, _v7 in ((data.get("theme_momentum") or {}).get("themes", {}) or {}).items():
+                    if _v7.get("score") == 4:
+                        for _m7 in _v7.get("top5", []) or []:
+                            _xref7.setdefault(str(_m7[0]), set()).add("營收前5")
+            except Exception:
+                pass
+            _cls7 = {}
+            for _cd7, _gg7 in classification[classification["country"] == "台"][["code", "main_group"]]\
+                    .itertuples(index=False):
+                _cls7.setdefault(_cd7, []).append(_gg7)
+            _nm7 = dict(_cpl.execute("SELECT code, name_zh FROM company_names WHERE country='台'"))
+            _nm7.update(rankings[rankings["country"] == "台"].drop_duplicates("code", keep="last")
+                        .set_index("code")["中文名稱"].to_dict())
+            for _e7 in _ev7.itertuples():
+                if _e7.code not in _Cp.columns:
+                    continue
+                _s7 = _Cp[_e7.code].dropna()
+                _elapsed = int((_s7.index > _e7.digest_date).sum())
+                if _elapsed > 60:  # 效應窗60交易日,過窗下架
+                    continue
+                _past = _s7[_s7.index <= _e7.digest_date]
+                _pr7 = None
+                if len(_past) >= 120:
+                    _w7 = _past.tail(240)
+                    _pr7 = int(round(float((_w7 <= _w7.iloc[-1]).mean() * 100)))
+                _aft = _Op[_e7.code].dropna()
+                _nxt = _aft[_aft.index > _e7.digest_date]
+                _ret7 = None
+                if len(_nxt) and _nxt.iloc[0] > 0 and len(_s7):
+                    _ret7 = round(float((_s7.iloc[-1] / _nxt.iloc[0] - 1) * 100), 1)
+                if _e7.digest_date.month in (4, 5, 6):
+                    _tier7 = "股東會季"
+                elif _e7.lots >= 1000 and _pr7 is not None and _pr7 >= 80:
+                    _tier7 = "警戒"
+                else:
+                    _tier7 = "觀察"
+                _rows7.append({
+                    "d": _e7.digest_date.strftime("%Y-%m-%d"), "code": _e7.code,
+                    "name": str(_nm7.get(_e7.code, "")).rstrip("*"), "groups": _cls7.get(_e7.code, []),
+                    "roles": _e7.roles, "lots": int(_e7.lots), "cum": int(_e7.cum),
+                    "persons": int(_e7.persons), "pr": _pr7, "ret": _ret7,
+                    "left": max(0, 60 - _elapsed), "tier": _tier7,
+                    "xref": sorted(_xref7.get(_e7.code, [])),
+                })
+        _tord = {"警戒": 0, "觀察": 1, "股東會季": 2}
+        _rows7.sort(key=lambda r: r["d"], reverse=True)   # 同層新事件在前
+        _rows7.sort(key=lambda r: _tord[r["tier"]])       # 警戒>觀察>股東會季
+        _rows7 = _rows7[:100]
+        _cpl.close()
+        data["pledge_alert"] = {"asof": _asof7, "rows": _rows7}
+        print(f"內部解質警戒: 窗內{len(_rows7)}筆 (警戒{sum(r['tier'] == '警戒' for r in _rows7)}筆, "
+              f"資料至{_asof7})")
+    except Exception as e:
+        _sec_fail("內部解質警戒未產生", e)
+        data["pledge_alert"] = {"asof": None, "rows": []}
+
+    # ---- 法說會筆記嵌入(2026-07-19使用者提案: 法說會筆記/*.md上財報/法說會提醒分頁) ----
+    try:
+        import glob as _glob
+        import html as _hm
+        import re as _re
+
+        def _md2html(text):
+            out, in_tbl, in_ul = [], False, False
+
+            def _inline(s):
+                s = _hm.escape(s)
+                s = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+                s = _re.sub(r"\[([^\]]+)\]\((https?[^)]+)\)",
+                            r'<a href="\2" target="_blank">\1</a>', s)
+                return s
+            for line in text.splitlines():
+                st = line.strip()
+                if st.startswith("|"):
+                    cells = [c.strip() for c in st.strip("|").split("|")]
+                    if all(_re.fullmatch(r":?-{2,}:?", c) for c in cells):
+                        continue
+                    if not in_tbl:
+                        out.append("<table><tr>" + "".join(f"<th>{_inline(c)}</th>" for c in cells) + "</tr>")
+                        in_tbl = True
+                    else:
+                        out.append("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in cells) + "</tr>")
+                    continue
+                if in_tbl:
+                    out.append("</table>")
+                    in_tbl = False
+                if st.startswith("- "):
+                    if not in_ul:
+                        out.append("<ul>")
+                        in_ul = True
+                    out.append(f"<li>{_inline(st[2:])}</li>")
+                    continue
+                if in_ul:
+                    out.append("</ul>")
+                    in_ul = False
+                if st.startswith("### "):
+                    out.append(f"<h5>{_inline(st[4:])}</h5>")
+                elif st.startswith("## "):
+                    out.append(f"<h4>{_inline(st[3:])}</h4>")
+                elif st.startswith("# "):
+                    out.append(f"<h3>{_inline(st[2:])}</h3>")
+                elif st.startswith(">"):
+                    out.append(f'<div class="hint">{_inline(st.lstrip("> "))}</div>')
+                elif st:
+                    out.append(f"<p>{_inline(st)}</p>")
+            if in_tbl:
+                out.append("</table>")
+            if in_ul:
+                out.append("</ul>")
+            return "\n".join(out)
+
+        _notes = []
+        for _f in sorted(_glob.glob("法說會筆記/*.md"), reverse=True):
+            _bn = _f.replace("\\", "/").split("/")[-1]
+            if _bn.startswith("_"):
+                continue
+            _txt = open(_f, encoding="utf-8").read()
+            _mt = _re.search(r"^# (.+)$", _txt, _re.M)
+            _notes.append({"file": _bn,
+                           "title": _mt.group(1).replace("法說會筆記：", "") if _mt else _bn[:-3],
+                           "html": _md2html(_txt)})
+        data["conf_notes"] = _notes
+        if _notes:
+            print(f"法說會筆記嵌入 {len(_notes)} 篇")
+    except Exception as e:
+        _sec_fail("法說會筆記嵌入失敗", e)
+        data["conf_notes"] = []
 
     # 精簡訊號摘要匯出(供gen_xq_watchlist.py讀取,不含完整payload,避免重算)
     try:
@@ -1226,9 +1566,11 @@ def build():
                     revmom_hits.append({"theme": _g, "top5": [m[0] for m in _t["top5"]]})
         # 處置股觀察組(處置中非毒格,排除已出關;XQ盯盤用,行動日見儀表板)
         _t6 = pd.Timestamp.today().strftime("%Y-%m-%d")
+        # 2026-07-19修: 只收4位數股票代碼(5-6位數=CB/權證處置,XQ股票清單放不進去)
         dispo_hits = [{"code": r["code"], "v4d": r["v4d"], "v5d": r["v5d"], "exitd": r["exitd"]}
                       for r in data.get("disposition", {}).get("rows", [])
-                      if not r.get("poison") and r["end"] >= _t6]
+                      if not r.get("poison") and r["end"] >= _t6
+                      and len(str(r["code"])) == 4]
         with open("signals_export.json", "w", encoding="utf-8") as f:
             json.dump({"rule_hits": rule_hits, "micro_hits": micro_hits,
                       "catchup_hits": catchup_hits, "chip_hits": chip_hits,
@@ -1238,13 +1580,16 @@ def build():
               f"(規則{len(rule_hits)}/微題材{len(micro_hits)}/補漲{len(catchup_hits)}/籌碼{len(chip_hits)}"
               f"/月營收{len(revmom_hits)})")
     except Exception as e:
-        print(f"訊號摘要匯出失敗(不影響dashboard): {e}")
+        _sec_fail("訊號摘要匯出失敗(不影響dashboard)", e)
 
     return data
 
 
 def render_html(data, out_path=OUT_PATH, local=False):
-    data_json = json.dumps(data, ensure_ascii=False)
+    data["build_fails"] = BUILD_FAILS  # 在render時才收,涵蓋所有區塊
+    if BUILD_FAILS:
+        print(f"⚠⚠ {len(BUILD_FAILS)} 個區塊建置失敗(儀表板對應區塊=空資料): " + " | ".join(BUILD_FAILS))
+    data_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     html = HTML_TEMPLATE.replace("__DATA_JSON__", data_json)
     if local:
         plotly_path = "plotly.min.js"
@@ -1513,6 +1858,18 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
   margin: 24px 0 6px;
 }
 
+/* ── 法說會筆記 ───────────────────────────────────────────────── */
+.conf-note { border: 1px solid var(--bd); border-radius: 8px; padding: 8px 12px; margin: 8px 0; background: var(--sf); }
+.conf-note summary { cursor: pointer; }
+.cn-body table { border-collapse: collapse; font-size: 12px; margin: 8px 0; }
+.cn-body td, .cn-body th { border: 1px solid var(--bd); padding: 4px 8px; text-align: left; }
+.cn-body h3, .cn-body h4, .cn-body h5 { margin: 10px 0 4px; }
+.cn-body p, .cn-body li { font-size: 13px; line-height: 1.6; }
+/* ── 題材成員速查彈窗 ─────────────────────────────────────────── */
+#themeMemberModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 99; align-items: center; justify-content: center; }
+#themeMemberModal .tm-body { background: var(--sf); border: 1px solid var(--bd); border-radius: 8px; max-width: 760px; width: 92%; max-height: 80vh; overflow: auto; padding: 16px; }
+.tm-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+.tm-table td, .tm-table th { border: 1px solid var(--bd); padding: 4px 8px; text-align: center; }
 /* ── 資金輪動熱力圖 ───────────────────────────────────────────── */
 .heatmap-box { overflow-x: auto; overflow-y: auto; max-height: 640px; border: 1px solid var(--bd); border-radius: var(--r); background: var(--sf); padding: 12px; }
 .hm-table { border-collapse: separate; border-spacing: 3px; width: auto; }
@@ -1596,11 +1953,12 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <button class="tab-btn" id="signalTabBtn" onclick="showTab(7)">進場訊號</button>
   <button class="tab-btn" onclick="showTab(6)">動能雷達</button>
   <button class="tab-btn" onclick="showTab(5)">供應鏈</button>
-  <button class="tab-btn" onclick="showTab(2);if(document.getElementById('histRevmomView').style.display!=='none')renderRevmomChart()">公司/產業歷史趨勢</button>
+  <button class="tab-btn" onclick="showTab(2);if(document.getElementById('histRevmomView').style.display!=='none')renderRevmomChart()">題材動能與共振</button>
   <button class="tab-btn" onclick="showTab(1)">排行榜明細</button>
   <button class="tab-btn" onclick="showTab(3)">財報/法說會提醒</button>
   <button class="tab-btn" onclick="showTab(4)">新聞/目標價</button>
 </div>
+<div id="thermoStrip" style="display:none;margin-top:6px;font-size:12px"></div>
 </div>
 
 <div class="tab-content active" id="tab0">
@@ -1752,6 +2110,10 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <h4>展覽效應觀察 🎪</h4>
   <div class="hint">研究依據(2026-07回測,觀察層,樣本2022-2025各4年)：題材裡不是全體齊漲,只有少數個股會展前提前動,且常客股逐年重複出現；效應約從<b>展前40個交易日(約2個月)</b>開始累積,不是展前一週才發動；用「漲停/單日爆量」當偵測門檻經測試無效(跟非展覽期比沒有鑑別力)——真正的卡位是安靜緩慢的累積,不是明顯的噴出日。展後多數常客會回吐(利多出盡),藥華藥/泰宗展後續漲屬少數例外。日期需每年手動更新此檔。</div>
   <div id="expoWatchPanel"></div>
+  <h4>📝 重大法說會筆記</h4>
+  <div class="hint">重大法說會隔天請Claude「補XX法說筆記」→ 存入 法說會筆記/*.md → 重跑 export_html.py 即上板。
+  結構：市場在意(共識vs實際=預期差) / 董座發言原文 / 供應鏈題材連動 / 會後價格驗收 / 操作含義。</div>
+  <div id="confNotesPanel"></div>
   <h4>美股財報 <span id="usEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
   <div class="scroll-box"><table id="usEarningsTable"></table></div>
   <div class="hint"><b>財報季作戰指南(2026-07回測,觀察層)</b>：①<b>美股龍頭財報「後」10日=台鏈跟漲觀察窗</b>(+0.9%中位/55%，MSFT/AAPL系最明顯；NVDA鏈反向=行情多在財報前price in、開獎後留意獲利了結)。②<b>首發者效應</b>：同題材首家開法說者的市場反應會傳染給還沒開的同業——首發開差→短窗迴避同題材後發成員(PCB/封測/CPO系最靈)；首發開好→後發者進關注清單。記憶體例外(公開報價題材無此效應)。③<b>台積電法說前後</b>：事前2週方向=市場對半導體的預期放大器(多頭年正/熊市年負,環境給方向)。④法說隔日的環節暴衝多為短打資金,等週級資金流訊號接手才算數。<b>點公司名→跳公司歷史頁(題材/產業鏈歸屬+同鏈成員)。</b></div>
@@ -1849,6 +2211,8 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <button class="view-btn" id="sigViewCatchupBtn" onclick="switchSigView('catchup')">補漲雷達</button>
     <button class="view-btn" id="sigViewRevmomBtn" onclick="switchSigView('revmom')">題材營收動能</button>
     <button class="view-btn" id="sigViewDispoBtn" onclick="switchSigView('dispo')">處置股觀察</button>
+    <button class="view-btn" id="sigViewThermoBtn" onclick="switchSigView('thermo')">🌡️大盤溫度計</button>
+    <button class="view-btn" id="sigViewPledgeBtn" onclick="switchSigView('pledge')">🔓內部解質警戒</button>
   </div>
   <div id="sigMacroView">
   <h3 class="sec-title">檢查清單規則（源自記憶體2025/9案例研究，勿刪）</h3>
@@ -1903,7 +2267,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div class="rule-item">訊號＝把題材成員(FinMind覆蓋)月營收<b>加總</b>後看兩件事：① <b>連續3個月月增(MoM)為正</b>——中斷歸零的連續計數，給0~3分　② <b>近3個月年增率(YoY)平均為正</b>——排除低基期反彈，+1分。<b>滿分4分才是訊號</b>。時序口徑(凍結回測版)：營收月r於次月(r+1)10-15號公告、<b>再次月(r+2)的15號進場</b>——進場日只用早已公告的數字，無偷看未來(此口徑比「公告後立刻用」再保守一個月，回測數字皆基於此)。</div>
     <div class="rule-item">信心分級：<b style="color:var(--red)">⭐⭐⭐ 極高＝score 4</b>(唯一回測有超額報酬的層級)；<b>⭐ 觀察＝score 3</b>(差一分，表中標示缺哪個條件——回測無超額，僅供追蹤接近觸發的題材)；<b>score≤2不列</b>：回測顯示0-2分是雜訊不是「中等信心」，劑量反應是斷崖不是階梯，給星等會誤導。</div>
     <div class="rule-item">回測(2022-2026，828筆/115題材-月/27題材)：<b>次月15號進場、持有60個交易日</b>。單筆中位+7.4%/勝率67%/TWII超額中位+2.55%(唯一超額為正的分層)。<b>倉位用法(V2形態)</b>：訊號照進——大盤破線時觸發的批次反而是最強反彈(回測擋掉它們MDD惡化到-39%)——但<b>整體部位×大盤態勢係數</b>(月線上100%/月線下60%/季線下30%)：縮放版夏普2.07/MDD-21.6% vs 滿倉1.90/-29.8%。</div>
-    <div class="rule-item" style="color:var(--tx3)">警語：<b>regime依賴</b>——超額集中在題材行情年(2025年獨立顯著、2024年偏負)，屬「行情放大器」非全天候訊號；獨立樣本僅115個題材-月(LOTO+cluster bootstrap通過但n有限)；宇宙=FinMind覆蓋∩題材分類約283檔。成員欄列<b>前5大營收</b>(占題材營收中位97%，top-N等價測試佐證)——回測買法是題材全成員等權，前5大是聚焦顯示。📈=跳「公司/產業歷史趨勢」頁看該題材營收圖。</div>
+    <div class="rule-item" style="color:var(--tx3)">警語：<b>regime依賴</b>——超額集中在題材行情年(2025年獨立顯著、2024年偏負)，屬「行情放大器」非全天候訊號；獨立樣本僅115個題材-月(LOTO+cluster bootstrap通過但n有限)；宇宙=FinMind覆蓋∩題材分類約283檔。成員欄列<b>前5大營收</b>(占題材營收中位97%，top-N等價測試佐證)——回測買法是題材全成員等權，前5大是聚焦顯示。📈=跳「題材動能與共振」頁看該題材營收圖。</div>
   </div>
   <div class="hint" id="revmomTier" style="font-weight:600"></div>
   <h3 class="sec-title">最新訊號（<span id="revmomSigMonth"></span>）</h3>
@@ -1928,10 +2292,52 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
         <tr><td>T4</td><td style="text-align:left">其餘</td><td>+1.53%</td><td>56%</td><td>9.2件</td></tr>
       </table>
     (題材成員欄有事後名單偏差,幅度打折看;下表「Tier」欄=每檔自動判定)。<b>胃納量梯度(2026-07-16補測)</b>：處置前20日均成交值越大效果越好——&lt;0.5億+0.70%/55%→0.5-2億+2.41%→2-10億+4.65%→<b>&gt;10億+6.76%/71%</b>；胃納≥2億×T1=+8.83%/78%=實戰甜蜜格(被凍結趕走的投機資金越多,回流越猛;大票可放大部位,小票本來就該跳過)。</div>
-    <div class="rule-item" style="color:var(--tx3)">回測(2019-2026,1,878事件,扣0.45%成本)：扣TWII超額八年全正(含2022熊市)；月群bootstrap CI95=[+2.30,+4.91] p&lt;0.0001；2026年反而史上最肥(擁擠化指紋不存在,預收款券+分盤=結構性護城河)。載具建議：並發上限5檔、先到先選、tier調倉位(題材∩20分盤給大份)。處置期間買賣皆需預收全額款券、5/20分鐘才撮合一次——掛單用限價、部位≤當日成交值1%。未來行動日以平日近似，遇休市順延1-2日屬正常，以XQ/券商公告為準。詳research_panic_liquidity.html。</div>
+    <div class="rule-item" style="color:var(--tx3)">回測(2019-2026,1,878事件,扣0.45%成本)：扣TWII超額八年全正(含2022熊市)；月群bootstrap CI95=[+2.30,+4.91] p&lt;0.0001；2026年反而史上最肥(擁擠化指紋不存在,預收款券+分盤=結構性護城河)。載具建議：並發上限5檔、先到先選、tier調倉位(題材∩20分盤給大份)。處置期間買賣皆需預收全額款券、5/20分鐘才撮合一次——掛單用限價、部位≤當日成交值1%。未來行動日以平日近似，遇休市順延1-2日屬正常，以XQ/券商公告為準。詳研究報告/research_panic_liquidity.html。</div>
   </div>
   <div class="hint" id="dispoAsof" style="font-weight:600"></div>
+  <div style="margin:6px 0 8px">
+    分盤 <select id="dispoFilterMins" onchange="renderDispoTab()">
+      <option value="">全部</option><option value="5">5分鐘(第1次)</option><option value="20">20分鐘(第2次,較嚴)</option>
+    </select>
+    　Tier <select id="dispoFilterTier" onchange="renderDispoTab()">
+      <option value="">全部</option><option value="1">T1 題材∩20分</option><option value="2">T2 題材</option>
+      <option value="3">T3 20分</option><option value="4">T4 其餘</option>
+    </select>
+    <span class="hint" style="display:inline">（制度只有5分/20分兩檔；更嚴的「人工管制撮合」=⚠毒格已標）</span>
+  </div>
   <div class="scroll-box"><table id="dispoNowTable"></table></div>
+  <h3 class="sec-title" style="margin-top:16px">CB處置（5位數代碼＝可轉債標的）</h3>
+  <div class="hint">CB被處置＝標的股投機過熱的外溢訊號；不適用V4/V5股票回測口徑，供關聯觀察（對應股票＝前4碼）。</div>
+  <div class="scroll-box"><table id="dispoCbTable"></table></div>
+  </div>
+
+  <div id="sigPledgeView" style="display:none">
+  <h3 class="sec-title">🔓內部解質警戒——大股東/董事長高檔解質＝出貨嫌疑（2026-07-20上板·觀察層）</h3>
+  <div class="rule-card">
+    <div class="rule-item">機制：質押中的股票不能賣，<b>解質＝賣出前的必要步驟</b>——內部人（董事長系/大股東）在股價高檔大額解質＝出貨準備腳印。回測（2019-2026，n=330，錨點案例=國巨2026-06-01解質11,400張→6月底作頂）：事件後60日超額中位<b>−6.90%</b>／勝率36%；配對複核過（同股高檔日常態−2.88%，配對差−3.93pp，bootstrap CI上緣&lt;0）＝增量真實非池飄移。效應是<b>過程不是單日</b>（10日−1.6%→20日−3.1%→60日−6.9%），60日窗吃滿。</div>
+    <div class="rule-item" style="color:var(--red);font-weight:600">⚠ 用法＝只做減碼審查，絕不放空。事件分布中位−6.9%但均值+0.01%——右尾火箭（18個漲逾+50%、最大+225%）把均值吃回零，純放空載具七年半剩0.13x／MDD−91%＝❌判死。正確動作：持有中個股觸發→列入減碼檢討（避開中位結局；萬一是火箭只是少賺不虧損）；選股時當避開名單。</div>
+    <div class="rule-item">⚠ <b>設質沒有資訊</b>（方向專一四度確認）：高檔設質＝借錢留倉（配對差+0.79pp跨零，要賣得先解質，押進去反而暗示不賣）、低檔補提（−0.99pp跨零）、質押存量位階（高低無梯度）——質押資料整座礦只有「高檔×解質」一格有金，所以本檢視只列解質。股東會季（4-6月）解質＝表決權技術操作亦無資訊（−1.25%≈基準），下表以「股東會季」標籤降級記錄。</div>
+    <div class="rule-item" style="color:var(--tx3)">口徑：內部人=申報身分含董事長/大股東（含法人代表人、他人名義、配偶變體）；🔴警戒格=解質≥1,000張×事件日股價240日位階≥80×非4-6月；已剔除轉貸（同日同人設質+解質同量級）。效應窗60個交易日，過窗自動下架。維運：<code>python fetch_pledge.py</code>每週跑（MoneyDJ每日董監質設異動彙整）。詳研究報告/research_pledge_release.html。</div>
+  </div>
+  <div class="hint" id="pledgeAsof" style="font-weight:600"></div>
+  <h3 class="sec-title" style="margin-top:12px">題材聚合——現在哪些產業的高層在賣</h3>
+  <div class="scroll-box"><table id="pledgeThemeAgg"></table></div>
+  <h3 class="sec-title" style="margin-top:16px">窗內事件明細</h3>
+  <div class="scroll-box"><table id="pledgeTable"></table></div>
+  <div class="hint">狀態欄：🔴警戒=主測口徑（回測−6.9%那格）；觀察=內部人大額解質但位階未達80（半數真頂部事前位階不高，低位階≠安全）；股東會季=4-6月混淆組（無資訊僅記錄）。交叉欄：該股同時在訊號頁前3大／處置中／營收前5名單＝<b>持股減碼審查的實戰入口</b>。累積張=本批申報人異動後仍質押的張數。</div>
+  </div>
+
+  <div id="sigThermoView" style="display:none">
+  <div class="rule-card">
+    <div class="rule-title">🌡️ 大盤溫度計（市場層五燈：恐慌出清＝進場窗，機制＝非資訊性賣壓才有反彈）</div>
+    <div class="rule-item">用法：燈亮＝該訊號的歷史進場窗開啟，各有建議持有期與到期倒數；多燈同亮＝證據疊加（2025-04-08溫度計×警戒帶同亮→k60+23%）。合成曝險=水位階梯v0（研究稿）：溫度計0.6/60日＋B 0.4/10日＋警戒帶0.3＋雙收斂0.3/20日＋跌停廣度0.3/20日，加總封頂1.0。</div>
+    <div class="rule-item">⚠死格警語：<b>2022-06型慢熊中段恐慌≠底</b>（溫度計唯一敗格）；<b>跌停spike第一腿≠底</b>（2020-01-30，跌停286家後k60−6.28%）；8-10月觸發B＝亞洲逆風季吃短不抱60日；A型環境（美亞同跌）別接，等下一個climax。</div>
+    <div class="rule-item">口徑註記：甜蜜格/跌停家數＝研究池1,379檔（與判決同尺，全市場版待複跑升級）；跌停＝前收×0.9進位至tick近似（考卷用官方tick精確版，門檻層級兩版同判）；並發數需當日價格——崩盤日先跑 fetch_daily_price --update 再重匯。</div>
+  </div>
+  <div class="hint" id="thermoAsof" style="font-weight:600"></div>
+  <div id="thermoCards" style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0"></div>
+  <h3 class="sec-title">近10日讀數（甜蜜格並發／跌停家數）</h3>
+  <div class="scroll-box"><table id="thermoSeries"></table></div>
   </div>
 </div>
 
@@ -3136,11 +3542,100 @@ function renderBanner() {
 
 // ── 進場訊號頁籤 ──────────────────────────────────────────────────────
 function switchSigView(v) {
-  ["Macro", "Micro", "Catchup", "Revmom", "Dispo"].forEach(function(k) {
+  ["Macro", "Micro", "Catchup", "Revmom", "Dispo", "Thermo", "Pledge"].forEach(function(k) {
     const on = v === k.toLowerCase();
     document.getElementById("sigView" + k + "Btn").classList.toggle("active", on);
     document.getElementById("sig" + k + "View").style.display = on ? "" : "none";
   });
+}
+
+// ── 法說會筆記(2026-07-19上板) ────────────────────────────────────
+function renderConfNotes() {
+  const el = document.getElementById("confNotesPanel");
+  if (!el) return;
+  const notes = DATA.conf_notes || [];
+  if (!notes.length) {
+    el.innerHTML = "<div class=\"hint\">尚無筆記。</div>";
+    return;
+  }
+  el.innerHTML = notes.map(function(n, i) {
+    return "<details class=\"conf-note\"" + (i === 0 ? " open" : "") + "><summary><b>" + n.title +
+      "</b></summary><div class=\"cn-body\">" + n.html + "</div></details>";
+  }).join("");
+}
+
+// ── 大盤溫度計(2026-07-19上板): 市場層五燈+頁頂燈條 ─────────────────
+function renderThermoTab() {
+  const mt = DATA.market_thermo;
+  if (!mt) return;
+  const cardsEl = document.getElementById("thermoCards");
+  const pill = function(lit) {
+    return lit ? "<span style=\"color:var(--red);font-weight:700\">● 亮</span>"
+               : "<span style=\"color:var(--tx3)\">○ 滅</span>";
+  };
+  const cards = [
+    {name: "🌡️ 恐慌溫度計", lit: mt.thermo.lit,
+     read: "今日甜蜜格並發 <b>" + mt.thermo.today + "</b>（門檻20／p99≈45／史max 77）" +
+           (mt.thermo.last ? "<br>最近觸發 " + mt.thermo.last + (mt.thermo.lit ? "，窗剩 " + mt.thermo.remain + " 交易日" : "") : "<br>60日內無觸發"),
+     verdict: "≥20＝史冊級出清日（8/8命中）。k20 +4.93%/86%、k60 +14.21%/83%。持有60日。",
+     warn: "死格＝2022-06慢熊中段。"},
+    {name: "🌏 亞跌B訊號", lit: mt.b.lit,
+     read: "最新交易日：N225 " + (mt.b.n225 === null ? "休市" : mt.b.n225 + "%") +
+           "｜KOSPI " + (mt.b.kospi === null ? "休市" : mt.b.kospi + "%") +
+           "｜SPX前夜 " + (mt.b.us === null ? "—" : mt.b.us + "%") +
+           (mt.b.last ? "<br>最近B日 " + mt.b.last + (mt.b.lit ? "，窗剩 " + mt.b.remain + " 交易日" : "") : "<br>10日內無B日"),
+     verdict: "日韓≤−2%×美前夜>−1%＝美國沒事的亞洲賣壓。k10 +3.12%/78%。持有10日。",
+     warn: "8-10月觸發＝吃短；美亞同跌(A型)別接。"},
+    {name: "📉 位階雙收斂", lit: mt.conv.lit,
+     read: "台dd250 <b>" + mt.conv.dd250 + "%</b>｜當日 " + mt.conv.ret1 + "%｜10日 " + mt.conv.drop10 + "%" +
+           (mt.conv.lit ? "<br>窗剩 " + mt.conv.remain + " 交易日" : ""),
+     verdict: "位階−10~−20%×當日≤−2%×10日≤−6%。k20 +3.10%/69%。持有20日。",
+     warn: "位階−5~−10%＝接刀死區；≤−20%只吃短。"},
+    {name: "🧱 跌停廣度", lit: mt.ld.lit,
+     read: "今日收盤跌停 <b>" + mt.ld.today + "</b> 家（門檻20／p99≈45）" +
+           (mt.ld.last ? "<br>最近觸發 " + mt.ld.last + (mt.ld.lit ? "，窗剩 " + mt.ld.remain + " 交易日" : "") : "<br>20日內無觸發"),
+     verdict: "≥20家＝出清第二軸（訊號集中熱門股層）。k10 +3.09%/75%。持有20日。",
+     warn: "第一腿spike≠底（2020-01-30）。"},
+    {name: "🚨 融資警戒帶", lit: mt.warn.lit,
+     read: "大盤維持率 <b>" + mt.warn.ratio + "%</b>（" + mt.warn.asof + "）｜警戒線150%",
+     verdict: "<150%＝斷頭出清水位（9事件勝率78%，60日中位+14.4%）。",
+     warn: "2008慢熊首破例外；此為狀態非時點，帶內等急跌收斂日再進。"},
+  ];
+  cardsEl.innerHTML = cards.map(function(c) {
+    return "<div style=\"flex:1 1 300px;border:1px solid var(--bd);border-radius:8px;padding:10px;background:var(--sf)" +
+      (c.lit ? ";box-shadow:inset 0 0 0 1px var(--red)" : "") + "\">" +
+      "<div style=\"display:flex;justify-content:space-between\"><b>" + c.name + "</b>" + pill(c.lit) + "</div>" +
+      "<div style=\"margin:6px 0\">" + c.read + "</div>" +
+      "<div class=\"hint\" style=\"margin:0\">" + c.verdict + "<br>⚠ " + c.warn + "</div></div>";
+  }).join("");
+  document.getElementById("thermoAsof").textContent =
+    "資料至 " + mt.asof + "｜" + mt.n_lit + " 燈亮｜水位階梯v0曝險讀數 " + mt.exposure.toFixed(2) +
+    "（研究稿，非下單指令）";
+  const sRows = (mt.series || []).map(function(r) {
+    return {"日期": r.d, "甜蜜格並發": r.sweet >= 20 ? "<b style=\"color:var(--red)\">" + r.sweet + "</b>" : r.sweet,
+            "跌停家數": r.ld >= 20 ? "<b style=\"color:var(--red)\">" + r.ld + "</b>" : r.ld};
+  });
+  buildTable(document.getElementById("thermoSeries"),
+             [{key: "日期", label: "日期"}, {key: "甜蜜格並發", label: "甜蜜格並發(門檻20)"},
+              {key: "跌停家數", label: "收盤跌停家數(門檻20)"}], sRows, null);
+  // 頁頂燈條
+  const strip = document.getElementById("thermoStrip");
+  if (strip) {
+    const mini = [["🌡️溫度計", mt.thermo.lit, mt.thermo.today], ["🌏亞跌B", mt.b.lit, ""],
+                  ["📉雙收斂", mt.conv.lit, ""], ["🧱跌停廣度", mt.ld.lit, mt.ld.today],
+                  ["🚨警戒帶", mt.warn.lit, mt.warn.ratio + "%"]];
+    strip.innerHTML = "<a href=\"javascript:void(0)\" onclick=\"showTab(7);switchSigView('thermo')\"" +
+      " style=\"color:inherit;text-decoration:none\" title=\"點開大盤溫度計檢視\">" +
+      mini.map(function(m) {
+        const col = m[1] ? "var(--red)" : "var(--tx3)";
+        return "<span style=\"margin-right:12px;color:" + col + (m[1] ? ";font-weight:700" : "") + "\">" +
+          (m[1] ? "●" : "○") + m[0] + (m[2] !== "" ? " " + m[2] : "") + "</span>";
+      }).join("") +
+      "<span style=\"color:var(--tx3)\">｜曝險v0 " + mt.exposure.toFixed(2) + "｜" + mt.asof + "</span></a>";
+    strip.style.display = "";
+    const btn = document.getElementById("sigViewThermoBtn");
+    if (btn && mt.n_lit) btn.innerHTML = "🌡️大盤溫度計 🔔" + mt.n_lit;
+  }
 }
 
 function renderSignalTab() {
@@ -3440,7 +3935,11 @@ function jumpToAnatomy(g) {
   const sel = document.getElementById("resTheme");
   let has = false;
   if (sel) for (let i = 0; i < sel.options.length; i++) if (sel.options[i].value === g) { has = true; break; }
-  if (!has) { jumpToRadar(g); return; }     // 題材不在解剖選單(成員<3)時退回動能雷達
+  // 題材不在解剖選單(台股成員<3)時改開成員速查彈窗(2026-07-19,原退回雷達會看不到成員)
+  if (!has) {
+    if (DATA.theme_members && DATA.theme_members[g]) { showThemeMembers(g); } else { jumpToRadar(g); }
+    return;
+  }
   sel.value = g;
   showTab(2);
   switchHistView("res");
@@ -3464,8 +3963,31 @@ function jumpToRadar(g) {
 }
 
 function themeLink(g) {
-  if (!DATA.theme_history || !DATA.theme_history[g]) return g;   // 微題材等不在雷達內的不加連結
-  return "<a class=\"theme-link\" href=\"javascript:void(0)\" onclick=\"jumpToRadar('" + g + "')\" title=\"跳到動能雷達聚焦此題材\">" + g + "</a>";
+  const mem = (DATA.theme_members && DATA.theme_members[g])
+    ? " <a href=\"javascript:void(0)\" onclick=\"showThemeMembers('" + g + "')\" title=\"題材成員速查(全市場名單)\" style=\"text-decoration:none\">👥</a>" : "";
+  if (!DATA.theme_history || !DATA.theme_history[g]) return g + mem;   // 微題材等不在雷達內的不加連結
+  return "<a class=\"theme-link\" href=\"javascript:void(0)\" onclick=\"jumpToRadar('" + g + "')\" title=\"跳到動能雷達聚焦此題材\">" + g + "</a>" + mem;
+}
+
+// 題材成員速查彈窗(2026-07-19): 熱力圖/全站題材名旁👥開啟;台股成員<3的題材(如汽車零件)唯一查詢入口
+function showThemeMembers(g) {
+  const rows = (DATA.theme_members || {})[g] || [];
+  const m = document.getElementById("themeMemberModal");
+  if (!rows.length || !m) return;
+  let html = "<div style=\"display:flex;justify-content:space-between;align-items:center\"><b>" + g +
+    " 題材成員（" + rows.length + " 檔）</b><span style=\"cursor:pointer;font-size:20px;color:var(--tx3)\" " +
+    "onclick=\"document.getElementById('themeMemberModal').style.display='none'\">×</span></div>";
+  html += "<table class=\"tm-table\"><tr><th>市場</th><th>代碼</th><th>公司</th><th>本週排行</th><th style=\"text-align:left\">產品/角色</th></tr>";
+  rows.forEach(function(r) {
+    const nm = (r[0] === "台" && DATA.company_history && DATA.company_history["台|" + r[1]])
+      ? "<a href=\"javascript:void(0)\" onclick=\"document.getElementById('themeMemberModal').style.display='none';jumpToCompany('台|" + r[1] + "');showTab(2)\">" + (r[2] || r[1]) + "</a>"
+      : (r[2] || "—");
+    html += "<tr><td>" + r[0] + "</td><td>" + r[1] + "</td><td>" + nm + "</td><td>" +
+      (r[4] ? "#" + r[4] : "—") + "</td><td style=\"text-align:left\">" + (r[3] || "") + "</td></tr>";
+  });
+  html += "</table><div class=\"hint\" style=\"margin:8px 0 0\">名單＝classification全成員（不限本週上榜）；台股成員&lt;3檔的題材不進金流解剖選單，由此速查。</div>";
+  m.querySelector(".tm-body").innerHTML = html;
+  m.style.display = "flex";
 }
 
 function updateRadarFocusChips() {
@@ -3757,12 +4279,68 @@ function drawRadarFrame(ei, withTable) {
   }
 }
 
+function renderPledgeView() {
+  const pa = DATA.pledge_alert || {};
+  const rows = pa.rows || [];
+  const nWarn = rows.filter(function(r) { return r.tier === "警戒"; }).length;
+  document.getElementById("pledgeAsof").textContent = pa.asof
+    ? ("資料至 " + pa.asof + "｜60交易日窗內 " + rows.length + " 筆內部人解質｜🔴警戒 " + nWarn + " 筆")
+    : "無資料（先跑 python fetch_pledge.py）";
+  // 題材聚合: 哪些產業的高層在賣
+  const agg = {};
+  rows.forEach(function(r) {
+    (r.groups && r.groups.length ? r.groups : ["（無題材歸屬）"]).forEach(function(g) {
+      if (!agg[g]) agg[g] = {n: 0, codes: {}, lots: 0, warn: 0};
+      agg[g].n += 1; agg[g].codes[r.code] = 1; agg[g].lots += r.lots;
+      if (r.tier === "警戒") agg[g].warn += 1;
+    });
+  });
+  const aggRows = Object.keys(agg).map(function(g) {
+    const a = agg[g];
+    return {"題材": g, "事件數": a.n, "公司數": Object.keys(a.codes).length,
+            "解質張數合計": a.lots.toLocaleString(),
+            "警戒格": a.warn ? "<b style=\"color:var(--red)\">" + a.warn + "</b>" : "0",
+            _w: a.warn, _n: a.n};
+  }).sort(function(x, y) { return y._w - x._w || y._n - x._n; }).slice(0, 20);
+  buildTable(document.getElementById("pledgeThemeAgg"),
+    [{key: "題材", label: "題材"}, {key: "警戒格", label: "🔴警戒格"}, {key: "事件數", label: "事件數"},
+     {key: "公司數", label: "公司數"}, {key: "解質張數合計", label: "解質張數合計"}],
+    aggRows, function(r) { return r._w > 0 ? "hl-row" : null; });
+  // 事件明細
+  const evRows = rows.map(function(r) {
+    const badge = r.tier === "警戒" ? "<b style=\"color:var(--red)\">🔴警戒</b>"
+      : (r.tier === "股東會季" ? "<span style=\"color:var(--tx3)\">股東會季</span>" : "觀察");
+    return {"狀態": badge, "日期": r.d, "股票": r.code + " " + (r.name || ""),
+            "題材": (r.groups || []).join("、") || "—",
+            "身分": r.roles + (r.persons > 1 ? "（" + r.persons + "人）" : ""),
+            "解質張數": r.lots.toLocaleString(), "累積張": r.cum.toLocaleString(),
+            "事件日位階": r.pr === null ? "—" : r.pr,
+            "迄今%": r.ret === null ? "—" : (r.ret > 0 ? "+" : "") + r.ret,
+            "窗剩餘": r.left + "日",
+            "交叉": (r.xref || []).length ? "<b style=\"color:var(--warn,#c3a55a)\">" + r.xref.join("、") + "</b>" : "—",
+            _t: r.tier};
+  });
+  buildTable(document.getElementById("pledgeTable"),
+    [{key: "狀態", label: "狀態"}, {key: "日期", label: "彙整日"}, {key: "股票", label: "股票"},
+     {key: "題材", label: "題材"}, {key: "身分", label: "身分"}, {key: "解質張數", label: "解質張數"},
+     {key: "累積張", label: "累積張"}, {key: "事件日位階", label: "事件日位階"},
+     {key: "迄今%", label: "迄今%"}, {key: "窗剩餘", label: "窗剩餘"}, {key: "交叉", label: "交叉比對"}],
+    evRows, function(r) { return r._t === "警戒" ? "hl-row" : null; });
+}
+
 function renderHealthBar() {
   const el = document.getElementById("healthBar");
   const items = DATA.health || [];
-  if (!items.length) { el.style.display = "none"; return; }
+  const fails = DATA.build_fails || [];
+  if (!items.length && !fails.length) { el.style.display = "none"; return; }
   const nWarn = items.filter(function(h) { return h.s !== "ok"; }).length;
   let html = DATA.version ? "<span style=\"color:var(--tx3)\">" + DATA.version + "</span>" : "";
+  if (fails.length) {
+    const tip = fails.map(function(f) { return f.replace(/"/g, "'"); }).join("&#10;");
+    html += "<span class=\"health-item\" style=\"color:var(--red);font-weight:700\" title=\"" + tip +
+            "\"><span class=\"health-dot crit\"></span>⚠ " + fails.length +
+            " 個區塊建置失敗，該區塊顯示的是空資料（懸停看明細，重跑 python export_html.py 前先修錯誤）</span>";
+  }
   html += "<span style=\"font-weight:600;color:var(--tx2)\">資料健康" +
           (nWarn ? " <span class=\"health-dot warn\"></span>" + nWarn + "項待更新" : " <span class=\"health-dot ok\"></span>全部正常") + "：</span>";
   html += items.map(function(h) {
@@ -3824,7 +4402,7 @@ function renderRevmomTab() {
       "_ty": t.ty3 === null ? -999 : t.ty3,
       "成員數": t.n,
       "前5大營收成員": revmomMemberLinks(t) +
-        " <a href=\"javascript:void(0)\" onclick=\"jumpToRevmom('" + g + "')\" title=\"跳公司/產業歷史趨勢頁看營收圖\">📈</a>",
+        " <a href=\"javascript:void(0)\" onclick=\"jumpToRevmom('" + g + "')\" title=\"跳題材動能與共振頁看營收圖\">📈</a>",
     });
   });
   const el = document.getElementById("revmomNowTable");
@@ -3858,7 +4436,7 @@ function renderRevmomTab() {
                  "進場日(口徑)": sm + "-15" + (today < entry ? "（等進場）" : ""),
                  "約到期": expiry.toISOString().slice(0, 10),
                  "前5大營收成員": revmomMemberLinks(t) +
-                   " <a href=\"javascript:void(0)\" onclick=\"jumpToRevmom('" + g + "')\" title=\"跳公司/產業歷史趨勢頁看營收圖\">📈</a>"});
+                   " <a href=\"javascript:void(0)\" onclick=\"jumpToRevmom('" + g + "')\" title=\"跳題材動能與共振頁看營收圖\">📈</a>"});
     }
   });
   buildTable(document.getElementById("revmomHoldTable"), [
@@ -3877,7 +4455,9 @@ function renderDispoTab() {
   const t = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" +
             String(now.getDate()).padStart(2, "0");
   let nAction = 0;
-  const rows = (dp.rows || []).map(function(r) {
+  // 2026-07-19: 拆股票(4位數)/CB(5-6位數)兩表+分盤/Tier篩選(使用者需求)
+  const allRows = dp.rows || [];
+  const rows = allRows.filter(function(r) { return String(r.code).length === 4; }).map(function(r) {
     let act, actRank;
     if (r.poison) { act = "⚠避開（人工管制類，回測−4.7%/38%）"; actRank = 9; }
     else if (t > r.exitd) { act = "已出關（" + r.exitd + " 開盤=出場點）"; actRank = 8; }
@@ -3899,7 +4479,7 @@ function renderDispoTab() {
     if (r.pre !== null && r.pre > 10) warn.push("⚠前段已漲(樂透格)");
     const tier = (r.theme && r.mins === "20") ? 1 : (r.theme ? 2 : (r.mins === "20" ? 3 : 4));
     return {
-      "股票": link, "_c": r.code,
+      "股票": link, "_c": r.code, "_mins": String(r.mins),
       "Tier": "T" + tier, "_tier": tier,
       "題材": r.theme ? themeLink(r.theme) : "—", "_th": r.theme || "",
       "處置": r.cum + "次/" + r.mins + "分盤" + (r.mkt === "上櫃" ? "·櫃" : ""),
@@ -3911,6 +4491,12 @@ function renderDispoTab() {
       "行動": act + (warn.length ? "　" + warn.join(" ") : ""), "_ar": actRank,
     };
   });
+  // 篩選只影響顯示,行動鈴數(nAction)看全部股票列
+  const fMins = (document.getElementById("dispoFilterMins") || {}).value || "";
+  const fTier = (document.getElementById("dispoFilterTier") || {}).value || "";
+  let shown = rows;
+  if (fMins) shown = shown.filter(function(r) { return r._mins === fMins; });
+  if (fTier) shown = shown.filter(function(r) { return String(r._tier) === fTier; });
   el._sortState = {colIndex: 8, dir: 1};
   buildTable(el, [
     {key: "股票", label: "股票", sortKey: "_c"},
@@ -3922,9 +4508,36 @@ function renderDispoTab() {
     {key: "胃納", label: "胃納(前20日均值)", sortKey: "_cap", numeric: true},
     {key: "第3日值", label: "第3日成交值", sortKey: "_tv", numeric: true},
     {key: "行動", label: "行動（依今日日期自動判定）", sortKey: "_ar", numeric: true},
-  ], rows, function(r) { return r._ar === 0 ? "hl-row" : null; });
+  ], shown, function(r) { return r._ar === 0 ? "hl-row" : null; });
+  // CB處置表(5-6位數代碼,對應股票=前4碼)
+  const cbEl = document.getElementById("dispoCbTable");
+  if (cbEl) {
+    const cbRows = allRows.filter(function(r) { return String(r.code).length > 4; }).map(function(r) {
+      const stk = String(r.code).slice(0, 4);
+      const stkLink = (DATA.company_history && DATA.company_history["台|" + stk])
+        ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + stk + "');showTab(2)\"" +
+          " style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + stk + "</a>"
+        : stk;
+      return {
+        "CB代碼": r.code + " " + (r.name || ""), "_c": r.code,
+        "對應股票": stkLink, "_s": stk,
+        "處置": r.cum + "次/" + r.mins + "分盤" + (r.mkt === "上櫃" ? "·櫃" : ""), "_sev": (r.mins === "20" ? 1 : 0),
+        "期間": r.start.slice(5) + "~" + r.end.slice(5) + "（已走" + r.seq + "日）",
+        "備註": r.poison ? "⚠人工管制" : "",
+      };
+    });
+    buildTable(cbEl, [
+      {key: "CB代碼", label: "CB代碼", sortKey: "_c"},
+      {key: "對應股票", label: "對應股票", sortKey: "_s"},
+      {key: "處置", label: "第N次/分盤", sortKey: "_sev", numeric: true},
+      {key: "期間", label: "處置期間"},
+      {key: "備註", label: "備註"},
+    ], cbRows, null);
+  }
+  const nCb = allRows.length - rows.length;
   document.getElementById("dispoAsof").textContent =
-    "價格資料至 " + (dp.asof || "—") + "｜視窗內 " + rows.length + " 檔｜行動日為平日近似，遇休市順延，以官方公告為準";
+    "價格資料至 " + (dp.asof || "—") + "｜視窗內股票 " + rows.length + " 檔（顯示 " + shown.length + "）＋CB " +
+    nCb + " 檔｜行動日為平日近似，遇休市順延，以官方公告為準";
   const btn = document.getElementById("sigViewDispoBtn");
   if (btn && nAction) btn.innerHTML = "處置股觀察 🔔" + nAction;
 }
@@ -4047,12 +4660,23 @@ function init() {
   if (tmSel.options.length) renderRevmomChart();
   renderRevmomTab();
   renderDispoTab();
+  renderThermoTab();
+  renderConfNotes();
   if (DATA.company_list.length) renderCompanyHistory();
+  else {
+    // 省容量模式: 整個「個股/題材歷史」子頁簽藏掉(SLIM_HISTORY=False重跑即恢復)
+    const hb = document.getElementById("histViewCompanyBtn");
+    if (hb) hb.style.display = "none";
+    const cs = document.getElementById("companySearch");
+    if (cs) { cs.placeholder = "個股歷史趨勢已停用(省容量模式)——export_html.py 開頭 SLIM_HISTORY=False 重跑即恢復"; cs.disabled = true; }
+  }
   initResonance();
   renderHealthBar();
+  renderPledgeView();
 }
 init();
 </script>
+<div id="themeMemberModal" onclick="if(event.target===this)this.style.display='none'"><div class="tm-body"></div></div>
 </body>
 </html>
 """

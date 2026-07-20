@@ -8,7 +8,6 @@ __pycache__/
 tmp_*
 theme_rank.json
 research_*.db
-research_2022_report.html
 tmp_backfill_research_*
 bear_test_2022.py
 micro_bear_2022.py
@@ -19,16 +18,10 @@ pattern_check.py
 finmind_token.txt
 capital_flow.db
 db_backup/
-research_weekly_momo.html
+冷備/
 research_report_tmpl.py
-research_chip_confirm.html
-research_portfolio_overview.html
-research_gap_dip.html
-research_gap_dip_theme.html
-research_revenue_diffusion.html
-research_theme_momentum.html
 signals_export.json
 回答/
 XQ檔案匯入/
 .claude/
-research_panic_liquidity.html
+研究報告/

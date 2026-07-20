@@ -16,6 +16,7 @@ gen_xq_watchlist.py
 import argparse
 import json
 import sqlite3
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -276,7 +277,10 @@ def main():
     ).itertuples()}
     conn.close()
 
-    date_tag = snapshot.replace("-", "")
+    # 檔名=產檔日而非排行快照日(2026-07-19使用者要求: 每週產新檔,不可覆蓋舊檔;
+    # 排行快照日印在console與下方表格,兩者可能不同步——快照未更新時題材Δ組仍是上週口徑)
+    date_tag = date.today().strftime("%Y%m%d")
+    print(f"檔名日期={date_tag}(產檔日)  題材Δ組依據排行快照={snapshot}")
     out_xq = Path(OUT_DIR) / f"XQ_題材Δ_{date_tag}.csv"
     content = "\r\n".join(lines) + "\r\n"
     with open(out_xq, "wb") as f:
