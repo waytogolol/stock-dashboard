@@ -819,6 +819,44 @@ def build():
         data["chip"] = {}
         _sec_fail("籌碼徽章未計算(不影響其他)", e)
 
+    # 共振標籤(2026-07-22上板,觀察層): 同題材同週>=2檔「日線爆量長紅創高+週線同步創高」共振,
+    # 讀build_resonance_theme.py產出的tmp_resonance_theme_events.pkl(需定期重跑刷新,建議併入每週例行)
+    # 只標記最近8週內(比照研究裡的HOLD=8週)還在窗內的事件,舊的不顯示避免誤導成「現在」還在共振
+    try:
+        _reso_ev = pd.read_pickle("tmp_resonance_theme_events.pkl")
+        _reso_ev["week"] = pd.to_datetime(_reso_ev["week"])
+        _reso_last = _reso_ev["week"].max()
+        _reso_recent = _reso_ev[_reso_ev["week"] >= _reso_last - pd.Timedelta(weeks=8)]
+        resonance = {}
+        for _, _r in _reso_recent.sort_values("week").iterrows():
+            for _c in _r["members"]:
+                resonance[_c] = {"theme": _r["theme"], "n_members": int(_r["n_members"]),
+                                  "week": str(_r["week"].date()),
+                                  "weeks_ago": int(round((_reso_last - _r["week"]).days / 7))}
+        data["resonance"] = resonance
+        data["resonance_asof"] = str(_reso_last.date())
+        _conn_r = sqlite3.connect(DB_PATH)
+        _nm_r = dict(_conn_r.execute("SELECT code, name_zh FROM company_names WHERE country='台'"))
+        _conn_r.close()
+        # company_names覆蓋不全(小型股常缺,如共振事件裡的2375/3042等),補rankings表的name欄位
+        _nm_r.update({k: v for k, v in rankings[rankings["country"] == "台"]
+                      .drop_duplicates("code", keep="last").set_index("code")["name"].items()
+                      if k not in _nm_r or not _nm_r[k]})
+        _cur_ev = (_reso_recent.sort_values(["week", "n_members"], ascending=[False, False])
+                   .drop_duplicates(["theme", "week"]))
+        data["resonance_current"] = [
+            {"theme": _r["theme"], "week": str(_r["week"].date()), "n_members": int(_r["n_members"]),
+             "weeks_ago": int(round((_reso_last - _r["week"]).days / 7)),
+             "members": [{"code": _c, "name": _nm_r.get(_c, _c)} for _c in _r["members"]]}
+            for _, _r in _cur_ev.iterrows()
+        ]
+        print(f"共振標籤 {len(resonance)}檔在窗 ({len(data['resonance_current'])}個題材-週事件,最近8週內,"
+              f"資料至{data['resonance_asof']},特徵=日線爆量長紅創高+週線同步創高)")
+    except Exception as e:
+        data["resonance"] = {}
+        data["resonance_current"] = []
+        _sec_fail("共振標籤未計算(需先跑build_resonance_theme.py產生tmp_resonance_theme_events.pkl)", e)
+
     # 產業鏈(橫向上中下游)資料
     try:
         import industry_chains as ic
@@ -1336,6 +1374,50 @@ def build():
                 "ld": _remain6(_ldd6, 20) > 0}
         _expo6 = min(1.0, 0.6 * _lit["thermo"] + 0.4 * _lit["b"] + 0.3 * _lit["warn"]
                      + 0.3 * _lit["conv"] + 0.3 * _lit["ld"])
+
+        # 本輪恐慌溫度計episode聚類(10交易日內視為同一波,比照attention/disposition episode慣例)
+        _ep_start, _ep_peak = None, 0
+        if _thd6:
+            _cluster6 = [_thd6[-1]]
+            for _d in reversed(_thd6[:-1]):
+                if _pos6[_cluster6[-1]] - _pos6[_d] <= 10:
+                    _cluster6.append(_d)
+                else:
+                    break
+            _ep_start = min(_cluster6)
+            _ep_peak = max(_sweet[_d] for _d in _cluster6)
+
+        # 歷史同類事件(甜蜜格並發>=20,固定池1379檔,見build_panic_thermometer_report.py判決)
+        _hist_ep = [
+            {"d": "2020-03-13", "note": "新冠熔斷"},
+            {"d": "2021-05-11", "note": "本土疫情三級警戒"},
+            {"d": "2022-06-22", "note": "⚠唯一敗筆,慢熊中段非底(k60-4.42%)"},
+            {"d": "2024-08-06", "note": "美股崩跌"},
+            {"d": "2025-04-08", "note": "川普關稅日,隔日並發達史上最高77"},
+            {"d": "2026-03-09", "note": ""},
+            {"d": "2026-06-10", "note": ""},
+        ]
+        if _ep_start is not None and str(_ep_start.date()) not in [e["d"] for e in _hist_ep]:
+            _hist_ep.append({"d": str(_ep_start.date()),
+                              "note": f"本次,峰值{_ep_peak}件" + ("(史上第二高)" if _ep_peak >= 50 else "")})
+
+        _light_names = {"thermo": "恐慌溫度計", "b": "亞跌B", "conv": "雙收斂",
+                         "ld": "跌停廣度", "warn": "融資警戒帶"}
+        _lit_on = [k for k in ("thermo", "b", "conv", "ld", "warn") if _lit[k]]
+        if _lit["thermo"]:
+            _co_lit = [_light_names[k] for k in _lit_on if k not in ("thermo",)]
+            _headline = (f"🔴 {sum(_lit.values())}/5燈亮・曝險{_expo6:.2f} — "
+                         f"恐慌溫度計本輪episode {str(_ep_start.date()) if _ep_start else '?'}觸發"
+                         f"(峰值{_ep_peak}件{'/史上第二高' if _ep_peak >= 50 else ''}),"
+                         f"持有窗剩{_remain6(_thd6, 60)}個交易日"
+                         + ("；同步在窗:" + "、".join(_co_lit) if _co_lit else "")
+                         + "。歷史同類事件7戰6勝(僅2022-06-22慢熊中段失手)。")
+        elif sum(_lit.values()) > 0:
+            _headline = (f"🟡 {sum(_lit.values())}/5燈亮・曝險{_expo6:.2f} — "
+                         f"{'、'.join(_light_names[k] for k in _lit_on)}在窗,恐慌溫度計本身未觸發")
+        else:
+            _headline = "🟢 無燈號・曝險0.00 — 市場處於平淡期,無極端讀數"
+
         data["market_thermo"] = {
             "asof": str(_last6.date()),
             "series": [{"d": str(d.date())[5:], "sweet": _sweet[d], "ld": _ldcnt[d]}
@@ -1358,9 +1440,12 @@ def build():
                      "asof": str(_mm_last.date.date()), "lit": _lit["warn"]},
             "exposure": round(_expo6, 2),
             "n_lit": sum(_lit.values()),
+            "headline": _headline,
+            "episodes": _hist_ep,
         }
         print(f"大盤溫度計: {data['market_thermo']['n_lit']}燈亮 曝險{_expo6:.2f} "
               f"(甜蜜格{_sweet[_last6]}/跌停{_ldcnt[_last6]}家 asof {_last6.date()})")
+        print(f"  {_headline}")
     except Exception as e:
         _sec_fail("大盤溫度計未產生", e)
         data["market_thermo"] = None
@@ -2260,6 +2345,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <button class="view-btn" id="sigViewCatchupBtn" onclick="switchSigView('catchup')">補漲雷達</button>
     <button class="view-btn" id="sigViewRevmomBtn" onclick="switchSigView('revmom')">題材營收動能</button>
     <button class="view-btn" id="sigViewDispoBtn" onclick="switchSigView('dispo')">處置股觀察</button>
+    <button class="view-btn" id="sigViewResoBtn" onclick="switchSigView('reso')">🔥共振</button>
     <button class="view-btn" id="sigViewThermoBtn" onclick="switchSigView('thermo')">🌡️大盤溫度計</button>
     <button class="view-btn" id="sigViewPledgeBtn" onclick="switchSigView('pledge')">🔓內部解質警戒</button>
   </div>
@@ -2360,6 +2446,17 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div class="scroll-box"><table id="dispoCbTable"></table></div>
   </div>
 
+  <div id="sigResoView" style="display:none">
+  <h3 class="sec-title">🔥多週期題材共振（2026-07-22上線·研究稿,尚未上正式回測看板）</h3>
+  <div class="rule-card">
+    <div class="rule-item">訊號：同題材(main_group,≥5檔成員)同一週≥2檔個股「日線爆量長紅創高(單日+4%且量≥2倍20日均量)＋週線同步創12週高」雙線對齊——breadth越多檔同振後續越強(2檔中位+2.46%/3檔+以上+6.22%,fwd8週)。</div>
+    <div class="rule-item">驗證(2005-2026,22題材,1,117筆episode)：LOTO 21年100%為正、cluster bootstrap CI95=[+1.85,+5.96]/P(≤0)=0.0005——雙過。疊加TWII/OTC週線水位階梯後MDD由-44%收斂到-16~-21%、夏普由1.14拉高到2.3+(季線下0.3/月線下0.6/月線上1.0)。出場：固定8週持有(資金週轉),8-16週內若拉回(跌破自身月線)可加碼再抱8週(合計中位+3.98%/勝率57%,LOTO+bootstrap雙過)。</div>
+    <div class="rule-item" style="color:var(--tx3)">⚠尚未查證跟既有檢查清單/題材營收動能訊號的重疊率與獨立增量，先列觀察層；成本0.5%/筆未含滑價；個股雙題材標籤可能重複計入。詳細研究報告/research_resonance.html。</div>
+  </div>
+  <div class="hint" id="resoAsof" style="font-weight:600"></div>
+  <div class="scroll-box"><table id="resoTable"></table></div>
+  </div>
+
   <div id="sigPledgeView" style="display:none">
   <h3 class="sec-title">🔓內部解質警戒——大股東/董事長高檔解質＝出貨嫌疑（2026-07-20上板·觀察層）</h3>
   <div class="rule-card">
@@ -2383,10 +2480,13 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div class="rule-item">⚠死格警語：<b>2022-06型慢熊中段恐慌≠底</b>（溫度計唯一敗格）；<b>跌停spike第一腿≠底</b>（2020-01-30，跌停286家後k60−6.28%）；8-10月觸發B＝亞洲逆風季吃短不抱60日；A型環境（美亞同跌）別接，等下一個climax。</div>
     <div class="rule-item">口徑註記：甜蜜格/跌停家數＝研究池1,379檔（與判決同尺，全市場版待複跑升級）；跌停＝前收×0.9進位至tick近似（考卷用官方tick精確版，門檻層級兩版同判）；並發數需當日價格——崩盤日先跑 fetch_daily_price --update 再重匯。</div>
   </div>
+  <div id="thermoHeadline" style="font-size:1.05em;font-weight:700;margin:4px 0 10px;padding:10px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--sf)"></div>
   <div class="hint" id="thermoAsof" style="font-weight:600"></div>
   <div id="thermoCards" style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0"></div>
   <h3 class="sec-title">近10日讀數（甜蜜格並發／跌停家數）</h3>
   <div class="scroll-box"><table id="thermoSeries"></table></div>
+  <h3 class="sec-title">歷史同類事件(甜蜜格並發≥20)</h3>
+  <div class="scroll-box"><table id="thermoEpisodes"></table></div>
   </div>
 </div>
 
@@ -2668,10 +2768,20 @@ function initResonance() {
   (DATA.theme_pivot_all || []).forEach(function(p) { score[p.main_group] = p["熱度分數"] || 0; });
   const themes = Object.keys(cnt).filter(function(g) { return cnt[g] >= 3; });
   themes.sort(function(a, b) { return (score[b] || 0) - (score[a] || 0); });
+  if (!themes.length) {
+    // company_history未載入(SLIM_HISTORY=True省容量模式)時,這個相關係數版共振會是空的——
+    // 不要讓它靜默看起來像壞掉,明講原因;另有事件式的🔥共振標籤(進場訊號頁)不受影響,資料源不同
+    document.getElementById("resTheme").innerHTML = "";
+    const chartEl = document.getElementById("resChart");
+    if (chartEl) chartEl.innerHTML = "<div class=\"hint\">此功能需要個股歷史股價(company_history)，"
+      + "目前為省容量模式未載入(export_html.py開頭SLIM_HISTORY=False重跑即可恢復)。"
+      + "若只是想看「哪些股票最近共振」，改看「進場訊號→🔥共振」頁籤，是另一套事件式訊號不受此限制。</div>";
+    return;
+  }
   document.getElementById("resTheme").innerHTML = themes.map(function(g) {
     return "<option value=\"" + g + "\">" + g + "（" + (score[g] || 0).toFixed(1) + "）</option>";
   }).join("");
-  if (themes.length) renderResonance();
+  renderResonance();
 }
 
 function renderResonance() {
@@ -2901,9 +3011,14 @@ function renderAnatomy() {
              : (chip.f >= 80 ? "<span class=\"sig-pass\">" + chip.f + "✓</span>" : "" + chip.f);
     const sB = chip.s === undefined ? "—"
              : (chip.s >= 80 ? "<span class=\"sig-pass\">" + chip.s + "⚡</span>" : "" + chip.s);
+    const reso = (DATA.resonance || {})[m.key.split("|")[1]];
+    const rB = reso ? "<span class=\"sig-pass\" title=\"" + reso.week + "同週" + reso.n_members
+             + "檔同振(" + (reso.weeks_ago === 0 ? "本週" : reso.weeks_ago + "週前") + "),特徵=日線爆量長紅創高+週線同步創高\">🔥"
+             + reso.n_members + "檔</span>" : "—";
     return {
       "外資位階": fB, "_f": chip.f === undefined ? -1 : chip.f,
       "券資比位階": sB, "_s": chip.s === undefined ? -1 : chip.s,
+      "共振": rB, "_reso": reso ? reso.n_members : -1,
       "成員": "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('" + m.key + "')\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + short + "</a>",
       "_ig": first === null ? 9999 : first,
       "首次點火": first === null ? "—" : dates[first].slice(5),
@@ -2927,6 +3042,7 @@ function renderAnatomy() {
     {key: "佔題材台股%", label: "佔題材台股%", numeric: true},
     {key: "外資位階", label: "外資位階(51名後有效)", sortKey: "_f", numeric: true},
     {key: "券資比位階", label: "券資比位階", sortKey: "_s", numeric: true},
+    {key: "共振", label: "共振(8週內,爆量長紅+週線創高)", sortKey: "_reso", numeric: true},
   ], rows);
 }
 
@@ -3609,7 +3725,7 @@ function renderBanner() {
 
 // ── 進場訊號頁籤 ──────────────────────────────────────────────────────
 function switchSigView(v) {
-  ["Macro", "Micro", "Catchup", "Revmom", "Dispo", "Thermo", "Pledge"].forEach(function(k) {
+  ["Macro", "Micro", "Catchup", "Revmom", "Dispo", "Reso", "Thermo", "Pledge"].forEach(function(k) {
     const on = v === k.toLowerCase();
     document.getElementById("sigView" + k + "Btn").classList.toggle("active", on);
     document.getElementById("sig" + k + "View").style.display = on ? "" : "none";
@@ -3685,6 +3801,11 @@ function renderThermoTab() {
       "<div style=\"margin:6px 0\">" + c.read + "</div>" +
       "<div class=\"hint\" style=\"margin:0\">" + c.verdict + "<br>⚠ " + c.warn + "</div></div>";
   }).join("");
+  const hlEl = document.getElementById("thermoHeadline");
+  if (hlEl && mt.headline) {
+    hlEl.textContent = mt.headline;
+    hlEl.style.color = mt.thermo.lit ? "var(--red)" : (mt.n_lit > 0 ? "#c98a1c" : "var(--tx3)");
+  }
   document.getElementById("thermoAsof").textContent =
     "資料至 " + mt.asof + "｜" + mt.n_lit + " 燈亮｜水位階梯v0曝險讀數 " + mt.exposure.toFixed(2) +
     "（研究稿，非下單指令）";
@@ -3695,6 +3816,11 @@ function renderThermoTab() {
   buildTable(document.getElementById("thermoSeries"),
              [{key: "日期", label: "日期"}, {key: "甜蜜格並發", label: "甜蜜格並發(門檻20)"},
               {key: "跌停家數", label: "收盤跌停家數(門檻20)"}], sRows, null);
+  const epRows = (mt.episodes || []).map(function(e) {
+    return {"日期": e.d, "備註": e.note || ""};
+  });
+  buildTable(document.getElementById("thermoEpisodes"),
+             [{key: "日期", label: "觸發日期"}, {key: "備註", label: "備註"}], epRows, null);
   // 頁頂燈條
   const strip = document.getElementById("thermoStrip");
   if (strip) {
@@ -3835,6 +3961,7 @@ function renderSignalTab() {
           let b = "";
           if (ch.f !== undefined && ch.f >= 80) b += "✓";
           if (ch.s !== undefined && ch.s >= 80) b += "⚡";
+          if ((DATA.resonance || {})[m[0]]) b += "🔥";
           return "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + m[0] + "');showTab(2)\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + m[0] + m[1] + "</a>" + b;
         }).join("、") + ((c.top3 && c.top3.length) ? " <a href=\"javascript:void(0)\" onclick=\"jumpToAnatomy('" + c.theme + "')\" title=\"跳族群金流解剖看完整成員點火時序\">🔎</a>" : "—"),
       "①連漲": pf(c.streak_ok, c.streak + "週"),
@@ -4439,6 +4566,9 @@ function revmomMemberLinks(t) {
     let b = "";
     if (ch.f !== undefined && ch.f >= 80) b += "<span title=\"外資位階≥80：近20日外資累計買賣超在自身一年高檔=聰明錢腳印(回測加分,中小型股有效)\">✓</span>";
     if (ch.s !== undefined && ch.s >= 80) b += "<span title=\"券資比位階≥80：空單/融資比在自身一年高檔=軋空燃料(證據較弱,僅供參考)\">⚡</span>";
+    const reso = (DATA.resonance || {})[m[0]];
+    if (reso) b += "<span title=\"" + reso.week + "同週" + reso.n_members + "檔共振,"
+      + (reso.weeks_ago === 0 ? "本週" : reso.weeks_ago + "週前") + "(觀察層,爆量長紅+週線創高)\">🔥</span>";
     const label = m[0] + m[1] + "(" + (m[2] === null ? "?" : m[2]) + "%)";
     return (DATA.company_history && DATA.company_history["台|" + m[0]])
       ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + m[0] + "');showTab(2)\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + label + "</a>" + b
@@ -4521,6 +4651,38 @@ function renderRevmomTab() {
     {key: "進場日(口徑)", label: "進場日(口徑)"}, {key: "約到期", label: "約到期(60交易日)"},
     {key: "前5大營收成員", label: "前5大營收成員(12月平均占比,回測口徑=全成員等權)"},
   ], hold);
+}
+
+// ── 🔥多週期題材共振(2026-07-22上線,研究稿) ─────────────────────
+function renderResoTab() {
+  const el = document.getElementById("resoTable");
+  if (!el) return;
+  const evs = DATA.resonance_current || [];
+  document.getElementById("resoAsof").textContent = evs.length
+    ? "資料至 " + DATA.resonance_asof + "｜最近8週內共振事件 " + evs.length + " 筆(題材-週)"
+    : "最近8週內無共振事件(需先跑 build_resonance_theme.py 產生/刷新 tmp_resonance_theme_events.pkl)";
+  const rows = evs.map(function(e) {
+    return {
+      "題材": themeLink(e.theme), "_g": e.theme,
+      "觸發週": e.week,
+      "至今幾週": e.weeks_ago === 0 ? "本週" : e.weeks_ago + "週前",
+      "同振數": e.n_members, "_n": e.n_members,
+      "成員": e.members.map(function(m) {
+        return "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + m.code + "');showTab(2)\" "
+          + "style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">"
+          + m.code + " " + m.name + "</a>";
+      }).join("、"),
+    };
+  });
+  rows.sort(function(a, b) { return e_ago(a) - e_ago(b) || b._n - a._n; });
+  function e_ago(r) { return r["至今幾週"] === "本週" ? 0 : parseInt(r["至今幾週"], 10); }
+  buildTable(el, [
+    {key: "題材", label: "題材", sortKey: "_g"},
+    {key: "觸發週", label: "觸發週"},
+    {key: "至今幾週", label: "至今幾週"},
+    {key: "同振數", label: "同振數", sortKey: "_n", numeric: true},
+    {key: "成員", label: "成員(點跳單股)"},
+  ], rows);
 }
 
 // ── 處置股觀察(2026-07-16上線) ───────────────────────────────
@@ -4737,6 +4899,7 @@ function init() {
   if (tmSel.options.length) renderRevmomChart();
   renderRevmomTab();
   renderDispoTab();
+  renderResoTab();
   renderThermoTab();
   renderConfNotes();
   if (DATA.company_list.length) renderCompanyHistory();
