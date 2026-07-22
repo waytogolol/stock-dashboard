@@ -5,9 +5,13 @@
 import json
 import os
 import sqlite3
+import sys
 from datetime import datetime
 
 import pandas as pd
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 DB_PATH = "capital_flow.db"
 OUT_PATH = "dashboard.html"
@@ -2232,7 +2236,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
 </div>
 
 <div class="tab-content" id="tab3">
-  <div class="hint">這個分頁是 `check_earnings.py` 上次執行結果的快照，要更新請在終端機跑 <code>python check_earnings.py</code> 後重新產生 dashboard.html。🔥=3天內 🟠=7天內。</div>
+  <div class="hint">這個分頁是 `check_earnings.py` 上次執行結果的快照，要更新請在終端機跑 <code>python check_earnings.py</code> 後重新產生 dashboard.html。🔥=3天內 🟠=7天內(表格底色/日曆火焰=日期迫近度)；⭐/🔹=公司份量(美股用市值、台/日韓陸用成交金額排名近似，標在公司名前，跟表格底色是兩個獨立維度)。</div>
   <div class="cal-wrap">
     <div class="cal-nav">
       <button onclick="calMove(-1)">&#9664;</button>
@@ -2249,12 +2253,14 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   結構：市場在意(共識vs實際=預期差) / 董座發言原文 / 供應鏈題材連動 / 會後價格驗收 / 操作含義 / 與上次法說會的差異。</div>
   <div id="confNotesPanel"></div>
   <h4>美股財報 <span id="usEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
+  <div class="hint">⭐=市值≥3000億美元、🔹=市值≥1000億美元(標在公司名前)，一天跳出幾十檔時用這個抓真正牽動大盤的重量級，不用逐行看市值欄。</div>
   <div class="scroll-box"><table id="usEarningsTable"></table></div>
   <div class="hint"><b>財報季作戰指南(2026-07回測,觀察層)</b>：①<b>美股龍頭財報「後」10日=台鏈跟漲觀察窗</b>(+0.9%中位/55%，MSFT/AAPL系最明顯；NVDA鏈反向=行情多在財報前price in、開獎後留意獲利了結)。②<b>首發者效應</b>：同題材首家開法說者的市場反應會傳染給還沒開的同業——首發開差→短窗迴避同題材後發成員(PCB/封測/CPO系最靈)；首發開好→後發者進關注清單。記憶體例外(公開報價題材無此效應)。③<b>台積電法說前後</b>：事前2週方向=市場對半導體的預期放大器(多頭年正/熊市年負,環境給方向)。④法說隔日的環節暴衝多為短打資金,等週級資金流訊號接手才算數。<b>點公司名→跳公司歷史頁(題材/產業鏈歸屬+同鏈成員)。</b></div>
   <h4>台股法說會 <span id="twEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
+  <div class="hint">⭐=成交金額排名前20、🔹=前50(標在公司名前，台股沒有市值欄，用排名近似份量)。</div>
   <div class="scroll-box"><table id="twEarningsTable"></table></div>
   <h4>日韓陸財報日 <span id="jpkrEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
-  <div class="hint">日韓=Yahoo(yfinance calendar，日股覆蓋率高、韓股約1/3)；陸=東方財富披露預約(整批API)。各市場前100大、僅未來90天，更新跑 <code>python fetch_earnings_dates.py</code>。歷史財報日累積於DB earnings_dates表(事件研究用)，回補跑 <code>python fetch_earnings_history.py</code>。</div>
+  <div class="hint">日韓=Yahoo(yfinance calendar，日股覆蓋率高、韓股約1/3)；陸=東方財富披露預約(整批API)。各市場前100大、僅未來90天，更新跑 <code>python fetch_earnings_dates.py</code>。歷史財報日累積於DB earnings_dates表(事件研究用)，回補跑 <code>python fetch_earnings_history.py</code>。⭐=排名前20、🔹=前50(同台股邏輯)。</div>
   <div class="scroll-box"><table id="jpkrEarningsTable"></table></div>
 </div>
 
@@ -3211,23 +3217,64 @@ function earningsTierClass(dateStr) {
   return "";
 }
 
+function capBadge(capStr) {
+  // 2026-07-23: 美股一天跳出好幾十檔財報,用市值標重量級,不用逐行看市值欄找哪間牽動大盤
+  const n = parseFloat(String(capStr || "").replace(/[$,]/g, ""));
+  if (!n || isNaN(n)) return "";
+  if (n >= 3e11) return "⭐ ";
+  if (n >= 1e11) return "🔹 ";
+  return "";
+}
+
+function rankBadge(rank) {
+  // 台/日韓陸沒有市值欄,用「成交金額排名」(該市場前100-300大清單裡的名次)近似重量級,同樣零額外抓取成本
+  const n = parseFloat(rank);
+  if (!n || isNaN(n)) return "";
+  if (n <= 20) return "⭐ ";
+  if (n <= 50) return "🔹 ";
+  return "";
+}
+
+function importanceBadge(r, ctry) {
+  return ctry === "美" ? capBadge(r["市值"]) : rankBadge(r["成交金額排名"]);
+}
+
 function linkifyEarn(rows, ctry) {
   // 公司名可點 -> 公司歷史頁(題材chips+產業鏈上中下游成員, 一眼看懂這家是誰)
   return (rows || []).map(function(r) {
     const c = String(r["代碼"] || "").trim();
     const key = (ctry || r["市場"] || "") + "|" + c;
-    if (c && DATA.company_history && DATA.company_history[key] && r["公司"]) {
+    const badge = importanceBadge(r, ctry);
+    let name = r["公司"] || "";
+    if (c && DATA.company_history && DATA.company_history[key] && name) {
+      name = "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('" + key + "');showTab(2)\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + name + "</a>";
+    }
+    if (badge || name !== (r["公司"] || "")) {
       const o = Object.assign({}, r);
-      o["公司"] = "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('" + key + "');showTab(2)\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + r["公司"] + "</a>";
+      o["公司"] = badge + name;
       return o;
     }
     return r;
   });
 }
 
+function mtimeLabel(mtime) {
+  // 2026-07-22: 財報查詢快照太久沒重跑會靜默失效(GOOGL財報日案例),超過7天亮警示提醒重跑check_earnings.py
+  if (!mtime) return "(尚未查詢過)";
+  const m = mtime.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return `(最後查詢: ${mtime})`;
+  const queried = new Date(+m[1], +m[2] - 1, +m[3]);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const staleDays = Math.round((today - queried) / 86400000);
+  if (staleDays > 7) {
+    return `<span style="color:#ff6b6b;font-weight:bold">⚠ 最後查詢: ${mtime}(已 ${staleDays} 天沒更新，請重跑 check_earnings.py)</span>`;
+  }
+  return `(最後查詢: ${mtime})`;
+}
+
 function renderEarningsTab() {
-  document.getElementById("usEarningsMtime").textContent = DATA.us_earnings.mtime ? `(最後查詢: ${DATA.us_earnings.mtime})` : "(尚未查詢過)";
-  document.getElementById("twEarningsMtime").textContent = DATA.tw_earnings.mtime ? `(最後查詢: ${DATA.tw_earnings.mtime})` : "(尚未查詢過)";
+  document.getElementById("usEarningsMtime").innerHTML = mtimeLabel(DATA.us_earnings.mtime);
+  document.getElementById("twEarningsMtime").innerHTML = mtimeLabel(DATA.tw_earnings.mtime);
 
   const usCols = [
     {key: "日期", label: "日期"}, {key: "時段", label: "時段"}, {key: "代碼", label: "代碼"},
@@ -3243,7 +3290,7 @@ function renderEarningsTab() {
   buildTable(document.getElementById("twEarningsTable"), twCols, linkifyEarn(DATA.tw_earnings.rows, "台"), r => earningsTierClass(r["日期"]));
 
   const jpkr = DATA.jpkr_earnings || {rows: []};
-  document.getElementById("jpkrEarningsMtime").textContent = jpkr.mtime ? `(最後查詢: ${jpkr.mtime})` : "(尚未查詢過)";
+  document.getElementById("jpkrEarningsMtime").innerHTML = mtimeLabel(jpkr.mtime);
   const jpkrCols = [
     {key: "日期", label: "日期"}, {key: "市場", label: "市場"}, {key: "代碼", label: "代碼"},
     {key: "公司", label: "公司"}, {key: "成交金額排名", label: "排名", numeric: true}, {key: "主族群", label: "主族群"},
@@ -3294,17 +3341,17 @@ function buildEvtMap() {
   (DATA.tw_earnings.rows || []).forEach(r => {
     const d = r["日期"]; if (!d) return;
     if (!m[d]) m[d] = [];
-    m[d].push({label: r["代碼"] + " " + r["公司"], market: "tw", date: d});
+    m[d].push({label: importanceBadge(r, "台") + r["代碼"] + " " + r["公司"], market: "tw", date: d});
   });
   (DATA.us_earnings.rows || []).forEach(r => {
     const d = r["日期"]; if (!d) return;
     if (!m[d]) m[d] = [];
-    m[d].push({label: r["代碼"], market: "us", date: d});
+    m[d].push({label: importanceBadge(r, "美") + r["代碼"], market: "us", date: d});
   });
   ((DATA.jpkr_earnings || {}).rows || []).forEach(r => {
     const d = r["日期"]; if (!d) return;
     if (!m[d]) m[d] = [];
-    m[d].push({label: r["市場"] + " " + (r["公司"] || r["代碼"]), market: "jpkr", date: d});
+    m[d].push({label: importanceBadge(r, r["市場"]) + r["市場"] + " " + (r["公司"] || r["代碼"]), market: "jpkr", date: d});
   });
   Object.values(DATA.expo_calendar || {}).forEach(expo => {
     expo.dates.forEach(dr => {
