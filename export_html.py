@@ -861,6 +861,32 @@ def build():
         data["resonance_current"] = []
         _sec_fail("共振標籤未計算(需先跑build_resonance_theme.py產生tmp_resonance_theme_events.pkl)", e)
 
+    # 共振·外資確認層(2026-07-24候選,樣本外驗證中;build_resonance_chip.py):
+    # 事件內≥1上市成員外資位階(f)≥80 → fwd8中位+7.10%/勝65%;上市成員全部<80 → -2.66%/44%
+    # (fwd4: +3.08% vs 0.00%, P=0.0000, LOTO 5/5)。只做事件層級排雷,不改變成員選擇。
+    # 直接沿用上方籌碼徽章已算好的data["chip"]的f(外資20日累計240日位階),不重算;
+    # inst_flow只有上市 → 全上櫃成員的事件無法判定(歷史約29%成員無覆蓋)
+    try:
+        _chip_fx = data.get("chip") or {}
+        for _ev in data.get("resonance_current") or []:
+            _fvs = [_chip_fx[_m["code"]]["f"] for _m in _ev["members"]
+                    if _m["code"] in _chip_fx and "f" in _chip_fx[_m["code"]]]
+            _ev["fx"] = "na" if not _fvs else ("ok" if max(_fvs) >= 80 else "warn")
+            _ev["fx_max"] = max(_fvs) if _fvs else None
+            _ev["fx_cov"] = len(_fvs)
+        # 同事件狀態寫回per-code共振標籤(訊號交集的共振欄跟著帶標記)
+        _fx_by_ev = {(_e["theme"], _e["week"]): _e["fx"]
+                     for _e in data.get("resonance_current") or []}
+        for _rz in (data.get("resonance") or {}).values():
+            _rz["fx"] = _fx_by_ev.get((_rz["theme"], _rz["week"]))
+        _fx_cnt = {"ok": 0, "warn": 0, "na": 0}
+        for _e in data.get("resonance_current") or []:
+            _fx_cnt[_e["fx"]] += 1
+        print(f"共振外資確認層: ✓{_fx_cnt['ok']} / ⚠{_fx_cnt['warn']} / —{_fx_cnt['na']} "
+              f"(事件層級,f來源=籌碼徽章{len(_chip_fx)}檔)")
+    except Exception as e:
+        _sec_fail("共振外資確認層未計算(共振標籤本體不受影響)", e)
+
     # 產業鏈(橫向上中下游)資料
     try:
         import industry_chains as ic
@@ -1669,6 +1695,153 @@ def build():
         _sec_fail("法說會提及交叉索引失敗", e)
         data["company_mentions"] = {}
 
+    # ---- 訊號交集(2026-07-23上線,評估輔助): 一檔股票同時出現在幾條「現役」訊號線 ----
+    # 口徑=逐條沿用各檢視已算好的in-memory結構(不重算,永不與原檢視打架):
+    # ①規則①-⑤觸發題材前3大 ②微題材A/B級成員 ③補漲A/B級 ④籌碼外資位階>=80且排名>50(中小型口徑,與signals_export同)
+    # ⑤題材營收動能score=4前5大 ⑥🔥共振8週窗內 ⑦處置窗內非毒格(標分盤/Tier) ⑧🔓解質警戒=賣方訊號,只作衝突旗標不計正向數
+    # ⚠交集「數量」本身未經回測(驗證過的是特定配對的多層確認),定位=評估輔助索引非排行榜,前端hint有完整警語
+    try:
+        _cf_fams = {}      # code -> {family: [labels]}
+        _cf_fb_nm = {}     # 各家族自帶名稱(名稱解析的最後備援)
+
+        def _cf_add(code, fam, label, name=None):
+            code = str(code)
+            _cf_fams.setdefault(code, {}).setdefault(fam, []).append(label)
+            if name and code not in _cf_fb_nm:
+                _cf_fb_nm[code] = str(name)
+
+        for _c in data.get("signal_current", []) or []:
+            if not _c.get("verdict"):
+                continue
+            _lab = _c["theme"] + ("(" + _c["grade"] + ")" if _c.get("grade") else "")
+            for _m in _c.get("top3", []) or []:
+                _cf_add(_m[0], "rule", _lab, _m[1] if len(_m) > 1 else None)
+        for _c in data.get("micro_current", []) or []:
+            if _c.get("grade") not in ("A", "B"):
+                continue
+            for _m in _c.get("members", []) or []:
+                _cf_add(_m["code"], "micro", _c["theme"] + "(" + _c["grade"] + ")", _m.get("name"))
+        for _r in (data.get("catchup_radar") or {}).get("rows", []) or []:
+            if _r.get("grade") in ("A", "B"):
+                _cf_add(_r["code"], "catchup", _r["theme"] + "(" + _r["grade"] + ")", _r.get("name"))
+        _cf_rank = {str(_r.code): int(_r.rank) for _r in latest.itertuples() if _r.country == "台"}
+        for _cd, _v in (data.get("chip") or {}).items():
+            if _v.get("f", -1) >= 80 and _cf_rank.get(str(_cd), 0) > 50:
+                _cf_add(_cd, "chip", int(_v["f"]))
+        _tm_cf = data.get("theme_momentum") or {}
+        _cf_asof_m = _tm_cf.get("asof")
+        if _cf_asof_m:
+            for _g, _t in (_tm_cf.get("themes") or {}).items():
+                _own = _t["months"][-1]
+                _lag = (int(_cf_asof_m[:4]) - int(_own[:4])) * 12 + int(_cf_asof_m[5:7]) - int(_own[5:7])
+                if _t["score"] == 4 and _lag <= 1:
+                    for _m in _t.get("top5", []) or []:
+                        _cf_add(_m[0], "revmom", _g, _m[1])
+        for _cd, _rz in (data.get("resonance") or {}).items():
+            _ago = "本週" if _rz.get("weeks_ago") == 0 else f"{_rz.get('weeks_ago')}週前"
+            # 外資確認層標記(事件層級,2026-07-24候選): ✓=事件內≥1上市成員f≥80 / ⚠=上市成員全<80 / 外資—=無上市覆蓋
+            _fx_tag = {"ok": "·✓外資", "warn": "·⚠無外資", "na": "·外資—"}.get(_rz.get("fx"), "")
+            _cf_add(_cd, "reso", f"{_rz['theme']}{_rz['n_members']}檔·{_ago}{_fx_tag}")
+        _t_cf = pd.Timestamp.today().strftime("%Y-%m-%d")
+        _cf_poison = set()
+        _cf_dispo = {}  # code -> {tier, cap} 供下方「已驗證規則層」R1/R2引用(同迴圈捕捉,不重算)
+        for _r in (data.get("disposition") or {}).get("rows", []) or []:
+            if _r["end"] < _t_cf or len(str(_r["code"])) != 4:
+                continue
+            if _r.get("poison"):
+                _cf_poison.add(str(_r["code"]))
+                continue
+            _tier_cf = (1 if (_r.get("theme") and str(_r.get("mins")) == "20")
+                        else (2 if _r.get("theme") else (3 if str(_r.get("mins")) == "20" else 4)))
+            _cf_add(_r["code"], "dispo", f"{_r['mins']}分盤T{_tier_cf}", _r.get("name"))
+            _cf_dispo[str(_r["code"])] = {"tier": _tier_cf, "cap": _r.get("cap")}
+        for _r in (data.get("pledge_alert") or {}).get("rows", []) or []:
+            if _r.get("tier") == "警戒":
+                _cf_add(_r["code"], "pledge", f"🔴警戒(窗剩{_r.get('left', '?')}日)", _r.get("name"))
+        # 名稱解析(沿用既有備援鏈): company_names → rankings中文名稱/name → 家族自帶名稱
+        _cf_nm = {}
+        for _r in names[names["country"] == "台"].itertuples():
+            _n = getattr(_r, "name_zh", None) or getattr(_r, "name", None)
+            if isinstance(_n, str) and _n:
+                _cf_nm[str(_r.code)] = _n
+        _tw_cf = rankings[rankings["country"] == "台"].drop_duplicates("code", keep="last")
+        for _col in ("中文名稱", "name"):
+            if _col in _tw_cf.columns:
+                for _k, _v in _tw_cf.set_index("code")[_col].items():
+                    if (str(_k) not in _cf_nm or not _cf_nm[str(_k)]) and isinstance(_v, str) and _v:
+                        _cf_nm[str(_k)] = _v
+        _cf_grp = {}
+        for _r in classification[classification["country"] == "台"][["code", "main_group"]] \
+                .drop_duplicates().itertuples(index=False):
+            _cf_grp.setdefault(str(_r.code), []).append(_r.main_group)
+        # R4週漲幅來源=weekly_close最近兩個台股快照(close_lookup已在記憶體,不重查DB)。
+        # 注意weekly_close可能落後rankings一週(fetch_prices未跑最新週)——取「可得的」最近一對,
+        # 回補後自動跟上;新鮮度由頁尾健康列「週收盤價」項把關
+        _r4_gain = {}
+        _wc_tw = sorted({_k[2] for _k in close_lookup if _k[0] == "台"})
+        if len(_wc_tw) >= 2:
+            _d1, _d0 = _wc_tw[-1], _wc_tw[-2]
+            for _k, _v in close_lookup.items():
+                if _k[0] == "台" and _k[2] == _d1 and _v and pd.notna(_v):
+                    _v0 = close_lookup.get(("台", _k[1], _d0))
+                    if _v0 and pd.notna(_v0) and _v0 > 0:
+                        _r4_gain[str(_k[1])] = (_v / _v0 - 1) * 100
+        _CF_POS = ("rule", "micro", "catchup", "chip", "revmom", "reso", "dispo")
+        # 獨立機制家族: 規則+共振同屬動能、微題材+補漲同源,同亮不算兩個獨立確認
+        _CF_MECH = {"rule": "動能", "reso": "動能", "micro": "微題材/補漲", "catchup": "微題材/補漲",
+                    "chip": "籌碼", "revmom": "營收動能", "dispo": "處置"}
+        _cf_rows = []
+        for _cd, _fams in _cf_fams.items():
+            _pos = [f for f in _CF_POS if f in _fams]
+            _row = {"code": _cd,
+                    "name": str(_cf_nm.get(_cd) or _cf_fb_nm.get(_cd) or "").rstrip("*"),
+                    "gs": sorted(set(_cf_grp.get(_cd, [])))[:3],
+                    "n": len(_pos), "nf": len({_CF_MECH[f] for f in _pos})}
+            for _f, _labs in _fams.items():
+                _row[_f] = _labs[0] if _f == "chip" else "、".join(str(x) for x in _labs)
+            _cx = []
+            if _row["n"] >= 1 and "pledge" in _fams:
+                _cx.append("🔓解質警戒")
+            if _row["n"] >= 1 and _cd in _cf_poison:
+                _cx.append("⚠處置毒格")
+            _row["cx"] = "、".join(_cx)
+            # ---- 已驗證規則層(2026-07-24): 該檔「現在」符合哪幾條已回測規則,括號=該規則單獨回測數字 ----
+            # 非組合預測、不做加總計分(疊加效果未驗證);⭐=命中R1-R3強層之一且無衝突旗標。
+            # R1 處置T1甜蜜格=題材∩20分盤×胃納≥2億(+8.83%/78%,見處置頁) / R2 處置T1-T3一般(逐Tier數字)
+            # R3 共振事件✓外資確認(fwd8中位+7.10%/勝65%,候選層樣本外驗證中)
+            # R4 籌碼A1近似=外資位階≥80(交集chip欄口徑,rank>50≈A0的51-300帶)×週漲>10%
+            #    (research_chip_confirm: 4週中位+2.68%/勝57%,2023起有效窗) / R5 營收動能s4=regime依賴
+            _rules = []  # (層級, 標籤) — 層級小=證據強
+            _dp = _cf_dispo.get(_cd)
+            if _dp:
+                if _dp["tier"] == 1 and _dp["cap"] is not None and _dp["cap"] >= 2:
+                    _rules.append((1, "R1處置T1甜蜜格(+8.8%/勝78%)"))
+                elif _dp["tier"] <= 3:
+                    _st = {1: "+8.8%", 2: "+5.5%", 3: "+5.6%"}[_dp["tier"]]
+                    _rules.append((2, f"R2處置T{_dp['tier']}({_st})"))
+            if ((data.get("resonance") or {}).get(_cd) or {}).get("fx") == "ok":
+                _rules.append((3, "R3共振✓外資(8週+7.1%/勝65%·候選)"))
+            if "chip" in _fams and _r4_gain.get(_cd, -99.0) > 10:
+                _rules.append((4, "R4籌碼A1近似(4週中位+2.7%/勝57%)"))
+            if "revmom" in _fams:
+                _rules.append((5, "R5營收動能s4(60日超額+2.6%·僅2025-26強年顯著)"))
+            _rules.sort()
+            _row["rules"] = [_lab for _, _lab in _rules]
+            _row["rp"] = _rules[0][0] if _rules else 9   # 最強規則層級(排序用),9=無命中
+            _row["star"] = bool(_rules and _rules[0][0] <= 3 and not _row["cx"])
+            _cf_rows.append(_row)
+        # 預設排序: ⭐優先關注浮頂 → 最強規則層級R1>R2>..>R5>無 → 交集數 → 家族數 → 代碼
+        _cf_rows.sort(key=lambda r: (-int(r["star"]), r["rp"], -r["n"], -r["nf"], r["code"]))
+        data["confluence"] = {"asof": data.get("latest_date"), "rows": _cf_rows}
+        print(f"訊號交集: 聯集{len(_cf_rows)}檔 / ≥2條{sum(1 for r in _cf_rows if r['n'] >= 2)}檔 / "
+              f"≥3條{sum(1 for r in _cf_rows if r['n'] >= 3)}檔 / "
+              f"衝突{sum(1 for r in _cf_rows if r['cx'])}檔 / "
+              f"規則命中{sum(1 for r in _cf_rows if r['rules'])}檔 / "
+              f"⭐{sum(1 for r in _cf_rows if r['star'])}檔")
+    except Exception as e:
+        _sec_fail("訊號交集未產生", e)
+        data["confluence"] = {"asof": None, "rows": []}
+
     # 精簡訊號摘要匯出(供gen_xq_watchlist.py讀取,不含完整payload,避免重算)
     try:
         rule_hits = [{"theme": c["theme"], "grade": c.get("grade"),
@@ -1708,14 +1881,22 @@ def build():
                       for r in data.get("disposition", {}).get("rows", [])
                       if not r.get("poison") and r["end"] >= _t6
                       and len(str(r["code"])) == 4]
+        # 訊號交集(正向>=2條)——直接取data["confluence"](上方區塊已算好),不重算
+        confluence_hits = [
+            {"code": r["code"], "name": r.get("name", ""), "n": r["n"],
+             "fams": [k for k in ("rule", "micro", "catchup", "chip", "revmom", "reso", "dispo")
+                      if r.get(k)],
+             "star": bool(r.get("star"))}
+            for r in (data.get("confluence") or {}).get("rows", []) if r["n"] >= 2]
         with open("signals_export.json", "w", encoding="utf-8") as f:
             json.dump({"rule_hits": rule_hits, "micro_hits": micro_hits,
                       "catchup_hits": catchup_hits, "chip_hits": chip_hits,
                       "revmom_hits": revmom_hits, "dispo_hits": dispo_hits,
+                      "confluence_hits": confluence_hits,
                       "snapshot_date": data.get("latest_date")}, f, ensure_ascii=False)
         print(f"訊號摘要已匯出 signals_export.json "
               f"(規則{len(rule_hits)}/微題材{len(micro_hits)}/補漲{len(catchup_hits)}/籌碼{len(chip_hits)}"
-              f"/月營收{len(revmom_hits)})")
+              f"/月營收{len(revmom_hits)}/交集{len(confluence_hits)})")
     except Exception as e:
         _sec_fail("訊號摘要匯出失敗(不影響dashboard)", e)
 
@@ -2346,7 +2527,8 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
 
 <div class="tab-content" id="tab7">
   <div class="sc-view-switch">
-    <button class="view-btn active" id="sigViewMacroBtn" onclick="switchSigView('macro')">大題材檢查清單</button>
+    <button class="view-btn active" id="sigViewConfluBtn" onclick="switchSigView('conflu')">🎯訊號交集</button>
+    <button class="view-btn" id="sigViewMacroBtn" onclick="switchSigView('macro')">大題材檢查清單</button>
     <button class="view-btn" id="sigViewMicroBtn" onclick="switchSigView('micro')">微題材脈衝雷達</button>
     <button class="view-btn" id="sigViewCatchupBtn" onclick="switchSigView('catchup')">補漲雷達</button>
     <button class="view-btn" id="sigViewRevmomBtn" onclick="switchSigView('revmom')">題材營收動能</button>
@@ -2355,7 +2537,25 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <button class="view-btn" id="sigViewThermoBtn" onclick="switchSigView('thermo')">🌡️大盤溫度計</button>
     <button class="view-btn" id="sigViewPledgeBtn" onclick="switchSigView('pledge')">🔓內部解質警戒</button>
   </div>
-  <div id="sigMacroView">
+  <div id="sigConfluView">
+  <h3 class="sec-title">🎯訊號交集——哪些股票同時出現在多條訊號線（2026-07-23上線·評估輔助）</h3>
+  <div class="rule-card">
+    <div class="rule-item">彙總對象＝本頁其他檢視「現役」名單的<b>聯集</b>，各欄口徑逐條沿用原檢視已算好的判定、不另行重算：①規則①-⑤觸發題材的前3大成員　②微題材脈衝A/B級成員　③補漲雷達A/B級　④籌碼徽章外資位階≥80（中小型口徑，排名前50大權值股不列）　⑤題材營收動能score=4前5大營收成員　⑥🔥共振8週窗內標籤　⑦處置股觀察窗內非毒格（標分盤/Tier）——這七條計入「正向交集數」；⑧🔓內部解質警戒＝<b>賣方訊號</b>，不計入正向數、只作<b style="color:var(--red)">衝突旗標</b>。</div>
+    <div class="rule-item" style="color:var(--red);font-weight:600">⚠ 交集「數量」本身未經回測——本專案驗證過的是特定配對的多層確認（如籌碼✓當規則訊號的加分項、微題材🅰的毛利確認），不是「訊號越多越好」的計分制；此頁是評估輔助的索引，不是排行榜。規則①-⑤與🔥共振同屬動能家族，同時亮不算兩個獨立確認——「獨立家族數」欄已把 規則+共振、微題材+補漲 各併為一家（家族＝動能／微題材·補漲／籌碼／營收動能／處置）。</div>
+    <div class="rule-item" style="color:var(--tx3)">衝突列（紅底）＝有正向訊號同時掛🔓解質警戒或落在⚠處置毒格（人工管制類）——優先檢討減碼而非加碼，且不受下方門檻篩選影響、永遠顯示。點股名跳單股歷史；各欄細節回原檢視頁看（此頁只是索引）。</div>
+    <div class="rule-item">⭐<b>優先關注</b>（2026-07-24上線）＝命中至少一條<b>強驗證規則</b>（R1處置T1甜蜜格／R2處置T1-T3／R3共振✓外資）且無衝突旗標，固定顯示並浮在預設排序最上方；「已驗證規則」欄逐條列出該檔目前符合的已回測規則，<b>規則後括號＝該條規則單獨的回測數字，非組合預測</b>；排序分層依據＝單一最強規則（R1&gt;R2&gt;R3&gt;R4&gt;R5），<b>不做加總計分</b>（疊加效果未驗證，見上方警語）。R4籌碼A1近似（外資位階≥80×週漲&gt;10%，4週中位+2.7%/勝57%、2023起有效窗）與R5營收動能s4（60日超額+2.6%）為較弱／regime依賴證據（R5僅2025-26強年顯著）——淡色標註參考、不給⭐。</div>
+  </div>
+  <div class="hint" id="confluAsof" style="font-weight:600"></div>
+  <div style="margin:6px 0 8px">
+    正向交集數 <select id="confluFilterMin" onchange="renderConfluTab()">
+      <option value="2" selected>≥2條</option><option value="3">≥3條</option><option value="1">全部(≥1條)</option>
+    </select>
+    <span class="hint" style="display:inline">（預設只列同時出現在≥2條訊號線的股票；「全部」含單一訊號成員）</span>
+  </div>
+  <div class="scroll-box"><table id="confluTable"></table></div>
+  </div>
+
+  <div id="sigMacroView" style="display:none">
   <h3 class="sec-title">檢查清單規則（源自記憶體2025/9案例研究，勿刪）</h3>
   <div class="rule-card">
     <div class="rule-item">① <b>連漲 ≥2 週</b>——熱度分數連續上升，排除單週噪音</div>
@@ -2457,6 +2657,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div class="rule-card">
     <div class="rule-item">訊號：同題材(main_group,≥5檔成員)同一週≥2檔個股「日線爆量長紅創高(單日+4%且量≥2倍20日均量)＋週線同步創12週高」雙線對齊——breadth越多檔同振後續越強(2檔中位+2.46%/3檔+以上+6.22%,fwd8週)。</div>
     <div class="rule-item">驗證(2005-2026,22題材,1,117筆episode)：LOTO 21年100%為正、cluster bootstrap CI95=[+1.85,+5.96]/P(≤0)=0.0005——雙過。疊加TWII/OTC週線水位階梯後MDD由-44%收斂到-16~-21%、夏普由1.14拉高到2.3+(季線下0.3/月線下0.6/月線上1.0)。出場：固定8週持有(資金週轉),8-16週內若拉回(跌破自身月線)可加碼再抱8週(合計中位+3.98%/勝率57%,LOTO+bootstrap雙過)。</div>
+    <div class="rule-item"><b>外資確認層（2026-07-24候選，樣本外驗證中）</b>：共振事件有≥1個上市成員外資位階≥80＝<span class="sig-pass">✓外資確認</span>（歷史8週中位<b>+7.1%</b>／勝65%），上市成員全部&lt;80＝<b style="color:var(--red)">⚠無外資確認</b>（<b>−2.7%</b>／44%；fwd4差+3.1pp，P=0.0000，LOTO 5/5）；全上櫃成員＝—無法判定（外資買賣超資料限上市）。<b>此層只用於排雷，不改變事件內買哪檔</b>；僅2022-07後約4.5年樣本，列候選層。詳build_resonance_chip.py。</div>
     <div class="rule-item" style="color:var(--tx3)">⚠尚未查證跟既有檢查清單/題材營收動能訊號的重疊率與獨立增量，先列觀察層；成本0.5%/筆未含滑價；個股雙題材標籤可能重複計入。詳細研究報告/research_resonance.html。</div>
   </div>
   <div class="hint" id="resoAsof" style="font-weight:600"></div>
@@ -3772,7 +3973,7 @@ function renderBanner() {
 
 // ── 進場訊號頁籤 ──────────────────────────────────────────────────────
 function switchSigView(v) {
-  ["Macro", "Micro", "Catchup", "Revmom", "Dispo", "Reso", "Thermo", "Pledge"].forEach(function(k) {
+  ["Conflu", "Macro", "Micro", "Catchup", "Revmom", "Dispo", "Reso", "Thermo", "Pledge"].forEach(function(k) {
     const on = v === k.toLowerCase();
     document.getElementById("sigView" + k + "Btn").classList.toggle("active", on);
     document.getElementById("sig" + k + "View").style.display = on ? "" : "none";
@@ -4700,6 +4901,65 @@ function renderRevmomTab() {
   ], hold);
 }
 
+// ── 🎯訊號交集(2026-07-23上線,評估輔助): 一檔股票同時出現在幾條現役訊號線 ──
+function renderConfluTab() {
+  const cf = DATA.confluence || {};
+  const rows = cf.rows || [];
+  const el = document.getElementById("confluTable");
+  if (!el) return;
+  const minN = parseInt((document.getElementById("confluFilterMin") || {}).value || "2", 10);
+  const n2 = rows.filter(function(r) { return r.n >= 2; }).length;
+  const n3 = rows.filter(function(r) { return r.n >= 3; }).length;
+  const ncx = rows.filter(function(r) { return r.cx; }).length;
+  const nstar = rows.filter(function(r) { return r.star; }).length;
+  // ⭐優先關注列與衝突列一樣不受門檻篩選影響,永遠顯示
+  const shown = rows.filter(function(r) { return r.n >= minN || r.cx || r.star; });
+  document.getElementById("confluAsof").textContent = rows.length
+    ? "資料至 " + (cf.asof || "—") + "｜現役訊號成員聯集 " + rows.length + " 檔｜≥2條 " + n2 +
+      " 檔｜≥3條 " + n3 + " 檔｜⭐優先關注 " + nstar + " 檔｜衝突 " + ncx +
+      " 檔（目前顯示 " + shown.length + " 檔）"
+    : "目前無任何現役訊號成員（或交集區塊建置失敗，見頁尾健康列）。";
+  const trows = shown.map(function(r) {
+    const nm = (r.star ? "⭐" : "") + r.code + " " + (r.name || "");
+    const link = (DATA.company_history && DATA.company_history["台|" + r.code])
+      ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + r.code + "');showTab(2)\"" +
+        " style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + nm + "</a>"
+      : nm;
+    // 已驗證規則欄: R1-R3=強層(⭐依據,粗體)/R4-R5=弱層或regime依賴(淡色參考)
+    const rulesHtml = (r.rules || []).map(function(s) {
+      return /^R[123]/.test(s) ? "<b>" + s + "</b>" : "<span style=\"color:var(--tx3)\">" + s + "</span>";
+    }).join("<br>") || "—";
+    return {
+      "股票": link, "_c": r.code,
+      "主族群": (r.gs || []).map(function(g) { return themeLink(g); }).join("、") || "—",
+      "_g": (r.gs || []).join("、"),
+      "交集": r.n, "家族": r.nf,
+      "衝突": r.cx ? "<b style=\"color:var(--red)\">" + r.cx + "</b>" : "", "_cx": r.cx || "",
+      "已驗證規則": rulesHtml, "_rp": (r.star ? 0 : 10) + (r.rp || 9),
+      "規則": r.rule, "微題材": r.micro, "補漲": r.catchup, "外資位階": r.chip,
+      "營收動能": r.revmom, "共振": r.reso, "處置": r.dispo, "解質": r.pledge,
+    };
+  });
+  buildTable(el, [
+    {key: "股票", label: "股票", sortKey: "_c"},
+    {key: "主族群", label: "主族群", sortKey: "_g"},
+    {key: "交集", label: "正向交集數", numeric: true},
+    {key: "家族", label: "獨立家族數", numeric: true},
+    {key: "衝突", label: "衝突", sortKey: "_cx"},
+    {key: "已驗證規則", label: "已驗證規則(單條回測數字)", sortKey: "_rp", numeric: true},
+    {key: "規則", label: "①-⑤規則(題材·級)"},
+    {key: "微題材", label: "微題材脈衝"},
+    {key: "補漲", label: "補漲雷達"},
+    {key: "外資位階", label: "籌碼·外資位階", numeric: true},
+    {key: "營收動能", label: "營收動能s4"},
+    {key: "共振", label: "🔥共振"},
+    {key: "處置", label: "處置(分盤·Tier)"},
+    {key: "解質", label: "🔓解質警戒"},
+  ], trows, function(r) { return r._cx ? "hl-row" : null; });
+  const btn = document.getElementById("sigViewConfluBtn");
+  if (btn && n2) btn.innerHTML = "🎯訊號交集 🔔" + n2;
+}
+
 // ── 🔥多週期題材共振(2026-07-22上線,研究稿) ─────────────────────
 function renderResoTab() {
   const el = document.getElementById("resoTable");
@@ -4709,11 +4969,25 @@ function renderResoTab() {
     ? "資料至 " + DATA.resonance_asof + "｜最近8週內共振事件 " + evs.length + " 筆(題材-週)"
     : "最近8週內無共振事件(需先跑 build_resonance_theme.py 產生/刷新 tmp_resonance_theme_events.pkl)";
   const rows = evs.map(function(e) {
+    // 外資確認層(2026-07-24候選,事件層級排雷,不改變成員選擇)
+    let fx, fxRank;
+    if (e.fx === "ok") {
+      fx = "<span class=\"sig-pass\">✓外資確認" +
+           (e.fx_max !== null && e.fx_max !== undefined ? "(最高" + e.fx_max + ")" : "") + "</span>";
+      fxRank = 0;
+    } else if (e.fx === "warn") {
+      fx = "<span style=\"color:var(--red);font-weight:600\">⚠無外資確認" +
+           (e.fx_max !== null && e.fx_max !== undefined ? "(最高僅" + e.fx_max + ")" : "") + "</span>";
+      fxRank = 1;
+    } else if (e.fx === "na") {
+      fx = "<span class=\"sig-fail\">—無法判定(無上市外資資料)</span>"; fxRank = 2;
+    } else { fx = "—"; fxRank = 3; }
     return {
       "題材": themeLink(e.theme), "_g": e.theme,
       "觸發週": e.week,
       "至今幾週": e.weeks_ago === 0 ? "本週" : e.weeks_ago + "週前",
       "同振數": e.n_members, "_n": e.n_members,
+      "外資確認": fx, "_fx": fxRank,
       "成員": e.members.map(function(m) {
         return "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + m.code + "');showTab(2)\" "
           + "style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">"
@@ -4728,6 +5002,7 @@ function renderResoTab() {
     {key: "觸發週", label: "觸發週"},
     {key: "至今幾週", label: "至今幾週"},
     {key: "同振數", label: "同振數", sortKey: "_n", numeric: true},
+    {key: "外資確認", label: "外資確認(候選層)", sortKey: "_fx", numeric: true},
     {key: "成員", label: "成員(點跳單股)"},
   ], rows);
 }
@@ -4947,6 +5222,7 @@ function init() {
   renderRevmomTab();
   renderDispoTab();
   renderResoTab();
+  renderConfluTab();
   renderThermoTab();
   renderConfNotes();
   if (DATA.company_list.length) renderCompanyHistory();
