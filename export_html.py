@@ -1233,6 +1233,120 @@ def build():
         _sec_fail("處置股觀察未產生", e)
         data["disposition"] = {"asof": None, "rows": []}
 
+    # ---- 跌觸發觀察+處置倒數計時器v1(2026-07-27上板;規則卡=候選,詳研究報告/research_attention.html) ----
+    # A清單=近25交易日跌觸發episode首筆(候選規則卡=排除款4∧跌幅>=34%∧金流>=0.3億∧有PE)
+    # B計時器=近30日曆日有公告的碼: 快速道(連3日款一)/標準道(10日6次/30日12次,款一~八)/分盤預測
+    try:
+        _c6 = sqlite3.connect(DB_PATH)
+        _at6 = pd.read_sql("SELECT code, name, market, announce_date, reason, triggers, pe "
+                           "FROM attention", _c6)
+        _at6["announce_date"] = pd.to_datetime(_at6.announce_date)
+        _at6 = _at6[_at6.code.str.fullmatch(r"\d{4}", na=False)]
+        _t6 = pd.Timestamp.today().normalize()
+        _at6 = (_at6[_at6.announce_date >= _t6 - pd.Timedelta(days=90)]
+                .drop_duplicates(["code", "announce_date"]).sort_values(["code", "announce_date"]))
+        _codes6 = sorted(_at6.code.unique())
+        _watch, _cd = [], []
+        if _codes6:
+            _px6 = pd.read_sql("SELECT code, date, close, money FROM fm_daily_price WHERE code IN (%s)"
+                               % ",".join("?" * len(_codes6)), _c6, params=_codes6)
+            _px6["date"] = pd.to_datetime(_px6.date)
+            _cal6 = pd.DatetimeIndex(sorted(pd.read_sql(
+                "SELECT DISTINCT date FROM fm_daily_price ORDER BY date DESC LIMIT 120", _c6)["date"]))
+            _cal6 = pd.to_datetime(_cal6)
+            _ci6 = {d: i for i, d in enumerate(_cal6)}
+            _pmap6 = {c: g.sort_values("date").reset_index(drop=True) for c, g in _px6.groupby("code")}
+            _dsp6 = pd.read_sql("SELECT code, announce_date, end_date FROM disposition", _c6)
+            _dsp6["announce_date"] = pd.to_datetime(_dsp6.announce_date, errors="coerce")
+            _dsp6["end_date"] = pd.to_datetime(_dsp6.end_date, errors="coerce")
+            _in_dispo6 = set(_dsp6.loc[_dsp6.end_date >= _t6, "code"])  # 已在處置窗=計時器排除(歸處置頁管)
+            _at6["ci"] = _at6.announce_date.map(lambda d: _ci6.get(d, float("nan")))
+            import re as _re6
+            for _cd6, _g6 in _at6.groupby("code"):
+                _g6 = _g6.sort_values("announce_date")
+                _last6 = _g6.iloc[-1]
+                _gci = _g6.ci.dropna()
+                # --- A) 跌觸發episode首筆(近25交易日) ---
+                for _k6 in range(len(_g6)):
+                    _r6 = _g6.iloc[_k6]
+                    if pd.isna(_r6.ci):
+                        continue
+                    _prev = _g6.iloc[_k6 - 1] if _k6 > 0 else None
+                    _isfirst = _prev is None or pd.isna(_prev.ci) or (_r6.ci - _prev.ci) > 10
+                    _rs = str(_r6.reason)
+                    _isdown = ("跌幅" in _rs) and ("漲幅" not in _rs)
+                    if not (_isfirst and _isdown and _r6.ci >= len(_cal6) - 25):
+                        continue
+                    _mags = [float(x) for x in _re6.findall(r"跌幅[達為]?\s*(-?[\d.]+)\s*%", _rs)]
+                    _mag = max(_mags) if _mags else None
+                    _tg = str(_r6.triggers or "")
+                    _has4 = "4" in _tg.split(",")
+                    _gpx = _pmap6.get(_cd6)
+                    _amt = None
+                    if _gpx is not None:
+                        _b6 = _gpx[_gpx.date < _r6.announce_date].tail(20)
+                        _b6 = _b6[_b6.money > 0]
+                        if len(_b6) >= 10:
+                            _amt = round(float(_b6.money.mean()) / 1e8, 2)
+                    _peok = pd.notna(_r6.pe) and _r6.pe > 0
+                    _ok = (not _has4) and (_mag is not None and _mag >= 34) and (
+                        _amt is not None and _amt >= 0.3) and _peok
+                    _ent_i = int(_r6.ci) + 1
+                    _watch.append({
+                        "code": _cd6, "name": _r6["name"] or "", "mkt": _r6.market,
+                        "ann": _r6.announce_date.strftime("%m-%d"),
+                        "mag": _mag, "tg": _tg, "pe": None if pd.isna(_r6.pe) else round(float(_r6.pe), 1),
+                        "amt": _amt, "ok": bool(_ok),
+                        "entry": _cal6[_ent_i].strftime("%m-%d") if _ent_i < len(_cal6) else "次交易日",
+                        "exitd": _cal6[_ent_i + 10].strftime("%m-%d") if _ent_i + 10 < len(_cal6) else "(T+10)",
+                    })
+                # --- B) 倒數計時器(近30日曆日有公告;已在處置窗者排除=歸處置頁管) ---
+                if _last6.announce_date < _t6 - pd.Timedelta(days=30) or not len(_gci) \
+                        or _cd6 in _in_dispo6:
+                    continue
+                _now_i = len(_cal6) - 1
+                _cnt30 = int((_g6.announce_date >= _t6 - pd.Timedelta(days=30)).sum())
+                _cnt10 = int((_g6.ci >= _now_i - 9).sum())
+                _cis = set(int(x) for x in _gci)
+                _consec, _j6 = 0, int(_gci.max())
+                while _j6 in _cis:
+                    _consec += 1
+                    _j6 -= 1
+                # 連續段是否全款一(快速道條件)
+                _tail6 = _g6[_g6.ci > _gci.max() - _consec]
+                _all1 = bool(len(_tail6)) and all(str(t or "") == "1" for t in _tail6.triggers)
+                _fast = max(0, 3 - _consec) if _all1 else None
+                # 標準道: 款一~八的公告日數
+                def _c18(row):
+                    return any(x in {"1", "2", "3", "4", "5", "6", "7", "8"}
+                               for x in str(row or "").split(","))
+                _n10_18 = int(sum(_c18(t) for t in _g6[_g6.ci >= _now_i - 9].triggers))
+                _n30_18 = int(sum(_c18(t) for t in _g6[_g6.announce_date >= _t6 - pd.Timedelta(days=45)].triggers))
+                _std10, _std30 = max(0, 6 - _n10_18), max(0, 12 - _n30_18)
+                _pd30 = int((_dsp6[(_dsp6.code == _cd6)].announce_date >= _t6 - pd.Timedelta(days=45)).sum())
+                _cum6 = None
+                _gpx = _pmap6.get(_cd6)
+                if _gpx is not None and len(_gpx) >= 7 and _gpx.close.iloc[-7] > 0:
+                    _cum6 = round(float(_gpx.close.iloc[-1] / _gpx.close.iloc[-7] - 1) * 100, 1)
+                _danger = min([x for x in (_fast, _std10, _std30) if x is not None] or [9])
+                _cd.append({
+                    "code": _cd6, "name": _last6["name"] or "", "mkt": _last6.market,
+                    "last": _last6.announce_date.strftime("%m-%d"), "n30": _cnt30, "n10_18": _n10_18,
+                    "consec": _consec, "all1": _all1,
+                    "fast": _fast, "std10": _std10, "std30": _std30, "danger": int(_danger),
+                    "mins": "20" if _pd30 >= 1 else "5", "cum6": _cum6,
+                })
+        _c6.close()
+        _cd.sort(key=lambda r: (r["danger"], -r["n30"]))
+        data["attwatch"] = {"asof": _t6.strftime("%Y-%m-%d"),
+                            "watch": sorted(_watch, key=lambda r: (not r["ok"], r["ann"]), reverse=False),
+                            "countdown": _cd[:60]}
+        print(f"跌觸發/處置預警: 觀察清單{len(_watch)}筆(規則卡✓{sum(1 for w in _watch if w['ok'])}) "
+              f"計時器{len(_cd)}檔(危險度<=1={sum(1 for c in _cd if c['danger'] <= 1)})")
+    except Exception as e:
+        _sec_fail("跌觸發/處置預警未產生", e)
+        data["attwatch"] = {"asof": None, "watch": [], "countdown": []}
+
     # 資料健康狀態列：各資料源最新日期+新鮮度(門檻依各源的正常更新節奏)
     try:
         from datetime import date as _date
@@ -2568,6 +2682,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <button class="view-btn" id="sigViewMicroBtn" onclick="switchSigView('micro')">微題材脈衝雷達</button>
     <button class="view-btn" id="sigViewCatchupBtn" onclick="switchSigView('catchup')">補漲雷達</button>
     <button class="view-btn" id="sigViewRevmomBtn" onclick="switchSigView('revmom')">題材營收動能</button>
+    <button class="view-btn" id="sigViewAttwatchBtn" onclick="switchSigView('attwatch')">📉跌觸發/處置預警</button>
     <button class="view-btn" id="sigViewDispoBtn" onclick="switchSigView('dispo')">處置股觀察</button>
     <button class="view-btn" id="sigViewResoBtn" onclick="switchSigView('reso')">🔥共振</button>
     <button class="view-btn" id="sigViewThermoBtn" onclick="switchSigView('thermo')">🌡️大盤溫度計</button>
@@ -2605,6 +2720,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   </div>
   <h3 class="sec-title">本週檢查表（每次資料更新自動重算）</h3>
   <div class="hint" id="sigRegime" style="font-weight:600"></div>
+  <div class="hint" id="tomHint"></div>
   <div class="hint"><b>前3大成員=回測口徑</b>：歷次回測的買法就是「觸發時買題材前3大台股資金成員、等權持8週」——這欄就是「該做哪幾隻」的直接答案；點股名跳單股雙軸圖、🔎跳族群金流解剖看完整成員點火時序；名後✓/⚡=籌碼位階徽章(外資/券資比在自身一年高檔)。依通過條數排序。✓/✗ 對應規則①~④；推薦程度=綜合①~⑤與大盤態勢的信心分級（內部權重）：<b>⭐⭐⭐重點</b>=歷史最高勝率情境、<b>⭐⭐標準</b>、<b>⭐觀察</b>=等結構確認、<b>⚠</b>=退潮接刀警示（假說級，自動降一級）。題材名後<b>🔥</b>=該題材近8週內有多週期共振事件（滑鼠停留看幾檔同振/幾週前，詳🔥共振頁籤）——規則與共振同屬動能家族，同時亮＝加強確認而非兩票獨立訊號（重疊樣本歷史上最強但n小未轉正）。分級是研究地圖，非投資建議。</div>
   <div class="scroll-box"><table id="signalNowTable"></table></div>
   <h3 class="sec-title">歷史訊號紀錄</h3>
@@ -2655,6 +2771,21 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div class="scroll-box"><table id="revmomHoldTable"></table></div>
   </div>
 
+  <div id="sigAttwatchView" style="display:none">
+  <h3 class="sec-title">📉 跌觸發觀察清單（候選規則卡・2026-07-27上板live驗證中）</h3>
+  <div class="rule-card">
+    <div class="rule-item">訊號：官方公告「因<b>累積跌幅</b>列注意股」（跌觸發）＝買訊——<b>次日開盤買、持10個交易日</b>（回測t10中位+5.62%/勝率66%/n=477，LOTO 8/8+bootstrap雙過；持有網格顯示20日更肥+13.59%/70%，持有期待裁）。<b>候選規則卡（三刀格,live驗證中）</b>：排除款4 ∧ 公告跌幅≥34% ∧ 前20日均成交值≥0.3億 ∧ 有本益比 → 回測+18.16%/79%(n=91,約11件/年)；金流≥1億版+20.04%/88%。劑量單調（跌越深越肥,Q4深39-59%→+12.67%/78%）＝「被洗越慘反彈越肥」定理第三度重現。</div>
+    <div class="rule-item" style="color:var(--tx3)">⚠警語：⭘規則卡由跌觸發→劑量→金流三刀互動切出＝候選級證據；<b>2026年全組-2.50%/28%＝八年首個負年份</b>，本清單即為live驗證場，先觀察後投錢。已知虧損主源＝事後真升級處置的那群（-2.31%/45%）但事前切不開——下表計時器可當風險參考（越接近處置門檻越危險）。資料源fetch_attention.py，<b>每日跑才即時</b>（目前隨集體例行）。詳研究報告/research_attention.html。</div>
+  </div>
+  <div class="hint" id="attwatchAsof" style="font-weight:600"></div>
+  <div class="scroll-box"><table id="attWatchTable"></table></div>
+  <h3 class="sec-title" style="margin-top:16px">⏳ 處置倒數計時器 v1（升級規則條文精算・款門檻距離為近似）</h3>
+  <div class="rule-card">
+    <div class="rule-item">升級條文（上市/上櫃邏輯一致）：<b>快速道</b>＝連續3個營業日因款一觸發→直接處置；<b>標準道</b>＝最近10日有6日、或30日內12日因款一~八觸發→處置。分盤：30日內第1次處置→<b>5分盤</b>、第2次以上→<b>20分盤</b>（10個營業日）。危險度＝距最近一條升級路徑還差幾個觸發日；<b>6日累積%</b>欄＝款一門檻的原料（門檻近似：上市±32%/上櫃±30%，以官方公告為準）。</div>
+    <div class="rule-item" style="color:var(--tx3)">用途：①跌觸發持股的風險監控（快進處置的=虧損高風險群）②處置V4的提前佈局名單（危險度0-1＝隨時可能公告，公告日=V5口徑「公告收盤前」判斷窗）③20分盤預測=30日內已有處置紀錄者。v1為條文的觸發日數精算+款一近似，款2-13門檻距離為v2範圍。</div>
+  </div>
+  <div class="scroll-box"><table id="attCdTable"></table></div>
+  </div>
   <div id="sigDispoView" style="display:none">
   <h3 class="sec-title">處置股觀察——流動性凍結週期策略（2026-07-16上線·live驗證中）</h3>
   <div class="rule-card">
@@ -4011,7 +4142,7 @@ function renderBanner() {
 
 // ── 進場訊號頁籤 ──────────────────────────────────────────────────────
 function switchSigView(v) {
-  ["Conflu", "Macro", "Micro", "Catchup", "Revmom", "Dispo", "Reso", "Thermo", "Pledge"].forEach(function(k) {
+  ["Conflu", "Macro", "Micro", "Catchup", "Revmom", "Attwatch", "Dispo", "Reso", "Thermo", "Pledge"].forEach(function(k) {
     const on = v === k.toLowerCase();
     document.getElementById("sigView" + k + "Btn").classList.toggle("active", on);
     document.getElementById("sig" + k + "View").style.display = on ? "" : "none";
@@ -4128,6 +4259,25 @@ function renderThermoTab() {
 }
 
 function renderSignalTab() {
+  // 📅月內節律小提示(2026-07-27上板,build_index_tom.py判決:窗真實但=全球TOM資金流非月營收埋伏)
+  const tomEl = document.getElementById("tomHint");
+  if (tomEl) {
+    const nowD = new Date();
+    const day = nowD.getDate();
+    const inWin = day >= 25 || day <= 5;
+    let status;
+    if (inWin) {
+      const end = day >= 25 ? new Date(nowD.getFullYear(), nowD.getMonth() + 1, 5)
+                            : new Date(nowD.getFullYear(), nowD.getMonth(), 5);
+      status = "<b style=\"color:var(--amb)\">目前在窗內</b>（至 " + (end.getMonth() + 1) + "/5 前後）";
+    } else {
+      status = "目前月中弱段（歷史每日≈0），下個窗 " + (nowD.getMonth() + 1) + "/25 開啟";
+    }
+    tomEl.innerHTML = "📅 <b>月內節律</b>：" + status +
+      "。統計（1999-2026）：25日~次月5日＝月內唯一正報酬段（TAIEX勝率62%／OTC 64%），機制＝<b>全球性月初資金流</b>" +
+      "（美日韓同窗更強）、非台灣月營收埋伏。用法＝新倉佈局偏好20~24日等窗口、短線腿月初1-2日偏了結、OTC比加權敏感；" +
+      "<span style=\"color:var(--tx3)\">⚠加權2013後此效應已弱化，僅執行時點參考、不是進場訊號、不改變任何規則判定。</span>";
+  }
   const cur = DATA.signal_current || [];
   const microTrig = (DATA.micro_current || []).filter(function(c) { return c.level; }).length;
   const macroTrig = cur.filter(function(c) { return c.verdict; }).length;
@@ -5045,6 +5195,80 @@ function renderResoTab() {
   ], rows);
 }
 
+// ── 跌觸發觀察+處置倒數計時器v1(2026-07-27上板) ─────────────────
+function renderAttwatchTab() {
+  const aw = DATA.attwatch || {};
+  const wEl = document.getElementById("attWatchTable");
+  const cEl = document.getElementById("attCdTable");
+  if (!wEl || !cEl) return;
+  const lnk = function(code, name) {
+    const nm = code + " " + (name || "");
+    return (DATA.company_history && DATA.company_history["台|" + code])
+      ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + code + "');showTab(2)\"" +
+        " style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + nm + "</a>" : nm;
+  };
+  const wRows = (aw.watch || []).map(function(r) {
+    return {
+      "股票": lnk(r.code, r.name), "_c": r.code,
+      "規則卡": r.ok ? "<b style=\"color:var(--amb)\">✓符合</b>" : "", "_ok": r.ok ? 0 : 1,
+      "公告日": r.ann,
+      "公告跌幅": r.mag === null || r.mag === undefined ? "—" : r.mag.toFixed(1) + "%", "_m": r.mag || 0,
+      "款別": r.tg + (r.tg && r.tg.split(",").indexOf("4") >= 0 ? " ⚠含款4" : ""),
+      "金流": r.amt === null || r.amt === undefined ? "—" : r.amt + "億", "_a": r.amt || 0,
+      "PE": r.pe === null || r.pe === undefined ? "虧損/無" : r.pe,
+      "進場→出場": r.entry + " → " + r.exitd + "（T+10）",
+      "市場": r.mkt,
+    };
+  });
+  wEl._sortState = {colIndex: 1, dir: 0};
+  buildTable(wEl, [
+    {key: "股票", label: "股票", sortKey: "_c"},
+    {key: "規則卡", label: "候選規則卡", sortKey: "_ok", numeric: true},
+    {key: "公告日", label: "公告日"},
+    {key: "公告跌幅", label: "公告跌幅(劑量)", sortKey: "_m", numeric: true},
+    {key: "款別", label: "觸發款別"},
+    {key: "金流", label: "前20日均值", sortKey: "_a", numeric: true},
+    {key: "PE", label: "本益比"},
+    {key: "進場→出場", label: "回測口徑進出場"},
+    {key: "市場", label: "市場"},
+  ], wRows, function(r) { return r._ok === 0 ? "hl-row" : null; });
+  const cRows = (aw.countdown || []).map(function(r) {
+    const paths = [];
+    if (r.fast !== null && r.fast !== undefined) paths.push("快速道差" + r.fast + "日");
+    paths.push("10日6次差" + r.std10, "30日12次差" + r.std30);
+    return {
+      "股票": lnk(r.code, r.name), "_c": r.code,
+      "危險度": r.danger <= 1 ? "<b style=\"color:var(--red)\">🔥差" + r.danger + "日</b>" : "差" + r.danger + "日",
+      "_d": r.danger,
+      "最近公告": r.last, "30日次數": r.n30, "連續日": r.consec + (r.all1 ? "(全款一)" : ""),
+      "升級路徑": paths.join("｜"),
+      "預測分盤": r.mins + "分盤" + (r.mins === "20" ? "（30日內已有處置）" : ""),
+      "6日累積%": r.cum6 === null || r.cum6 === undefined ? "—" : ((r.cum6 > 0 ? "+" : "") + r.cum6 + "%"),
+      "_c6": r.cum6 || 0, "市場": r.mkt,
+    };
+  });
+  cEl._sortState = {colIndex: 1, dir: 0};
+  buildTable(cEl, [
+    {key: "股票", label: "股票", sortKey: "_c"},
+    {key: "危險度", label: "危險度(差幾個觸發日)", sortKey: "_d", numeric: true},
+    {key: "最近公告", label: "最近公告"},
+    {key: "30日次數", label: "30日公告數", numeric: true},
+    {key: "連續日", label: "連續觸發"},
+    {key: "升級路徑", label: "各升級路徑距離"},
+    {key: "預測分盤", label: "若處置→分盤"},
+    {key: "6日累積%", label: "6日累積漲跌(款一原料)", sortKey: "_c6", numeric: true},
+    {key: "市場", label: "市場"},
+  ], cRows, function(r) { return r._d <= 1 ? "hl-row" : null; });
+  const nOk = (aw.watch || []).filter(function(r) { return r.ok; }).length;
+  const nHot = (aw.countdown || []).filter(function(r) { return r.danger <= 1; }).length;
+  document.getElementById("attwatchAsof").textContent =
+    "資料至 " + (aw.asof || "—") + "｜觀察清單 " + (aw.watch || []).length + " 筆（規則卡✓ " + nOk +
+    "）｜計時器 " + (aw.countdown || []).length + " 檔（危險度≤1： " + nHot + "）｜注意公告為每日資料，週末批次更新會落後1-3天";
+  const btn = document.getElementById("sigViewAttwatchBtn");
+  const nBell = nOk + nHot;
+  if (btn && nBell) btn.innerHTML = "📉跌觸發/處置預警 🔔" + nBell;
+}
+
 // ── 處置股觀察(2026-07-16上線) ───────────────────────────────
 function renderDispoTab() {
   const dp = DATA.disposition || {};
@@ -5279,6 +5503,7 @@ function init() {
   if (tmSel.options.length) renderRevmomChart();
   renderRevmomTab();
   renderDispoTab();
+  renderAttwatchTab();
   renderResoTab();
   renderConfluTab();
   renderThermoTab();

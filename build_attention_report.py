@@ -199,6 +199,18 @@ def main():
             s["rng"] = f"{sub.drop_mag.min():.0f}~{sub.drop_mag.max():.0f}%"
             s["upg"] = sub.upgrade.mean() * 100
         dose[q] = s
+    # 劑量×金流交叉(使用者胃納疑慮): 深跌組多小票,但肉在有量的
+    d2 = down.dropna(subset=["drop_mag", "amt20"]).copy()
+    s1, s2 = d2.amt20.quantile(1 / 3), d2.amt20.quantile(2 / 3)
+    d2["sz"] = np.where(d2.amt20 < s1, "小", np.where(d2.amt20 < s2, "中", "大"))
+    d2["mq"] = pd.qcut(d2.drop_mag.rank(method="first"), 4, labels=["Q1淺", "Q2", "Q3", "Q4深"])
+    cross = {}
+    for q in ["Q3", "Q4深"]:
+        for sz in ["小", "中", "大"]:
+            cross[f"{q}×金流{sz}"] = sstat(d2.loc[(d2.mq == q) & (d2.sz == sz), "t10"])
+    rule1 = sstat(d2.loc[(d2.drop_mag >= 34) & (d2.amt20 >= 1.0), "t10"])
+    rule03 = sstat(d2.loc[(d2.drop_mag >= 34) & (d2.amt20 >= 0.3), "t10"])
+    liq_note = {q: d2.loc[d2.mq == q, "amt20"].median() for q in ["Q1淺", "Q2", "Q3", "Q4深"]}
     groups["PE虧損/無值"] = gs(down.loss_pe)
     groups["PE有值"] = gs(~down.loss_pe)
     groups["低價股(價位後1/3)"] = gs(down.close_price < down.close_price.quantile(1 / 3))
@@ -254,6 +266,12 @@ def main():
         f"<td class='{'good' if v['med'] > 0 else 'bad'}'>{v['med']:+.2f}%</td>"
         f"<td>{v['mean']:+.2f}%</td><td>{v['win']:.0f}%</td><td>{v['n']}</td><td>{v['upg']:.0f}%</td></tr>"
         for q, v in dose.items() if v)
+    cross_rows = "".join(
+        f"<tr><td style='text-align:left'>{k}</td>"
+        f"<td class='{'good' if v['med'] > 0 else 'bad'}'>{v['med']:+.2f}%</td>"
+        f"<td>{v['mean']:+.2f}%</td><td>{v['win']:.0f}%</td><td>{v['n']}</td></tr>"
+        for k, v in cross.items() if v)
+    liq_txt = " / ".join(f"{q}={v:.2f}億" for q, v in liq_note.items())
     yr_rows = "".join(
         f"<tr><td style='text-align:left'>{y}</td><td class='{'good' if r.med > 0 else 'bad'}'>{r.med:+.2f}%</td>"
         f"<td>{r.win:.0f}%</td><td>{int(r.n)}</td><td>{r['sum']:+.0f}pp</td></tr>"
@@ -291,6 +309,13 @@ LOTO {v['pos']}/{v['tot']}年為正(最壞剔{v['worst_yr']}仍{v['worst']:+.2f}
 <div class="note">「30日6次+」=升級處置標準道(10日6次/30日12次)的事前代理=「準備進處置」組;「事後真升級」為ex-post描述,不可當進場條件。</div>
 <h2>二b、觸發強度劑量（公告原文解析「累積跌幅達XX%」,事前可知;先驗=跌越深越肥）</h2>
 <table><tr><th>劑量四分位(跌幅範圍)</th><th>中位</th><th>均值</th><th>勝率</th><th>n</th><th>事後升級處置率</th></tr>{dose_rows}</table>
+<h2>二c、劑量×金流交叉（胃納量體檢:深跌組六成是&lt;0.3億小票,但肉在有量的）</h2>
+<table><tr><th>格(金流三分位切點{s1:.2f}/{s2:.2f}億)</th><th>中位</th><th>均值</th><th>勝率</th><th>n</th></tr>{cross_rows}</table>
+<div class="card"><b>⚡候選規則卡（三刀探索格,待live驗證後上板）</b>: 跌觸發∧排除款4∧<b>跌幅≥34%</b>∧<b>金流≥1億</b>
+→ t10中位 <b class="good">{rule1['med']:+.2f}%</b>/勝率{rule1['win']:.0f}%/n={rule1['n']}(約5件/年);
+放寬金流≥0.3億 → <b class="good">{rule03['med']:+.2f}%</b>/{rule03['win']:.0f}%/n={rule03['n']}(約11件/年)。
+劑量組金流中位: {liq_txt}。amt20=公告<b>前</b>20日常態量(公告後必爆量=保守估);流動性濾網是加分不是成本(有量=有人接非殭屍票)。
+<span style="color:#e06c5a">⚠警語: 此格由跌觸發→劑量→金流三刀互動切出+2026年整體負年份,證據等級=候選;先掛觀察清單live驗證。</span></div>
 <h2>三、權益曲線（單利Σ,每筆1單位;紅線=cap10併發限制較貼實戰）</h2>
 <div id="eq" style="height:420px"></div>
 <h2>四、逐年表（t10）</h2>
