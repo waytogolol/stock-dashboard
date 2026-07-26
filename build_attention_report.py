@@ -226,13 +226,28 @@ def main():
         if ma.sum() >= 15 and mb.sum() >= 15:
             sub_tests[la] = loto_boot(down[ma], down[mb], "t10")
 
-    # 權益曲線(單利Σ)與cap10併發版
+    # 權益曲線(單利Σ)與cap10併發版 — 全變體(使用者2026-07-27要求全部疊圖供判斷)
     dd = down.sort_values("date")
+    excl4 = ~dd.triggers.astype(str).str.split(",").map(lambda x: "4" in x)
+    m34 = dd.drop_mag >= 34
+    rule03_m = excl4 & m34 & (dd.amt20 >= 0.3) & (~dd.loss_pe)
+    rule1_m = excl4 & m34 & (dd.amt20 >= 1.0) & (~dd.loss_pe)
+    q4_m = dd.drop_mag >= dd.drop_mag.quantile(0.75)
     curves = {}
     for lab, sub in [("全體跌觸發", dd), ("純款1", dd[dd.triggers == "1"]),
-                     ("混合觸發", dd[dd.triggers.astype(str).str.contains(",")])]:
+                     ("混合觸發", dd[dd.triggers.astype(str).str.contains(",")]),
+                     ("劑量Q4深(前25%)", dd[q4_m]),
+                     ("規則卡(≥34%∧0.3億∧PE)", dd[rule03_m]),
+                     ("規則卡嚴格(≥34%∧1億∧PE)", dd[rule1_m])]:
         eq = sub.t10.cumsum()
         curves[lab] = (sub.date.dt.strftime("%Y-%m-%d").tolist(), eq.round(1).tolist())
+    # 圖B: 持有期比較(t10 vs t20, 全體與規則卡)
+    curves2 = {}
+    for lab, sub, col in [("全體 t10", dd, "t10"), ("全體 t20", dd, "t20"),
+                          ("規則卡0.3億 t10", dd[rule03_m], "t10"),
+                          ("規則卡0.3億 t20", dd[rule03_m], "t20")]:
+        _sc = sub.dropna(subset=[col])
+        curves2[lab] = (_sc.date.dt.strftime("%Y-%m-%d").tolist(), _sc[col].cumsum().round(1).tolist())
     open_pos, eq10, val10 = [], [], 0.0
     capd, capv = [], []
     for r in dd.itertuples():
@@ -281,10 +296,18 @@ def main():
         f"差值bootstrap CI95=[{v['lo']:+.2f},{v['hi']:+.2f}]pp P(≤0)={v['p']:.4f}</div>"
         for k, v in sub_tests.items())
     traces = []
-    colors = {"全體跌觸發": "#e8b34b", "純款1": "#7ab8e0", "混合觸發": "#7ec97e", "cap10併發限制": "#e06c5a"}
+    colors = {"全體跌觸發": "#e8b34b", "純款1": "#7ab8e0", "混合觸發": "#7ec97e",
+              "劑量Q4深(前25%)": "#b393d3", "規則卡(≥34%∧0.3億∧PE)": "#f2f2ee",
+              "規則卡嚴格(≥34%∧1億∧PE)": "#6bb7e3", "cap10併發限制": "#e06c5a"}
     for lab, (xs, ys) in curves.items():
         traces.append({"x": xs, "y": ys, "name": lab, "mode": "lines",
-                       "line": {"color": colors[lab], "width": 2}})
+                       "line": {"color": colors.get(lab, "#8a8878"), "width": 2}})
+    traces2 = []
+    colors2 = {"全體 t10": "#e8b34b", "全體 t20": "#e06c5a",
+               "規則卡0.3億 t10": "#f2f2ee", "規則卡0.3億 t20": "#7ec97e"}
+    for lab, (xs, ys) in curves2.items():
+        traces2.append({"x": xs, "y": ys, "name": lab, "mode": "lines",
+                        "line": {"color": colors2.get(lab, "#8a8878"), "width": 2}})
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>注意股跌觸發完整報告(2026-07-26)</title>
 <script src="plotly.min.js"></script><style>
 body{{background:#1a1a19;color:#fff;font-family:"Noto Sans TC",sans-serif;margin:24px;max-width:1100px}}
@@ -316,15 +339,21 @@ LOTO {v['pos']}/{v['tot']}年為正(最壞剔{v['worst_yr']}仍{v['worst']:+.2f}
 放寬金流≥0.3億 → <b class="good">{rule03['med']:+.2f}%</b>/{rule03['win']:.0f}%/n={rule03['n']}(約11件/年)。
 劑量組金流中位: {liq_txt}。amt20=公告<b>前</b>20日常態量(公告後必爆量=保守估);流動性濾網是加分不是成本(有量=有人接非殭屍票)。
 <span style="color:#e06c5a">⚠警語: 此格由跌觸發→劑量→金流三刀互動切出+2026年整體負年份,證據等級=候選;先掛觀察清單live驗證。</span></div>
-<h2>三、權益曲線（單利Σ,每筆1單位;紅線=cap10併發限制較貼實戰）</h2>
-<div id="eq" style="height:420px"></div>
+<h2>三、權益曲線A：全變體比較（單利Σ,每筆1單位;點圖例可開關線;紅線=cap10併發限制較貼實戰）</h2>
+<div id="eq" style="height:440px"></div>
+<div class="note">判讀:規則卡線(白/藍)斜率最陡但事件稀(n=91/41);劑量Q4深(紫)介於中間;cap10(紅)=全體訊號在10檔併發上限下的實戰版。注意各線事件數不同,比「斜率與回撤形狀」不比絕對高度。</div>
+<h2>三b、權益曲線B：持有期比較（t10 vs t20）</h2>
+<div id="eq2" style="height:400px"></div>
 <h2>四、逐年表（t10）</h2>
 <table><tr><th>年</th><th>中位</th><th>勝率</th><th>n</th><th>年Σ</th></tr>{yr_rows}</table>
 <div class="note">單利Σ={eqs.iloc[-1]:+.0f}pp、equity MDD={mdd:+.0f}pp;cap10版Σ={capv[-1] if capv else 0:+.1f}pp(成交{len(capd)}/{len(dd)}筆)。
 規則卡:跌觸發次日開盤買/持10日/排除款4/混合觸發加分;與處置V4同機制家族不同事件批=分散來源;上板待裁示。</div>
-<script>Plotly.newPlot("eq",{json.dumps(traces)},{{paper_bgcolor:"#1a1a19",plot_bgcolor:"#1e1e1c",
-font:{{color:"#c3c2b7"}},margin:{{t:20}},xaxis:{{gridcolor:"#2b2b29"}},yaxis:{{gridcolor:"#2b2b29",title:"累計pp"}},
-legend:{{orientation:"h"}}}},{{displayModeBar:false}});</script>
+<script>
+const LAYOUT={{paper_bgcolor:"#1a1a19",plot_bgcolor:"#1e1e1c",font:{{color:"#c3c2b7"}},margin:{{t:20}},
+xaxis:{{gridcolor:"#2b2b29"}},yaxis:{{gridcolor:"#2b2b29",title:"累計pp"}},legend:{{orientation:"h"}}}};
+Plotly.newPlot("eq",{json.dumps(traces)},LAYOUT,{{displayModeBar:false}});
+Plotly.newPlot("eq2",{json.dumps(traces2)},LAYOUT,{{displayModeBar:false}});
+</script>
 </body></html>"""
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html)
