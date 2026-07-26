@@ -1124,7 +1124,7 @@ def build():
     try:
         _c5 = sqlite3.connect(DB_PATH)
         _dsp = pd.read_sql("SELECT * FROM disposition", _c5)
-        for _cc in ("start_date", "end_date"):
+        for _cc in ("start_date", "end_date", "announce_date"):
             _dsp[_cc] = pd.to_datetime(_dsp[_cc], errors="coerce")
         _dsp = _dsp.dropna(subset=["start_date", "end_date"])
         _today5 = pd.Timestamp.today().normalize()
@@ -1139,6 +1139,12 @@ def build():
                 % ",".join("?" * len(_codes5)), _c5, params=_codes5)
             _px5["date"] = pd.to_datetime(_px5.date)
             _pxmap = {c: g.sort_values("date") for c, g in _px5.groupby("code")}
+            # d4w=公告時千張大戶4週流向(2026-07-25複驗轉正: 20分盤正式/5分盤候選;口徑同build_disposition_tdcc)
+            _tdc5 = pd.read_sql(
+                "SELECT code, date, p1000 FROM tdcc_weekly WHERE code IN (%s)"
+                % ",".join("?" * len(_codes5)), _c5, params=_codes5)
+            _tdc5["date"] = pd.to_datetime(_tdc5.date)
+            _tdmap = {c: g.sort_values("date").reset_index(drop=True) for c, g in _tdc5.groupby("code")}
             _cls5 = classification[classification["country"] == "台"][["code", "main_group"]] \
                 .drop_duplicates("code").set_index("code")["main_group"].to_dict()
             _nm5 = (rankings[rankings["country"] == "台"].drop_duplicates("code", keep="last")
@@ -1189,6 +1195,26 @@ def build():
                             _tv3 = round(float(_w.money.iloc[2]) / 1e8, 2)
                         _last = _w.date.iloc[-1].strftime("%Y-%m-%d")
                 _poison = "人工管制" in str(_e.reason)
+                # 持有中管理欄(2026-07-25路徑考卷): V4進場價/距進場%/首次觸攤平帶日
+                _v4px, _cur, _addond = None, None, None
+                if _g5 is not None and len(_g5):
+                    _win5 = _g5[(_g5.date >= _s0) & (_g5.date <= _endd)]
+                    if len(_win5) >= 3 and _win5.close.iloc[2] > 0:
+                        _v4px = round(float(_win5.close.iloc[2]), 2)
+                        _aft = _win5.iloc[3:]
+                        _aft = _aft[_aft.close > 0]
+                        if len(_aft):
+                            _cur = round(float(_aft.close.iloc[-1] / _v4px - 1) * 100, 1)
+                            _hit = _aft[_aft.close / _v4px - 1 <= -0.10]
+                            if len(_hit):
+                                _addond = _hit.date.iloc[0].strftime("%m-%d")
+                _d4w = None
+                _tg5 = _tdmap.get(_e.code)
+                if _tg5 is not None and len(_tg5) >= 5 and pd.notna(_e.announce_date):
+                    _cut5 = _e.announce_date - pd.Timedelta(days=3)
+                    _i5 = int(_tg5.date.searchsorted(_cut5, side="right")) - 1
+                    if _i5 >= 4 and (_cut5 - _tg5.date.iloc[_i5]).days <= 21:
+                        _d4w = round(float(_tg5.p1000.iloc[_i5] - _tg5.p1000.iloc[_i5 - 4]), 2)
                 _dsp_rows.append({
                     "code": _e.code, "name": _nm5.get(_e.code, ""),
                     "mkt": _e.market, "cum": int(_e.cum_count or 1), "mins": _e.match_min,
@@ -1197,6 +1223,7 @@ def build():
                     "seq": _seq, "pre": _pre, "tv3": _tv3, "cap": _cap, "px_asof": _last,
                     "v4d": _v4d.strftime("%Y-%m-%d"), "v5d": _dv5.strftime("%Y-%m-%d"),
                     "exitd": _exitd.strftime("%Y-%m-%d"),
+                    "v4px": _v4px, "cur": _cur, "addond": _addond, "d4w": _d4w,
                 })
         _c5.close()
         data["disposition"] = {"asof": _cal5[-1].strftime("%Y-%m-%d") if _cal5 else None,
@@ -2537,6 +2564,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <button class="view-btn" id="sigViewThermoBtn" onclick="switchSigView('thermo')">🌡️大盤溫度計</button>
     <button class="view-btn" id="sigViewPledgeBtn" onclick="switchSigView('pledge')">🔓內部解質警戒</button>
   </div>
+  <div class="hint">頁籤上的數字＝該檢視「現在有事」的量：大題材🔔=本週檢查清單觸發的題材數、微題材🔔=本週脈衝A/B級數、處置🔔=今日需行動檔數(V4/V5買點日·出場日·🟢攤平帶)、補漲🎯=現役候選檔數；主頁籤「進場訊號🔔」=大題材+微題材合計。沒掛數字=該頁目前無新觸發，常設內容照常看。</div>
   <div id="sigConfluView">
   <h3 class="sec-title">🎯訊號交集——哪些股票同時出現在多條訊號線（2026-07-23上線·評估輔助）</h3>
   <div class="rule-card">
@@ -2568,7 +2596,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   </div>
   <h3 class="sec-title">本週檢查表（每次資料更新自動重算）</h3>
   <div class="hint" id="sigRegime" style="font-weight:600"></div>
-  <div class="hint"><b>前3大成員=回測口徑</b>：歷次回測的買法就是「觸發時買題材前3大台股資金成員、等權持8週」——這欄就是「該做哪幾隻」的直接答案；點股名跳單股雙軸圖、🔎跳族群金流解剖看完整成員點火時序；名後✓/⚡=籌碼位階徽章(外資/券資比在自身一年高檔)。依通過條數排序。✓/✗ 對應規則①~④；推薦程度=綜合①~⑤與大盤態勢的信心分級（內部權重）：<b>⭐⭐⭐重點</b>=歷史最高勝率情境、<b>⭐⭐標準</b>、<b>⭐觀察</b>=等結構確認、<b>⚠</b>=退潮接刀警示（假說級，自動降一級）。分級是研究地圖，非投資建議。</div>
+  <div class="hint"><b>前3大成員=回測口徑</b>：歷次回測的買法就是「觸發時買題材前3大台股資金成員、等權持8週」——這欄就是「該做哪幾隻」的直接答案；點股名跳單股雙軸圖、🔎跳族群金流解剖看完整成員點火時序；名後✓/⚡=籌碼位階徽章(外資/券資比在自身一年高檔)。依通過條數排序。✓/✗ 對應規則①~④；推薦程度=綜合①~⑤與大盤態勢的信心分級（內部權重）：<b>⭐⭐⭐重點</b>=歷史最高勝率情境、<b>⭐⭐標準</b>、<b>⭐觀察</b>=等結構確認、<b>⚠</b>=退潮接刀警示（假說級，自動降一級）。題材名後<b>🔥</b>=該題材近8週內有多週期共振事件（滑鼠停留看幾檔同振/幾週前，詳🔥共振頁籤）——規則與共振同屬動能家族，同時亮＝加強確認而非兩票獨立訊號（重疊樣本歷史上最強但n小未轉正）。分級是研究地圖，非投資建議。</div>
   <div class="scroll-box"><table id="signalNowTable"></table></div>
   <h3 class="sec-title">歷史訊號紀錄</h3>
   <div class="hint">+8週/13週最大 = 觸發後熱度分數倍率(非股價)。對照概念股名單見專案資料夾 tmp_scan_members.txt。</div>
@@ -2624,6 +2652,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div class="rule-item">機制：處置＝監管製造的可預測流動性凍結（分盤撮合＋預收全額款券趕走投機資金→公告衝擊跌），期滿前資金搶跑回流。逐日解剖(~1,890事件)：<b>公告首日−1.87%→中段築底→倒數第2日+1.43%(全週期最強日)→出關起連三日負</b>。「出關行情」是迷思——出關日進場的人是本策略的出場流動性。</div>
     <div class="rule-item">兩個進場形態(皆<b>尾盤收盤買</b>)：<b>V4＝第3個處置日</b>買、抱全段(~8交易日，淨中位+3.78%/勝率62%)；<b>V5＝倒數第3日</b>買、搶跑段(~4交易日，前段一直跌組+4.14%/66%——前段已大漲的別買，出關後是50/50肥尾樂透)。<b>出場鐵律＝出關日開盤，不戀棧</b>。</div>
     <div class="rule-item">加分項(劑量單調)：<b>20分鐘分盤</b>(第2次處置)+6.96%/71% &gt; 5分鐘+2.26%；<b>題材成員</b>+6.88%/70%(名單有事後偏差,幅度打折看)；公告衝擊跌越深越好。<b>⚠避開</b>：「人工管制撮合」類(−4.71%/38%)、第3日成交值&lt;0.3億的小票、前段已漲&gt;10%的強勢票。</div>
+    <div class="rule-item">持有中管理(2026-07-25路徑考卷,配對差LOTO 8/8+bootstrap)：進場後<b>不停損</b>(−10%停損8年0正=砍在統計谷底,跌破−10%後剩餘段中位5分+1.5%/20分+7.0%仍為正)、<b>不追強</b>(漲+3%加碼8年0正)；首次收盤<b>跌破−10%＝🟢攤平帶</b>(用<b>新資金</b>加1單位抱到出關,配對差5分+1.65pp/20分+1.80pp；<b>−15%以下肉沒了別攤</b>;勿預留半倉等攤平=等本金版輸day0滿倉)。<b>d4w欄</b>=公告時千張大戶4週流向,&gt;0✓=大戶逆接中(信心加碼層;<b>20分盤已轉正</b>/5分盤候選僅參考,覆蓋64%缺值顯—)。逐筆歷史K棒與標準路徑對照見 研究報告/research_disposition_trades.html。</div>
     <div class="rule-item">選件分層(回測V4淨額,倉位大小參考——T1給大份/T4給小份,取捨用先到先選+並發上限5)：
       <table style="margin:6px 0 2px">
         <tr><th>Tier</th><th>條件</th><th>淨中位</th><th>勝率</th><th>月均</th></tr>
@@ -5029,7 +5058,23 @@ function renderDispoTab() {
     else if (t < r.v4d) { act = "等V4買點 " + r.v4d; actRank = 3; }
     else if (t < r.v5d) { act = "V5買點 " + r.v5d + "｜持有者抱至出關"; actRank = 2; }
     else { act = "持有至出關 " + r.exitd + " 開盤"; actRank = 2; }
+    // 持有中管理(2026-07-25路徑考卷): -10~-15%=已驗證攤平帶(新資金加碼點,升行動鈴)
+    if (r.cur !== null && r.cur !== undefined && !r.poison && t <= r.end &&
+        r.cur <= -10 && r.cur > -15) {
+      act += "｜🟢攤平帶";
+      if (actRank > 1) actRank = 1;
+    }
     if (actRank <= 1 && !r.poison) nAction++;
+    let hold = "—", holdV = -999;
+    if (r.cur !== null && r.cur !== undefined) {
+      holdV = r.cur;
+      hold = (r.cur > 0 ? "+" : "") + r.cur.toFixed(1) + "%";
+      if (r.cur <= -15) hold += " ⚠別攤";
+      else if (r.cur <= -10) hold += " 🟢攤平帶";
+      else if (r.addond) hold += "（" + r.addond + "曾觸攤）";
+    }
+    const d4 = (r.d4w === null || r.d4w === undefined) ? "—"
+      : ((r.d4w > 0 ? "+" : "") + r.d4w.toFixed(2) + (r.d4w > 0 ? "✓" : ""));
     const nm = r.code + " " + (r.name || "");
     const link = (DATA.company_history && DATA.company_history["台|" + r.code])
       ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + r.code + "');showTab(2)\"" +
@@ -5049,6 +5094,8 @@ function renderDispoTab() {
       "前段%": r.pre === null ? "—" : ((r.pre > 0 ? "+" : "") + r.pre + "%"), "_pre": r.pre === null ? 0 : r.pre,
       "胃納": r.cap === null || r.cap === undefined ? "—" : r.cap + "億", "_cap": r.cap || 0,
       "第3日值": r.tv3 === null ? "—" : r.tv3 + "億", "_tv": r.tv3 === null ? 0 : r.tv3,
+      "距進場": hold, "_cur": holdV,
+      "d4w": d4, "_d4": (r.d4w === null || r.d4w === undefined) ? -999 : r.d4w,
       "行動": act + (warn.length ? "　" + warn.join(" ") : ""), "_ar": actRank,
     };
   });
@@ -5058,7 +5105,7 @@ function renderDispoTab() {
   let shown = rows;
   if (fMins) shown = shown.filter(function(r) { return r._mins === fMins; });
   if (fTier) shown = shown.filter(function(r) { return String(r._tier) === fTier; });
-  el._sortState = {colIndex: 8, dir: 1};
+  el._sortState = {colIndex: 10, dir: 1};
   buildTable(el, [
     {key: "股票", label: "股票", sortKey: "_c"},
     {key: "Tier", label: "Tier", sortKey: "_tier", numeric: true},
@@ -5068,6 +5115,8 @@ function renderDispoTab() {
     {key: "前段%", label: "前段報酬", sortKey: "_pre", numeric: true},
     {key: "胃納", label: "胃納(前20日均值)", sortKey: "_cap", numeric: true},
     {key: "第3日值", label: "第3日成交值", sortKey: "_tv", numeric: true},
+    {key: "距進場", label: "距V4進場%(持有中)", sortKey: "_cur", numeric: true},
+    {key: "d4w", label: "d4w(公告時)", sortKey: "_d4", numeric: true},
     {key: "行動", label: "行動（依今日日期自動判定）", sortKey: "_ar", numeric: true},
   ], shown, function(r) { return r._ar === 0 ? "hl-row" : null; });
   // CB處置表(5-6位數代碼,對應股票=前4碼)

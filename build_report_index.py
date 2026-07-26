@@ -6,7 +6,11 @@ CATALOG手動維護(新報告加一行即可)，依研究日期新→舊排序�
 
 CATALOG = [
     # (研究日期, 檔名, 主題, 策略開發狀態, 一句話判決)
-    # 狀態: live=✅已上板 tool=🧭時機工具 watch=🟡觀察層 wip=⏳研究中 dead=❌否定封存 meta=📊總覽
+    # 狀態: live=✅已上板 tool=🧭時機工具 watch=🟡觀察層 wip=⏳研究中 dead=❌否定封存 meta=📊總覽 view=🔍盤感工具
+    ("2026-07-25", "research_disposition_trades.html", "處置V4逐筆交易K棒檢視器", "view",
+     "全2,953筆V4交易逐筆K棒+進出場/攤平點/標準路徑帶(產生器build_disposition_trade_viewer.py,價格更新後重跑);"
+     "配套路徑考卷判決:窗內停損❌(8年0正,砍在統計谷底)/跌-10%攤平✅(配對差5分+1.65pp/20分+1.80pp,LOTO8/8,-15%以下別攤)/"
+     "漲+3%加碼❌;d4w複驗=20分盤轉正/5分盤候選,live口徑d4w>0;內建G1-G4/V4/V5規則速查"),
     ("2026-07-20", "research_pledge_release.html", "H-解質(內部人高檔解質=賣方訊號)", "watch",
      "✅成立=體系首個個股層賣方訊號:內部人(董座/大股東)×高檔位階≥80×大額≥1000張→x60超額-6.90%/36%(n=330);配對複核過(配對差-3.93pp CI上緣<0);放空載具❌(中位真均值假右尾屠殺,停損版仍1.45x/MDD-60%)=訊號屬防守;質押面二題❌(低檔補提無增量/存量無梯度)=方向專一三度確認;上板警戒標記等裁示"),
     ("2026-07-20", "research_tx_tail.html", "H-尾盤結構性賣壓(台指期全史)", "watch",
@@ -41,6 +45,7 @@ STATUS = {
     "live": ("s-live", "✅已上板"), "tool": ("s-tool", "🧭時機工具"),
     "watch": ("s-watch", "🟡觀察層"), "wip": ("s-wip", "⏳研究中"),
     "dead": ("s-dead", "❌否定封存"), "meta": ("s-meta", "📊總覽"),
+    "view": ("s-tool", "🔍盤感工具"),
 }
 
 CSS = """
@@ -72,7 +77,8 @@ def main():
 <span class="s-watch">🟡觀察層</span>=判決成立,累積樣本/等裁示｜
 <span class="s-wip">⏳研究中</span>=複核或定稿未完｜
 <span class="s-dead">❌否定封存</span>=負判決僅留檔｜
-<span class="s-meta">📊總覽</span>=彙整頁</div>
+<span class="s-meta">📊總覽</span>=彙整頁｜
+<span class="s-tool">🔍盤感工具</span>=逐筆走勢檢視,非回測判決頁</div>
 <table><tr><th>日期</th><th>主題</th><th>策略開發</th><th>一句話判決</th></tr>{rows}</table>
 </body></html>"""
     open("研究報告/index.html", "w", encoding="utf-8").write(html)
