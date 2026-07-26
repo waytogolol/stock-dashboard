@@ -79,8 +79,8 @@ def loto_boot(sig, ctl, val, b=B_BOOT, seed=SEED):
 
 
 def main():
-    att = rd("SELECT code, announce_date AS date, market, reason, triggers FROM attention "
-             "ORDER BY code, announce_date")
+    att = rd("SELECT code, announce_date AS date, market, reason, triggers, pe, close_price "
+             "FROM attention ORDER BY code, announce_date")
     att["date"] = pd.to_datetime(att.date)
     att = att[att.code.str.fullmatch(r"\d{4}")]
     cls = set(rd("SELECT DISTINCT code FROM classification WHERE country='台'").code)
@@ -148,6 +148,11 @@ def main():
         if j + 10 < n and g.close.values[j + 10] > 0:
             eps.iloc[i, eps.columns.get_loc("t10_03")] = (g.close.values[j + 10] / o0 - 1) * 100 - 0.3
     eps["theme"] = eps.code.isin(cls)
+    # 觸發強度劑量(使用者2026-07-26提案「注意的原因本身是因子」): 原文解析累積跌幅%
+    import re as _re
+    eps["drop_mag"] = eps.reason.astype(str).map(
+        lambda s: max((float(x) for x in _re.findall(r"跌幅[達為]?\s*(-?[\d.]+)\s*%", s)), default=np.nan))
+    eps["loss_pe"] = eps.pe.isna() | (eps.pe <= 0)  # 虧損/無本益比
     eps["y"] = eps.date.dt.year
     down = eps[eps.down & eps.t10.notna()].copy()
     other = eps[~eps.down & eps.t10.notna()].copy()
@@ -182,10 +187,29 @@ def main():
         "金流中": gs(down.amt20.between(down.amt20.quantile(1 / 3), down.amt20.quantile(2 / 3))),
         "金流小(後1/3)": gs(down.amt20 < down.amt20.quantile(1 / 3)),
     }
+    # 觸發強度劑量四分位(先驗=跌越深越肥,V5/深跌選股同構;預註冊主測=Q4深-Q1淺)
+    dq = down.dropna(subset=["drop_mag"]).copy()
+    dq["mq"] = pd.qcut(dq.drop_mag.rank(method="first"), 4, labels=["Q1淺", "Q2", "Q3", "Q4深"])
+    dose = {}
+    for q in ["Q1淺", "Q2", "Q3", "Q4深"]:
+        sub = dq[dq.mq == q]
+        s = sstat(sub.t10)
+        if s:
+            s["rng"] = f"{sub.drop_mag.min():.0f}~{sub.drop_mag.max():.0f}%"
+            s["upg"] = sub.upgrade.mean() * 100
+        dose[q] = s
+    groups["PE虧損/無值"] = gs(down.loss_pe)
+    groups["PE有值"] = gs(~down.loss_pe)
+    groups["低價股(價位後1/3)"] = gs(down.close_price < down.close_price.quantile(1 / 3))
+    groups["高價股(前1/3)"] = gs(down.close_price >= down.close_price.quantile(2 / 3))
     sub_tests = {}
     for la, ma, mb in [("連續-初犯", down.repeat, ~down.repeat),
                        ("瀕臨處置6+-其餘", down.n30 >= 6, down.n30 < 6),
-                       ("題材-非題材", down.theme, ~down.theme)]:
+                       ("題材-非題材", down.theme, ~down.theme),
+                       ("劑量Q4深-Q1淺", down.index.isin(dq[dq.mq == "Q4深"].index),
+                        down.index.isin(dq[dq.mq == "Q1淺"].index)),
+                       ("PE虧損-有值", down.loss_pe, ~down.loss_pe)]:
+        ma, mb = pd.Series(ma, index=down.index), pd.Series(mb, index=down.index)
         if ma.sum() >= 15 and mb.sum() >= 15:
             sub_tests[la] = loto_boot(down[ma], down[mb], "t10")
 
@@ -224,6 +248,11 @@ def main():
 
     grid_rows = "".join(row(f"持有{k}日", grid[k], hl=(k == 10)) for k in KS)
     grp_rows = "".join(row(k, v) for k, v in groups.items())
+    dose_rows = "".join(
+        f"<tr><td style='text-align:left'>{q}({v['rng']})</td>"
+        f"<td class='{'good' if v['med'] > 0 else 'bad'}'>{v['med']:+.2f}%</td>"
+        f"<td>{v['mean']:+.2f}%</td><td>{v['win']:.0f}%</td><td>{v['n']}</td><td>{v['upg']:.0f}%</td></tr>"
+        for q, v in dose.items() if v)
     yr_rows = "".join(
         f"<tr><td style='text-align:left'>{y}</td><td class='{'good' if r.med > 0 else 'bad'}'>{r.med:+.2f}%</td>"
         f"<td>{r.win:.0f}%</td><td>{int(r.n)}</td><td>{r['sum']:+.0f}pp</td></tr>"
@@ -259,6 +288,8 @@ LOTO {v['pos']}/{v['tot']}年為正(最壞剔{v['worst_yr']}仍{v['worst']:+.2f}
 <table><tr><th>分組</th><th>中位</th><th>均值</th><th>勝率</th><th>n</th></tr>{grp_rows}</table>
 {st_rows}
 <div class="note">「30日6次+」=升級處置標準道(10日6次/30日12次)的事前代理=「準備進處置」組;「事後真升級」為ex-post描述,不可當進場條件。</div>
+<h2>二b、觸發強度劑量（公告原文解析「累積跌幅達XX%」,事前可知;先驗=跌越深越肥）</h2>
+<table><tr><th>劑量四分位(跌幅範圍)</th><th>中位</th><th>均值</th><th>勝率</th><th>n</th><th>事後升級處置率</th></tr>{dose_rows}</table>
 <h2>三、權益曲線（單利Σ,每筆1單位;紅線=cap10併發限制較貼實戰）</h2>
 <div id="eq" style="height:420px"></div>
 <h2>四、逐年表（t10）</h2>
