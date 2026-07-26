@@ -1846,8 +1846,16 @@ def build():
                 elif _dp["tier"] <= 3:
                     _st = {1: "+8.8%", 2: "+5.5%", 3: "+5.6%"}[_dp["tier"]]
                     _rules.append((2, f"R2處置T{_dp['tier']}({_st})"))
-            if ((data.get("resonance") or {}).get(_cd) or {}).get("fx") == "ok":
-                _rules.append((3, "R3共振✓外資(8週+7.1%/勝65%·候選)"))
+            # R3星星緊縮(2026-07-26使用者裁示): 回測+7.1%從事件週起算,只有事件<=2週的R3給⭐;
+            # >2週=☆過鮮(標籤開頭☆走前端淡色分支),層級6不進⭐判定,僅供追蹤
+            _rz3 = (data.get("resonance") or {}).get(_cd) or {}
+            if _rz3.get("fx") == "ok":
+                _wk3 = _rz3.get("weeks_ago")
+                if _wk3 is not None and _wk3 <= 2:
+                    _ago3 = "本週" if _wk3 == 0 else f"{_wk3}週前"
+                    _rules.append((3, f"R3共振✓外資(8週+7.1%/勝65%·候選·事件{_ago3})"))
+                else:
+                    _rules.append((6, f"☆R3過鮮(事件{_wk3}週前>2週,回測口徑已過,僅追蹤)"))
             if "chip" in _fams and _r4_gain.get(_cd, -99.0) > 10:
                 _rules.append((4, "R4籌碼A1近似(4週中位+2.7%/勝57%)"))
             if "revmom" in _fams:
@@ -1856,6 +1864,7 @@ def build():
             _row["rules"] = [_lab for _, _lab in _rules]
             _row["rp"] = _rules[0][0] if _rules else 9   # 最強規則層級(排序用),9=無命中
             _row["star"] = bool(_rules and _rules[0][0] <= 3 and not _row["cx"])
+            _row["stale"] = bool(not _row["star"] and any(_lv == 6 for _lv, _ in _rules))
             _cf_rows.append(_row)
         # 預設排序: ⭐優先關注浮頂 → 最強規則層級R1>R2>..>R5>無 → 交集數 → 家族數 → 代碼
         _cf_rows.sort(key=lambda r: (-int(r["star"]), r["rp"], -r["n"], -r["nf"], r["code"]))
@@ -2571,7 +2580,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div class="rule-item">彙總對象＝本頁其他檢視「現役」名單的<b>聯集</b>，各欄口徑逐條沿用原檢視已算好的判定、不另行重算：①規則①-⑤觸發題材的前3大成員　②微題材脈衝A/B級成員　③補漲雷達A/B級　④籌碼徽章外資位階≥80（中小型口徑，排名前50大權值股不列）　⑤題材營收動能score=4前5大營收成員　⑥🔥共振8週窗內標籤　⑦處置股觀察窗內非毒格（標分盤/Tier）——這七條計入「正向交集數」；⑧🔓內部解質警戒＝<b>賣方訊號</b>，不計入正向數、只作<b style="color:var(--red)">衝突旗標</b>。</div>
     <div class="rule-item" style="color:var(--red);font-weight:600">⚠ 交集「數量」本身未經回測——本專案驗證過的是特定配對的多層確認（如籌碼✓當規則訊號的加分項、微題材🅰的毛利確認），不是「訊號越多越好」的計分制；此頁是評估輔助的索引，不是排行榜。規則①-⑤與🔥共振同屬動能家族，同時亮不算兩個獨立確認——「獨立家族數」欄已把 規則+共振、微題材+補漲 各併為一家（家族＝動能／微題材·補漲／籌碼／營收動能／處置）。</div>
     <div class="rule-item" style="color:var(--tx3)">衝突列（紅底）＝有正向訊號同時掛🔓解質警戒或落在⚠處置毒格（人工管制類）——優先檢討減碼而非加碼，且不受下方門檻篩選影響、永遠顯示。點股名跳單股歷史；各欄細節回原檢視頁看（此頁只是索引）。</div>
-    <div class="rule-item">⭐<b>優先關注</b>（2026-07-24上線）＝命中至少一條<b>強驗證規則</b>（R1處置T1甜蜜格／R2處置T1-T3／R3共振✓外資）且無衝突旗標，固定顯示並浮在預設排序最上方；「已驗證規則」欄逐條列出該檔目前符合的已回測規則，<b>規則後括號＝該條規則單獨的回測數字，非組合預測</b>；排序分層依據＝單一最強規則（R1&gt;R2&gt;R3&gt;R4&gt;R5），<b>不做加總計分</b>（疊加效果未驗證，見上方警語）。R4籌碼A1近似（外資位階≥80×週漲&gt;10%，4週中位+2.7%/勝57%、2023起有效窗）與R5營收動能s4（60日超額+2.6%）為較弱／regime依賴證據（R5僅2025-26強年顯著）——淡色標註參考、不給⭐。</div>
+    <div class="rule-item">⭐<b>優先關注</b>（2026-07-24上線）＝命中至少一條<b>強驗證規則</b>（R1處置T1甜蜜格／R2處置T1-T3／R3共振✓外資）且無衝突旗標，固定顯示並浮在預設排序最上方；「已驗證規則」欄逐條列出該檔目前符合的已回測規則，<b>規則後括號＝該條規則單獨的回測數字，非組合預測</b>；排序分層依據＝單一最強規則（R1&gt;R2&gt;R3&gt;R4&gt;R5），<b>不做加總計分</b>（疊加效果未驗證，見上方警語）。R4籌碼A1近似（外資位階≥80×週漲&gt;10%，4週中位+2.7%/勝57%、2023起有效窗）與R5營收動能s4（60日超額+2.6%）為較弱／regime依賴證據（R5僅2025-26強年顯著）——淡色標註參考、不給⭐。<b>R3鮮度規則（2026-07-26收緊）</b>：回測+7.1%是從事件週起算的，⭐只給共振事件<b>≤2週</b>的R3；超過2週＝<b>☆過鮮</b>（淡色，僅供追蹤，現在進場已不是回測驗證過的那筆交易）。</div>
   </div>
   <div class="hint" id="confluAsof" style="font-weight:600"></div>
   <div style="margin:6px 0 8px">
@@ -4949,7 +4958,7 @@ function renderConfluTab() {
       " 檔（目前顯示 " + shown.length + " 檔）"
     : "目前無任何現役訊號成員（或交集區塊建置失敗，見頁尾健康列）。";
   const trows = shown.map(function(r) {
-    const nm = (r.star ? "⭐" : "") + r.code + " " + (r.name || "");
+    const nm = (r.star ? "⭐" : (r.stale ? "<span style=\"color:var(--tx3)\">☆</span>" : "")) + r.code + " " + (r.name || "");
     const link = (DATA.company_history && DATA.company_history["台|" + r.code])
       ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + r.code + "');showTab(2)\"" +
         " style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + nm + "</a>"
