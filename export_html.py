@@ -1899,6 +1899,22 @@ def build():
         for _r in (data.get("pledge_alert") or {}).get("rows", []) or []:
             if _r.get("tier") == "警戒":
                 _cf_add(_r["code"], "pledge", f"🔴警戒(窗剩{_r.get('left', '?')}日)", _r.get("name"))
+        # ⚠款1+6漲警(2026-07-27使用者裁示上板): 近14日曆日內因「累積漲幅+本益比」雙款列注意
+        # 回測10日-7.12%/勝28%/60%進處置=全體系最強立即減碼訊號(慣犯款6元凶+監視第三層款6條款,三卷咬合)
+        _cf_up6 = {}
+        try:
+            _c7 = sqlite3.connect(DB_PATH)
+            _cut7 = (pd.Timestamp.today() - pd.Timedelta(days=14)).strftime("%Y-%m-%d")
+            _a7 = pd.read_sql("SELECT code, announce_date, reason, triggers FROM attention "
+                              "WHERE announce_date >= ?", _c7, params=[_cut7])
+            _c7.close()
+            for _r7 in _a7.itertuples():
+                _rs7 = str(_r7.reason)
+                _tg7 = set(str(_r7.triggers or "").split(","))
+                if "漲幅" in _rs7 and "跌幅" not in _rs7 and "1" in _tg7 and "6" in _tg7:
+                    _cf_up6[str(_r7.code)] = max(_cf_up6.get(str(_r7.code), ""), str(_r7.announce_date)[:10])
+        except Exception as _e7:
+            print(f"  (款1+6漲警未產生: {_e7})")
         # 名稱解析(沿用既有備援鏈): company_names → rankings中文名稱/name → 家族自帶名稱
         _cf_nm = {}
         for _r in names[names["country"] == "台"].itertuples():
@@ -1945,6 +1961,8 @@ def build():
                 _cx.append("🔓解質警戒")
             if _row["n"] >= 1 and _cd in _cf_poison:
                 _cx.append("⚠處置毒格")
+            if _row["n"] >= 1 and _cd in _cf_up6:
+                _cx.append(f"⚠款1+6漲警({_cf_up6[_cd][5:]})")
             _row["cx"] = "、".join(_cx)
             # ---- 已驗證規則層(2026-07-24): 該檔「現在」符合哪幾條已回測規則,括號=該規則單獨回測數字 ----
             # 非組合預測、不做加總計分(疊加效果未驗證);⭐=命中R1-R3強層之一且無衝突旗標。
@@ -2694,7 +2712,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div class="rule-card">
     <div class="rule-item">彙總對象＝本頁其他檢視「現役」名單的<b>聯集</b>，各欄口徑逐條沿用原檢視已算好的判定、不另行重算：①規則①-⑤觸發題材的前3大成員　②微題材脈衝A/B級成員　③補漲雷達A/B級　④籌碼徽章外資位階≥80（中小型口徑，排名前50大權值股不列）　⑤題材營收動能score=4前5大營收成員　⑥🔥共振8週窗內標籤　⑦處置股觀察窗內非毒格（標分盤/Tier）——這七條計入「正向交集數」；⑧🔓內部解質警戒＝<b>賣方訊號</b>，不計入正向數、只作<b style="color:var(--red)">衝突旗標</b>。</div>
     <div class="rule-item" style="color:var(--red);font-weight:600">⚠ 交集「數量」本身未經回測——本專案驗證過的是特定配對的多層確認（如籌碼✓當規則訊號的加分項、微題材🅰的毛利確認），不是「訊號越多越好」的計分制；此頁是評估輔助的索引，不是排行榜。規則①-⑤與🔥共振同屬動能家族，同時亮不算兩個獨立確認——「獨立家族數」欄已把 規則+共振、微題材+補漲 各併為一家（家族＝動能／微題材·補漲／籌碼／營收動能／處置）。</div>
-    <div class="rule-item" style="color:var(--tx3)">衝突列（紅底）＝有正向訊號同時掛🔓解質警戒或落在⚠處置毒格（人工管制類）——優先檢討減碼而非加碼，且不受下方門檻篩選影響、永遠顯示。點股名跳單股歷史；各欄細節回原檢視頁看（此頁只是索引）。</div>
+    <div class="rule-item" style="color:var(--tx3)">衝突列（紅底）＝有正向訊號同時掛🔓解質警戒、落在⚠處置毒格（人工管制類）、或掛<b>⚠款1+6漲警</b>（近14日內因「累積漲幅＋本益比」雙款列注意股——回測後10日-7.12%/勝28%/60%進處置＝全體系最強立即減碼訊號；與慣犯研究「款6=元凶」及監視業務第三層款6專屬條款三卷咬合）——優先檢討減碼而非加碼，且不受下方門檻篩選影響、永遠顯示。點股名跳單股歷史；各欄細節回原檢視頁看（此頁只是索引）。</div>
     <div class="rule-item">⭐<b>優先關注</b>（2026-07-24上線）＝命中至少一條<b>強驗證規則</b>（R1處置T1甜蜜格／R2處置T1-T3／R3共振✓外資）且無衝突旗標，固定顯示並浮在預設排序最上方；「已驗證規則」欄逐條列出該檔目前符合的已回測規則，<b>規則後括號＝該條規則單獨的回測數字，非組合預測</b>；排序分層依據＝單一最強規則（R1&gt;R2&gt;R3&gt;R4&gt;R5），<b>不做加總計分</b>（疊加效果未驗證，見上方警語）。R4籌碼A1近似（外資位階≥80×週漲&gt;10%，4週中位+2.7%/勝57%、2023起有效窗）與R5營收動能s4（60日超額+2.6%）為較弱／regime依賴證據（R5僅2025-26強年顯著）——淡色標註參考、不給⭐。<b>R3鮮度規則（2026-07-26收緊）</b>：回測+7.1%是從事件週起算的，⭐只給共振事件<b>≤2週</b>的R3；超過2週＝<b>☆過鮮</b>（淡色，僅供追蹤，現在進場已不是回測驗證過的那筆交易）。</div>
   </div>
   <div class="hint" id="confluAsof" style="font-weight:600"></div>
