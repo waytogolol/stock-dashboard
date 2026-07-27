@@ -908,12 +908,13 @@ def build():
                 "breadth": round(float(_e2.breadth), 0)})
         # 月線/季線regime開關(2026-07-27使用者假說+裁示雙開關): H3/H6主開關=季線;
         # H5雙線皆通且雙線齊破(深熊)最肥+3.92pp
-        _tx60 = pd.read_sql("SELECT close FROM index_daily WHERE market='TAIEX' "
+        _tx60 = pd.read_sql("SELECT date, close FROM index_daily WHERE market='TAIEX' "
                             "ORDER BY date DESC LIMIT 60", sqlite3.connect(DB_PATH))
         _above60 = bool(float(_tx60.close.iloc[0]) > float(_tx60.close.mean()))
         _above20 = bool(float(_tx60.close.iloc[0]) > float(_tx60.close.head(20).mean()))
         data["theme_rrg"] = {"asof": str(_hf_last), "themes": _rrg_themes,
                              "above60": _above60, "above20": _above20,
+                             "px_asof": str(_tx60.date.iloc[0]),
                              "dates": [str(d) for d in _hf_tail]}
         print(f"題材輪動地圖: {len(_rrg_themes)}題材在圖 (資料至{_hf_last}, "
               f"大盤{'站上' if _above60 else '跌破'}季線/{'站上' if _above20 else '跌破'}月線)")
@@ -2132,6 +2133,7 @@ def build():
 
 def render_html(data, out_path=OUT_PATH, local=False):
     data["build_fails"] = BUILD_FAILS  # 在render時才收,涵蓋所有區塊
+    data["built_at"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")  # 戰情板參考時間用
     if BUILD_FAILS:
         print(f"⚠⚠ {len(BUILD_FAILS)} 個區塊建置失敗(儀表板對應區塊=空資料): " + " | ".join(BUILD_FAILS))
     data_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
@@ -4451,7 +4453,7 @@ function renderWarRoom() {
     dos.push("<b>買多大</b>：每筆＝你的常規倉位×<b>" + expo + "</b>" +
              (expo >= 1 ? "（溫度計說現在可以照常規打）" : "（溫度計說現在要縮到" + Math.round(expo * 100) + "%）") + "。");
   }
-  dos.push("<b>個股事件單照常</b>：處置騎乘、跌觸發規則卡" + (okN ? "（今天有✓" + okN + "檔）" : "") + "，照各自的日曆走、不受這面板影響。");
+  dos.push("<b>個股事件單照常</b>：處置股買點(V4第3日/V5倒數第3日尾盤買,抱到出關日開盤賣)、跌觸發規則卡" + (okN ? "（今天有✓" + okN + "檔）" : "") + "，照各自的日曆走、不受這面板影響。");
   donts.push("<b>看到紅旗就減碼</b>：🎯交集頁的「內部人解質警戒」「⚠款1+6漲警」是全體系最準的賣出提醒，別凹。");
   el.innerHTML =
     "<div style=\"font-size:15px;font-weight:700;margin-bottom:6px\">🎛️ 大盤戰情板——現在是什麼盤、該做什麼</div>" +
@@ -4460,7 +4462,11 @@ function renderWarRoom() {
     "<div style=\"margin-top:4px\">" + verdict + "</div>" +
     "<div style=\"margin-top:8px\">" + dos.map(function(s) { return "✅ " + s; }).join("<br>") + "</div>" +
     "<div style=\"margin-top:6px\">" + donts.map(function(s) { return "🚫 " + s; }).join("<br>") + "</div>" +
-    "<div style=\"color:var(--tx3);font-size:11px;margin-top:8px\">技術附註：溫度計" + (lit === null ? "?" : lit) + "/5燈・曝險" +
+    "<div style=\"color:var(--tx3);font-size:11px;margin-top:8px\">⏱ 參考時間：儀表板產檔 " + (DATA.built_at || "?") +
+    "・大盤均線判定用價格至 " + (rg.px_asof || "?") + "・題材熱度快照 " + (rg.asof || "?") +
+    "・跌觸發清單資料至 " + ((DATA.attwatch || {}).asof || "?") +
+    "——若上面日期落後超過一週,先跑 python update_all.py 再看本板。</div>" +
+    "<div style=\"color:var(--tx3);font-size:11px;margin-top:4px\">技術附註：溫度計" + (lit === null ? "?" : lit) + "/5燈・曝險" +
     (expo === null ? "?" : expo) + "・季線" + (rg.above60 ? "上" : "下") + "・月線" + (rg.above20 ? "上" : "下") +
     "・TOM" + (inTom ? "窗內" : "窗外") + "(25日~次月5日,僅執行時點參考)・題材打法=H3/H5/H6觀察層候選(未上板規則,詳🧭地圖說明);" +
     "口徑與歷史數據見下方「大盤態勢」與研究報告/research_heat_flow.html。</div>";
