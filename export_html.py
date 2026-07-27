@@ -913,7 +913,8 @@ def build():
         _above60 = bool(float(_tx60.close.iloc[0]) > float(_tx60.close.mean()))
         _above20 = bool(float(_tx60.close.iloc[0]) > float(_tx60.close.head(20).mean()))
         data["theme_rrg"] = {"asof": str(_hf_last), "themes": _rrg_themes,
-                             "above60": _above60, "above20": _above20}
+                             "above60": _above60, "above20": _above20,
+                             "dates": [str(d) for d in _hf_tail]}
         print(f"題材輪動地圖: {len(_rrg_themes)}題材在圖 (資料至{_hf_last}, "
               f"大盤{'站上' if _above60 else '跌破'}季線/{'站上' if _above20 else '跌破'}月線)")
     except Exception as e:
@@ -2546,6 +2547,8 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div class="hint">列標籤附「目前分數·52週位階%」(固定近52週自身高低的百分位；訊號頁位階=全史口徑，兩者概念相同、窗口不同。位階管<b>倉位大小</b>，不是進場門票)。表頭下「共振」列=該週點火題材數(點火=熱度週變化z>1，與族群金流解剖◆同定義)，<b>紅字=點火數超過全期平均+1SD的異常共振週</b>(門檻隨資料與題材篩選自動重算，滑鼠停留可看當前門檻；歷史紅標例：2025-09-14真起漲、2026-03-01行情22個題材齊點火，也含2025年6-8月假訊號期——共振是發現層，決策仍過檢查清單)——研究結論：資金不沿產業鏈爬行而是整條鏈同週點火，共振本身就是訊號。判讀優先序：<b>直欄同亮(共振)＞橫帶連暖(連漲2週)＞單格突亮(噪音)</b>；格子變暗是常態(高檔題材6週內回落15%的基準率84%)，關鍵看守不守點火前水準，別猜頭。建議配對：<b>位階排序+相對色階</b>=看錢往哪動；<b>熱度排序+絕對色階</b>=看錢在哪。只含有台股公司的題材，滑鼠停留可看實際分數。</div>
   <div class="heatmap-box" id="rotationHeatmap"></div>
   <h3 style="margin-top:22px">🧭 題材輪動地圖(一點=一題材,尾巴=近6週軌跡;點色=本週量價狀態)</h3>
+  <div class="hint"><b>快速看法</b>:預設「行動優先」只亮<b>當前regime值班格</b>的題材(金框★=現在照規則該盯的,滑鼠停看是哪一格),
+  其餘題材縮成小灰點(hover仍可看名字);要看特定題材用「聚焦」下拉;勾「週序動畫」按▶看近6週整個盤面怎麼轉(拉桿可逐週)。</div>
   <div class="hint">白話判讀:橫軸=相對大盤強不強、縱軸=在加速還減速。右上<b>領先</b>(又強又加速)→右下轉弱→左下落後→左上轉強,教科書走法順時針輪。
   點色=量價狀態(量=題材成交佔比變化,價=成員週報酬中位):
   <span style="color:#e74c3c">●增漲</span> <span style="color:#f39c12">●增平</span> <span style="color:#a569bd">●增跌</span>
@@ -2563,6 +2566,14 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <b>持有期(逐水平CI驗證)</b>:H3=2~4週(1週壓線/6週後失顯著);<b>H5=1~8週全顯著且遞增</b>(季線版8週+4.85pp/深熊版+8.18pp=可以抱);H6=1~2週快打(4週後死)。
   4週平滑熱度趨勢月級溫和領先(IC~0.09)=傾斜參考。
   ⚠觀察層(H3站上季線格n=86;熊市兩格n=135/109,發現途徑=探索掃描要打折;分類表倖存者偏差);此圖是現況地圖非預測器;維運=python build_heat_flow.py(已入update_all)。</div>
+  <div class="controls">
+    顯示：<select id="rrgMode" onchange="renderRrgMap()">
+      <option value="action" selected>行動優先(值班格亮、其餘淡點)</option>
+      <option value="all">全部題材(全標籤)</option>
+    </select>
+    聚焦題材：<select id="rrgFocus" onchange="renderRrgMap()"><option value="">(無)</option></select>
+    <label><input type="checkbox" id="rrgAnim" onchange="renderRrgMap()"> ▶週序動畫(看近6週怎麼輪)</label>
+  </div>
   <div class="heatmap-box" id="rrgMap"></div>
   <div class="controls" style="margin-top:16px">
     選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
@@ -3092,21 +3103,28 @@ function renderRrgMap() {
   }
   const cmap = {"增漲": "#e74c3c", "增平": "#f39c12", "增跌": "#a569bd",
                 "縮漲": "#f5b7b1", "縮平": "#95a5a6", "縮跌": "#5dade2"};
-  const traces = [];
-  R.themes.forEach(function(t) {
-    traces.push({x: t.tail.map(p => p[0]), y: t.tail.map(p => p[1]), mode: "lines",
-                 line: {color: "#3a4a5f", width: 1}, hoverinfo: "skip", showlegend: false});
+  const quadOf = (x, y) => x >= 100 ? (y >= 100 ? "領先" : "轉弱") : (y >= 100 ? "轉強" : "落後");
+  // 值班格=當前regime的活口徑: 多頭=H3(領先x增跌) / 空頭=H5(落後x增漲)+H6(轉強x縮漲)
+  const onDuty = function(t) {
     const e = t.tail[t.tail.length - 1];
-    const star = (t.state === "增跌") ? " ★候選格" : (t.state === "增漲" ? " ⚠別追" : "");
-    traces.push({x: [e[0]], y: [e[1]], mode: "markers+text", text: [t.g],
-                 textposition: "top center", textfont: {size: 10, color: "#9db0c8"},
-                 marker: {size: 9, color: cmap[t.state] || "#888",
-                          line: {color: "#0c1118", width: 1}},
-                 hovertemplate: t.g + "<br>狀態" + t.state + star + "<br>週報酬" + t.ret +
-                                "% 熱度Δ" + t.dhs + " 廣度" + t.breadth + "%<extra></extra>",
-                 showlegend: false});
-  });
-  Plotly.newPlot(el, traces, {
+    const q = quadOf(e[0], e[1]);
+    if (R.above60) return (q === "領先" && t.state === "增跌") ? "H3買點觀察" : null;
+    if (q === "落後" && t.state === "增漲") return "H5買點觀察(熊市最肥格)";
+    if (q === "轉強" && t.state === "縮漲") return "H6買點觀察(1-2週快打)";
+    return null;
+  };
+  // 聚焦下拉初始化(一次)
+  const focusSel = document.getElementById("rrgFocus");
+  if (focusSel.options.length <= 1) {
+    R.themes.slice().sort((a, b) => a.g.localeCompare(b.g, "zh-Hant")).forEach(function(t) {
+      const o = document.createElement("option"); o.value = t.g; o.textContent = t.g;
+      focusSel.appendChild(o);
+    });
+  }
+  const mode = document.getElementById("rrgMode").value;
+  const focus = focusSel.value;
+  const anim = document.getElementById("rrgAnim").checked;
+  const layout = {
     paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
     font: {color: "#c8d4e4", size: 11}, height: 560,
     margin: {t: 24, l: 52, r: 24, b: 42},
@@ -3120,7 +3138,70 @@ function renderRrgMap() {
       {xref: "paper", yref: "paper", x: 0.99, y: 0.01, text: "轉弱", showarrow: false, font: {size: 15, color: "#4a5d75"}},
       {xref: "paper", yref: "paper", x: 0.01, y: 0.01, text: "落後", showarrow: false, font: {size: 15, color: "#4a5d75"}},
       {xref: "paper", yref: "paper", x: 0.01, y: 0.99, text: "轉強", showarrow: false, font: {size: 15, color: "#4a5d75"}}]
-  }, {displayModeBar: false, responsive: true});
+  };
+  if (anim && R.dates && R.dates.length > 1) {
+    // 週序動畫: 每幀=一週,全題材一條trace;尾巴右對齊(最後一點=最新週,缺週clamp到最早可用點)
+    const nD = R.dates.length;
+    const at = function(t, k) {
+      const idx = t.tail.length - (nD - k);
+      return t.tail[Math.max(0, Math.min(t.tail.length - 1, idx))];
+    };
+    const mkFrame = function(k) {
+      return {name: R.dates[k], data: [{
+        x: R.themes.map(t => at(t, k)[0]), y: R.themes.map(t => at(t, k)[1]),
+        mode: "markers+text",
+        text: R.themes.map(t => onDuty(t) ? t.g : ""),
+        textposition: "top center", textfont: {size: 10, color: "#dce6f2"},
+        marker: {size: R.themes.map(t => onDuty(t) ? 12 : 7),
+                 color: R.themes.map(t => cmap[t.state] || "#888"),
+                 line: {color: "#0c1118", width: 1}},
+        customdata: R.themes.map(t => t.g),
+        hovertemplate: "%{customdata}<extra></extra>", showlegend: false}]};
+    };
+    const frames = [];
+    for (let k = 0; k < nD; k++) frames.push(mkFrame(k));
+    layout.updatemenus = [{type: "buttons", showactive: false, x: 0.02, y: 1.12,
+      buttons: [{label: "▶ 播放", method: "animate",
+                 args: [null, {frame: {duration: 800, redraw: false}, fromcurrent: true,
+                               transition: {duration: 400}}]}]}];
+    layout.sliders = [{active: nD - 1, y: -0.08, pad: {t: 24},
+      currentvalue: {prefix: "週: ", font: {color: "#c8d4e4"}},
+      steps: frames.map(f => ({label: f.name.slice(5), method: "animate",
+        args: [[f.name], {mode: "immediate", frame: {duration: 0, redraw: false},
+                          transition: {duration: 0}}]}))}];
+    Plotly.newPlot(el, frames[nD - 1].data, layout, {displayModeBar: false, responsive: true})
+      .then(function() { Plotly.addFrames(el, frames); });
+    return;
+  }
+  // 靜態: 行動優先(值班格亮+聚焦亮,其餘小淡點無標籤) / 全部顯示
+  const traces = [];
+  R.themes.forEach(function(t) {
+    const duty = onDuty(t);
+    const isFocus = t.g === focus;
+    const bright = (mode === "all") || duty || isFocus;
+    const e = t.tail[t.tail.length - 1];
+    if (bright) {
+      traces.push({x: t.tail.map(p => p[0]), y: t.tail.map(p => p[1]), mode: "lines",
+                   line: {color: isFocus ? "#7fb3d5" : "#3a4a5f", width: isFocus ? 2 : 1},
+                   hoverinfo: "skip", showlegend: false});
+    }
+    const warn = (R.above60 && quadOf(e[0], e[1]) !== "領先" && t.state === "增漲") ? "" :
+                 (!R.above60 && quadOf(e[0], e[1]) === "領先") ? " ⚠熊市領先象限=避開" : "";
+    traces.push({
+      x: [e[0]], y: [e[1]],
+      mode: bright ? "markers+text" : "markers",
+      text: bright ? [t.g + (duty ? "★" : "")] : [],
+      textposition: "top center",
+      textfont: {size: duty || isFocus ? 11 : 10, color: duty ? "#ffd97a" : "#9db0c8"},
+      marker: {size: duty ? 13 : (isFocus ? 12 : (bright ? 9 : 5)),
+               color: bright ? (cmap[t.state] || "#888") : "#33415a",
+               line: {color: duty ? "#ffd97a" : "#0c1118", width: duty ? 2 : 1}},
+      hovertemplate: t.g + "<br>狀態" + t.state + (duty ? "<br>★" + duty : "") + warn +
+                     "<br>週報酬" + t.ret + "% 熱度Δ" + t.dhs + " 廣度" + t.breadth +
+                     "%<extra></extra>",
+      showlegend: false});
+  });
+  Plotly.newPlot(el, traces, layout, {displayModeBar: false, responsive: true});
 }
 
 function renderMoversChart() {
