@@ -47,8 +47,10 @@ STEPS = [
     ("台股法說會",      [PY, "fetch_conference_yahoo.py"],        "weekly"),
     ("TX5分K",          [PY, "fetch_tx_5min.py"],                 "weekly"),
     ("月營收缺漏",      [PY, "fetch_month_rev_gap.py"],           "weekly"),
+    ("PER估值",         [PY, "fetch_per.py"],                     "weekly"),
     ("財報日曆",        [PY, "check_earnings.py"],                "build"),
     ("題材共振",        [PY, "build_resonance_theme.py"],         "build"),
+    ("題材量價RRG",     [PY, "build_heat_flow.py"],               "build"),
     ("dashboard",       [PY, "export_html.py"],                   "build"),
     ("XQ匯入檔",        [PY, "gen_xq_watchlist.py"],              "build"),
     ("處置K棒檢視器",   [PY, "build_disposition_trade_viewer.py"], "build"),
@@ -70,6 +72,7 @@ FRESH_RULES = [
     ("weekly_close",   "snapshot_date", 9),
     ("fx_rates",       "snapshot_date", 9),
     ("fm_month_rev",   "date",          50),
+    ("per_daily",      "date",          9),
 ]
 # 凍結線:只顯示不判紅
 FROZEN = [

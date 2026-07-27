@@ -887,6 +887,31 @@ def build():
     except Exception as e:
         _sec_fail("共振外資確認層未計算(共振標籤本體不受影響)", e)
 
+    # 題材輪動地圖RRG(2026-07-27上板,使用者裁示;資料源=build_heat_flow.py面板,已入update_all)
+    # 研究判決見研究報告/research_heat_flow.html: 圖=現況地圖非預測器;兩條提醒(別追增漲週/領先×增跌=最強格)
+    try:
+        _hf = pd.read_pickle("tmp_heat_flow_panel.pkl")
+        _hf_last = _hf.snapshot_date.max()
+        _hf_tail = sorted(_hf.snapshot_date.unique())[-6:]
+        _rrg_themes = []
+        for _g2, _s2 in _hf[_hf.snapshot_date.isin(_hf_tail)].groupby("main_group"):
+            _s2 = _s2.dropna(subset=["rrg_ratio", "rrg_mom"]).sort_values("snapshot_date")
+            if not len(_s2) or _s2.snapshot_date.iloc[-1] != _hf_last:
+                continue
+            _e2 = _s2.iloc[-1]
+            _rrg_themes.append({
+                "g": _g2,
+                "tail": [[round(float(a), 2), round(float(b), 2)]
+                         for a, b in zip(_s2.rrg_ratio, _s2.rrg_mom)],
+                "state": _e2.state_tw, "ret": round(float(_e2.ret), 1),
+                "dhs": None if pd.isna(_e2.d_hs_tw) else round(float(_e2.d_hs_tw), 2),
+                "breadth": round(float(_e2.breadth), 0)})
+        data["theme_rrg"] = {"asof": str(_hf_last), "themes": _rrg_themes}
+        print(f"題材輪動地圖: {len(_rrg_themes)}題材在圖 (資料至{_hf_last})")
+    except Exception as e:
+        _sec_fail("題材輪動地圖未產生(需先跑build_heat_flow.py)", e)
+        data["theme_rrg"] = {"asof": None, "themes": []}
+
     # 產業鏈(橫向上中下游)資料
     try:
         import industry_chains as ic
@@ -2512,6 +2537,16 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   </div>
   <div class="hint">列標籤附「目前分數·52週位階%」(固定近52週自身高低的百分位；訊號頁位階=全史口徑，兩者概念相同、窗口不同。位階管<b>倉位大小</b>，不是進場門票)。表頭下「共振」列=該週點火題材數(點火=熱度週變化z>1，與族群金流解剖◆同定義)，<b>紅字=點火數超過全期平均+1SD的異常共振週</b>(門檻隨資料與題材篩選自動重算，滑鼠停留可看當前門檻；歷史紅標例：2025-09-14真起漲、2026-03-01行情22個題材齊點火，也含2025年6-8月假訊號期——共振是發現層，決策仍過檢查清單)——研究結論：資金不沿產業鏈爬行而是整條鏈同週點火，共振本身就是訊號。判讀優先序：<b>直欄同亮(共振)＞橫帶連暖(連漲2週)＞單格突亮(噪音)</b>；格子變暗是常態(高檔題材6週內回落15%的基準率84%)，關鍵看守不守點火前水準，別猜頭。建議配對：<b>位階排序+相對色階</b>=看錢往哪動；<b>熱度排序+絕對色階</b>=看錢在哪。只含有台股公司的題材，滑鼠停留可看實際分數。</div>
   <div class="heatmap-box" id="rotationHeatmap"></div>
+  <h3 style="margin-top:22px">🧭 題材輪動地圖(一點=一題材,尾巴=近6週軌跡;點色=本週量價狀態)</h3>
+  <div class="hint">白話判讀:橫軸=相對大盤強不強、縱軸=在加速還減速。右上<b>領先</b>(又強又加速)→右下轉弱→左下落後→左上轉強,教科書走法順時針輪。
+  點色=量價狀態(量=題材成交佔比變化,價=成員週報酬中位):
+  <span style="color:#e74c3c">●增漲</span> <span style="color:#f39c12">●增平</span> <span style="color:#a569bd">●增跌</span>
+  <span style="color:#f5b7b1">●縮漲</span> <span style="color:#95a5a6">●縮平</span> <span style="color:#5dade2">●縮跌</span>。
+  <b>兩條回測提醒(66週觀察層,詳研究報告/research_heat_flow.html)</b>:
+  ①紅點●增漲(放量大漲週)後兩週是全面板最差(-0.37%/勝47%)=<b>先別追,等回檔再上車</b>;
+  ②<b>領先象限裡的紫點●增跌(強勢題材放量回檔)=全面板最強買點格</b>(後兩週中位+5.59%/勝81%,2025/2026兩年皆成立,n=21小樣本);
+  ③4週平滑熱度趨勢有月級溫和領先性(IC~0.09)=傾斜參考。⚠此圖是現況地圖非預測器,提醒層非訊號;維運=python build_heat_flow.py(已入update_all)。</div>
+  <div class="heatmap-box" id="rrgMap"></div>
   <div class="controls" style="margin-top:16px">
     選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
   </div>
@@ -2999,6 +3034,7 @@ function renderThemePivot() {
   sel.innerHTML = Object.keys(DATA.theme_detail).map(g => `<option value="${g}">${g}</option>`).join("");
   if (prev && DATA.theme_detail[prev]) sel.value = prev;
   renderThemeDetail();
+  renderRrgMap();
   renderMoversChart();
 }
 
@@ -3014,6 +3050,47 @@ function getVisibleThemes(includeBroad) {
     if (!includeBroad && !thematicSet[g]) return false;
     return true;
   });
+}
+
+function renderRrgMap() {
+  // 題材輪動地圖(2026-07-27上板): 資料=DATA.theme_rrg(build_heat_flow.py面板,6週尾巴)
+  const el = document.getElementById("rrgMap");
+  const R = DATA.theme_rrg || {themes: []};
+  if (!R.themes || !R.themes.length) {
+    el.innerHTML = '<div class="hint">尚無資料(維運: python build_heat_flow.py 後重跑 export_html.py)</div>';
+    return;
+  }
+  const cmap = {"增漲": "#e74c3c", "增平": "#f39c12", "增跌": "#a569bd",
+                "縮漲": "#f5b7b1", "縮平": "#95a5a6", "縮跌": "#5dade2"};
+  const traces = [];
+  R.themes.forEach(function(t) {
+    traces.push({x: t.tail.map(p => p[0]), y: t.tail.map(p => p[1]), mode: "lines",
+                 line: {color: "#3a4a5f", width: 1}, hoverinfo: "skip", showlegend: false});
+    const e = t.tail[t.tail.length - 1];
+    const star = (t.state === "增跌") ? " ★候選格" : (t.state === "增漲" ? " ⚠別追" : "");
+    traces.push({x: [e[0]], y: [e[1]], mode: "markers+text", text: [t.g],
+                 textposition: "top center", textfont: {size: 10, color: "#9db0c8"},
+                 marker: {size: 9, color: cmap[t.state] || "#888",
+                          line: {color: "#0c1118", width: 1}},
+                 hovertemplate: t.g + "<br>狀態" + t.state + star + "<br>週報酬" + t.ret +
+                                "% 熱度Δ" + t.dhs + " 廣度" + t.breadth + "%<extra></extra>",
+                 showlegend: false});
+  });
+  Plotly.newPlot(el, traces, {
+    paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+    font: {color: "#c8d4e4", size: 11}, height: 560,
+    margin: {t: 24, l: 52, r: 24, b: 42},
+    xaxis: {title: "相對強度(>100=強於大盤)", gridcolor: "#1d2836", zeroline: false},
+    yaxis: {title: "動能(>100=加速)", gridcolor: "#1d2836", zeroline: false},
+    shapes: [
+      {type: "line", x0: 100, x1: 100, yref: "paper", y0: 0, y1: 1, line: {color: "#3a4a5f", width: 1}},
+      {type: "line", y0: 100, y1: 100, xref: "paper", x0: 0, x1: 1, line: {color: "#3a4a5f", width: 1}}],
+    annotations: [
+      {xref: "paper", yref: "paper", x: 0.99, y: 0.99, text: "領先", showarrow: false, font: {size: 15, color: "#4a5d75"}},
+      {xref: "paper", yref: "paper", x: 0.99, y: 0.01, text: "轉弱", showarrow: false, font: {size: 15, color: "#4a5d75"}},
+      {xref: "paper", yref: "paper", x: 0.01, y: 0.01, text: "落後", showarrow: false, font: {size: 15, color: "#4a5d75"}},
+      {xref: "paper", yref: "paper", x: 0.01, y: 0.99, text: "轉強", showarrow: false, font: {size: 15, color: "#4a5d75"}}]
+  }, {displayModeBar: false, responsive: true});
 }
 
 function renderMoversChart() {

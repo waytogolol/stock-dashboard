@@ -121,6 +121,12 @@ def build_panel(heat, price, tix):
     pn["fwd2"] = g.ret.shift(-1) + g.ret.shift(-2)            # 兩週相加(百分比近似)
     pn["ret_t1"] = g.ret.shift(-1)
     pn["ret_t2"] = g.ret.shift(-2)
+    # 長水平前瞻(2026-07-27使用者追問「拉長會不會有領先性」): 1月≈4週/2月≈8週/3月≈12週
+    for h in (4, 8, 12):
+        pn[f"fwd{h}"] = sum(g.ret.shift(-k) for k in range(1, h + 1))
+    # 4週平滑訊號(單週Δ太吵,月級傳導假說用月級訊號)
+    for col in ["hs_tw", "hs_g"] + [f"leg_{m}" for m in MARKETS]:
+        pn[f"d4_{col}"] = g[col].diff(4)
 
     # 價三分位(全樣本pooled,門檻印出)
     q1, q2 = pn.ret.quantile([1 / 3, 2 / 3])
@@ -183,8 +189,9 @@ def loto_sign(cell, base, col="fwd2"):
     return f"{pos}/{len(signs)}正"
 
 
-def weekly_ic(pn, sig_col, ret_col):
-    """逐週跨題材Spearman,回傳(平均IC, 正週占比, 週數, bootstrap CI)"""
+def weekly_ic(pn, sig_col, ret_col, block=1):
+    """逐週跨題材Spearman,回傳(平均IC, 正週占比, 週數, bootstrap CI)。
+    block>1=移動區塊bootstrap(前瞻窗重疊時IC序列自相關,普通bootstrap信心會虛胖)"""
     ics = []
     for d, sub in pn.groupby("snapshot_date"):
         v = sub[[sig_col, ret_col]].dropna()
@@ -193,7 +200,17 @@ def weekly_ic(pn, sig_col, ret_col):
     if len(ics) < 10:
         return None
     ics = np.array(ics)
-    bs = [rng.choice(ics, len(ics), replace=True).mean() for _ in range(N_BOOT)]
+    n = len(ics)
+    if block <= 1:
+        bs = [rng.choice(ics, n, replace=True).mean() for _ in range(N_BOOT)]
+    else:
+        nblk = max(1, int(np.ceil(n / block)))
+        starts_all = np.arange(0, n - block + 1)
+        bs = []
+        for _ in range(N_BOOT):
+            picks = rng.choice(starts_all, nblk, replace=True)
+            sample = np.concatenate([ics[s:s + block] for s in picks])[:n]
+            bs.append(sample.mean())
     lo, hi = np.percentile(bs, [2.5, 97.5])
     return {"ic": ics.mean(), "pos": (ics > 0).mean(), "n": len(ics), "lo": lo, "hi": hi}
 
@@ -266,6 +283,19 @@ def main():
         print(f"{name} {q}×{st}: n={len(cell)} fwd2={cell.fwd2.median():.2f}% "
               f"diff={obs:+.2f}pp CI[{lo:.2f},{hi:.2f}] LOTO={loto} → {R['hyp'][-1]['verdict']}")
 
+    # --- ③b H3格深掘(2026-07-27使用者裁示:要明細+權益曲線;成員級K棒檢視器=待辦另開) ---
+    h3 = rq[(rq.quad == "領先") & (rq.state_tw == "增跌")].sort_values("snapshot_date")
+    R["h3_events"] = h3[["snapshot_date", "main_group", "ret", "d_hs_tw", "breadth",
+                         "rrg_ratio", "rrg_mom", "fwd1", "fwd2", "fwd4", "n_px"]] \
+        .round(2).to_dict("records")
+    R["h3_equity"] = {"date": h3.snapshot_date.tolist(),
+                      "cum": h3.fwd2.cumsum().round(1).tolist(),
+                      "label": [f"{r.main_group}" for r in h3.itertuples()]}
+    R["h3_yearly"] = [{"年": y, "n": len(s), "fwd2中位": round(float(s.fwd2.median()), 2),
+                       "勝率": round(float((s.fwd2 > 0).mean() * 100), 0)}
+                      for y, s in h3.groupby(h3.snapshot_date.str[:4])]
+    print(f"\nH3格明細: {len(h3)}事件 逐年={R['h3_yearly']}")
+
     # --- ④IC體檢(lag0/1/2)+台股vs全球對決 ---
     R["ic"] = {}
     for sig in ["d_hs_tw", "d_hs_g"]:
@@ -283,6 +313,20 @@ def main():
             if r:
                 R["leadlag"][f"{m}_lag{k}"] = {kk: round(float(vv), 3) for kk, vv in r.items()}
     print("\n跨市場領先矩陣:", json.dumps(R["leadlag"], ensure_ascii=False, indent=1))
+
+    # --- ⑤b長水平領先(2026-07-27使用者追問): 4週平滑訊號×前瞻4/8/12週,block bootstrap ---
+    # ⚠功率警語: 面板64週,fwd8/fwd12重疊窗有效獨立樣本僅~7/~4個,12週結果僅供方向參考
+    R["leadlag_long"] = {}
+    sigs = [("台smooth", "d4_leg_台"), ("美smooth", "d4_leg_美"), ("日smooth", "d4_leg_日"),
+            ("韓smooth", "d4_leg_韓"), ("陸smooth", "d4_leg_陸"), ("全球smooth", "d4_hs_g")]
+    for lab, sc in sigs:
+        for h in (2, 4, 8, 12):
+            sub = pn.dropna(subset=[sc, f"fwd{h}"])
+            r = weekly_ic(sub, sc, f"fwd{h}", block=h)
+            if r:
+                R["leadlag_long"][f"{lab}_fwd{h}w"] = {kk: round(float(vv), 3) for kk, vv in r.items()}
+    print("\n長水平領先矩陣(4週平滑訊號,block bootstrap):",
+          json.dumps(R["leadlag_long"], ensure_ascii=False, indent=1))
 
     # --- ⑥位階擁擠度(探索): 熱度位階(trailing≥26週百分位)三分位×fwd2 ---
     pn["hs_pctl"] = (pn.groupby("main_group").hs_g
@@ -377,6 +421,15 @@ def render_report(pn, R):
         return f"<table><tr>{h}</tr>{b}</table>"
 
     hyp_html = tbl(R["hyp"])
+    eqf = go.Figure()
+    eqf.add_trace(go.Scatter(x=R["h3_equity"]["date"], y=R["h3_equity"]["cum"],
+                             mode="lines+markers", text=R["h3_equity"]["label"],
+                             hovertemplate="%{x} %{text}<br>累計%{y}pp",
+                             line=dict(color="#e74c3c", width=2), name="H3累計fwd2"))
+    eqf.update_layout(title="H3格權益曲線(逐事件fwd2累加,pp;點=事件,hover看題材)",
+                      template="plotly_dark", height=380,
+                      xaxis_title="事件週", yaxis_title="累計報酬(pp)")
+    h3_eq_html = pplot(eqf, output_type="div", include_plotlyjs=False)
     html = f"""<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8">
 <title>題材量價狀態機×輪動象限 研究報告</title><style>
 body{{background:#0c1118;color:#dde;font-family:'Microsoft JhengHei',sans-serif;max-width:1100px;margin:auto;padding:20px}}
@@ -391,14 +444,27 @@ th{{background:#19253a}}h2{{color:#6cf;border-bottom:1px solid #345;padding-top:
 四假說格以外皆描述性未預註冊;全部結論觀察層起步。</span></p>
 <h2>一、輪動象限地圖(最新一期)</h2>{rrg_html}
 <h2>二、預註冊四假說格判決(fwd2週 vs 全面板基準,cluster bootstrap×{N_BOOT}+LOTO)</h2>{hyp_html}
+<h2>二b、H3格深掘:領先象限×量增價跌=「強勢題材放量回檔是買點」(原假說「出貨警」完全反向)</h2>
+<p class="note">「被洗越慘反彈越肥」定理第五度重現、首次在題材層。逐年分割:{json.dumps(R['h3_yearly'], ensure_ascii=False)}<br>
+<span class="warn">⚠n={len(R['h3_events'])}小樣本;權益曲線=逐事件fwd2累加(概念曲線,未做資金加權/併發控制);
+成員級K棒檢視器(比照處置股research_disposition_trades.html)=待辦。</span></p>
+{h3_eq_html}
+<h3>H3事件明細(進場口徑=訊號週收盤確認後次週,持有2週)</h3>
+{tbl(R['h3_events'])}
 <h2>三、六狀態×前瞻報酬</h2>
 <h3>量口徑=台股腿(主)</h3>{tbl(R['states_tw'])}
 <h3>量口徑=五市場全球(輔)</h3>{tbl(R['states_g'])}
 <h2>四、兩步序列(n≥25,描述性)</h2>{tbl(R['sequences'])}
 <h2>五、RRG象限×前瞻</h2>{tbl(R['quads'])}
 <h2>六、IC體檢+跨市場領先矩陣(逐週跨題材Spearman均值,CI=週bootstrap)</h2>
+<p class="note">判決:單週Δ無領先(lag1/lag2≈0)=事後儀表;但<b>4週平滑熱度趨勢在2-4週水平有溫和領先
+(台fwd4w IC+0.091/美fwd2w+0.075正週72%/全球fwd4w+0.093,CI排0;日韓無;8-12週衰減)=月級傾斜因子候選</b>。
+<span class="warn">⚠IC~0.06-0.09只夠當傾斜不夠當獨立訊號;重疊窗block bootstrap仍偏樂觀;24格多重比較下型態連貫性(台美全球一致)是主要依據。</span></p>
 <pre class="note">{json.dumps(R['ic'], ensure_ascii=False, indent=1)}</pre>
+<h3>單週Δ領先(原考)</h3>
 <pre class="note">{json.dumps(R['leadlag'], ensure_ascii=False, indent=1)}</pre>
+<h3>4週平滑×長水平(2/4/8/12週,使用者追問加考)</h3>
+<pre class="note">{json.dumps(R['leadlag_long'], ensure_ascii=False, indent=1)}</pre>
 <h2>七、探索節(未預註冊)</h2>
 <h3>熱度位階擁擠度</h3>{tbl(R['pctl'])}
 <h3>共振事件×熱度Δ</h3>{tbl(R['reso'])}<p class="note">{R.get('reso_note', '')}</p>
