@@ -4418,31 +4418,52 @@ function renderWarRoom() {
   const okN = (aw.watch || []).filter(function(w) { return w.ok; }).length;
   const dom = new Date().getDate();
   const inTom = dom >= 25 || dom <= 5;
-  let regimeTxt, playTxt, regimeColor;
-  if (rg.above60 === undefined) {
-    regimeTxt = "(輪動地圖資料未產生)"; playTxt = ""; regimeColor = "var(--tx3)";
+  const expo = (mt.exposure !== undefined && mt.exposure !== null) ? mt.exposure : null;
+  const lit = (mt.n_lit !== undefined && mt.n_lit !== null) ? mt.n_lit : null;
+  // ── 一句話講現在是什麼盤(恐慌狀態×大盤位置的組合白話) ──
+  const panic = lit !== null && lit >= 3;
+  let mktDesc, mktColor;
+  if (rg.above60 === undefined) { mktDesc = "資料未產生(先跑build_heat_flow.py)"; mktColor = "var(--tx3)"; }
+  else if (rg.above60) { mktDesc = "大盤站在季線之上，趨勢偏多"; mktColor = "#2ecc71"; }
+  else if (rg.above20) { mktDesc = "大盤跌破季線、但站回月線＝下跌後正在嘗試回穩"; mktColor = "#e67e22"; }
+  else { mktDesc = "大盤季線月線都在下面＝下跌趨勢還沒止穩"; mktColor = "#e74c3c"; }
+  let verdict;
+  if (panic && !rg.above60) {
+    verdict = "剛經歷恐慌性大跌、大盤還沒站回均線＝<b>修復初期</b>。歷史上這種時候最會漲的，是「之前跌最兇、現在剛開始有錢流入往上動」的題材；還在創新高的強勢題材反而容易接著補跌。";
+  } else if (panic && rg.above60) {
+    verdict = "恐慌剛過、大盤已站回季線＝<b>修復確認</b>。歷史上是勝率最高的一段，強勢題材的回檔都可以接。";
   } else if (rg.above60) {
-    regimeTxt = "站上季線(多頭)"; regimeColor = "#2ecc71";
-    playTxt = "題材打法=買<b>領先象限的放量回檔</b>(H3,持2~4週)。";
-  } else if (rg.above20) {
-    regimeTxt = "跌破季線・月線之上(空頭)"; regimeColor = "#e67e22";
-    playTxt = "題材打法=<b>領先象限全避開</b>;買<b>落後題材放量轉漲</b>(H5,可抱1~8週)與轉強縮漲(H6,1~2週快打)。";
+    verdict = "正常多頭。跟著強勢題材走，等它們回檔的那週再上車。";
   } else {
-    regimeTxt = "季線月線齊破(深熊)"; regimeColor = "#e74c3c";
-    playTxt = "題材打法=<b>領先象限全避開</b>;<b>H5落後×放量轉漲=歷史最肥格</b>(深熊8週+8.18pp),H6快打;倉位嚴守曝險係數。";
+    verdict = "弱勢盤。少做、做小，只碰跌深後剛轉強的題材，強勢股別碰。";
   }
-  const expo = (mt.exposure !== undefined && mt.exposure !== null) ? mt.exposure : "?";
-  const lit = (mt.n_lit !== undefined && mt.n_lit !== null) ? mt.n_lit : "?";
+  // ── 建議做/別做(動詞開頭白話) ──
+  const dos = [];
+  const donts = [];
+  if (rg.above60) {
+    dos.push("<b>買什麼</b>：強勢題材「放量回檔」的那週進場（首頁🧭地圖★金框），買了抱2~4週。");
+  } else if (rg.above60 !== undefined) {
+    dos.push("<b>買什麼</b>：跌很深之後「開始放量上漲」的題材（首頁🧭地圖★金框），這種可以抱1~2個月、不用急著跑" +
+             (!rg.above20 ? "——大盤越爛這招歷史上越有效" : "") + "。");
+    donts.push("<b>別買</b>：還在創新高、排行榜前面的強勢題材——現在買它們平均會輸，連「等它們回檔」也不行，那招只在多頭有效。");
+  }
+  if (expo !== null) {
+    dos.push("<b>買多大</b>：每筆＝你的常規倉位×<b>" + expo + "</b>" +
+             (expo >= 1 ? "（溫度計說現在可以照常規打）" : "（溫度計說現在要縮到" + Math.round(expo * 100) + "%）") + "。");
+  }
+  dos.push("<b>個股事件單照常</b>：處置騎乘、跌觸發規則卡" + (okN ? "（今天有✓" + okN + "檔）" : "") + "，照各自的日曆走、不受這面板影響。");
+  donts.push("<b>看到紅旗就減碼</b>：🎯交集頁的「內部人解質警戒」「⚠款1+6漲警」是全體系最準的賣出提醒，別凹。");
   el.innerHTML =
-    "<div style=\"font-size:15px;font-weight:700;margin-bottom:6px\">🎛️ 大盤戰情板(資金水位總開關)</div>" +
-    "<div>🌡️ <b>水位</b>：溫度計" + lit + "/5燈・曝險係數<b>" + expo + "</b> → 任何訊號的實際倉位=基礎倉位×" + expo + "。</div>" +
-    "<div>🧭 <b>大盤位置</b>：<span style=\"color:" + regimeColor + ";font-weight:700\">" + regimeTxt + "</span>。" + playTxt +
-    " <span style=\"color:var(--tx3)\">值班題材看首頁🧭輪動地圖的★金框。</span></div>" +
-    "<div>📅 <b>月內節律</b>：現在" + (inTom ? "<b>TOM窗內</b>(25日~次月5日)" : "TOM窗外") +
-    "・僅執行時點偏好，非訊號、不改變任何規則。</div>" +
-    "<div>⚡ <b>事件線照常</b>：處置騎乘V4/V5、跌觸發規則卡✓(現" + okN + "檔)按事件日走(未測季線條件不受此開關管);" +
-    "賣方減碼訊號(🔓解質警戒/⚠款1+6漲警)見🎯交集頁紅旗。</div>" +
-    "<div style=\"color:var(--tx3);font-size:11px;margin-top:6px\">⚠題材打法H3/H5/H6=觀察層候選(66週+2019歷史體檢,升格待live);曝險係數口徑見下方「大盤態勢」。</div>";
+    "<div style=\"font-size:15px;font-weight:700;margin-bottom:6px\">🎛️ 大盤戰情板——現在是什麼盤、該做什麼</div>" +
+    "<div style=\"font-size:14px\"><span style=\"color:" + mktColor + ";font-weight:700\">" + mktDesc + "</span>" +
+    (panic ? "<span style=\"color:#e74c3c;font-weight:700\">（🌡️恐慌溫度計" + lit + "/5燈亮）</span>" : "") + "</div>" +
+    "<div style=\"margin-top:4px\">" + verdict + "</div>" +
+    "<div style=\"margin-top:8px\">" + dos.map(function(s) { return "✅ " + s; }).join("<br>") + "</div>" +
+    "<div style=\"margin-top:6px\">" + donts.map(function(s) { return "🚫 " + s; }).join("<br>") + "</div>" +
+    "<div style=\"color:var(--tx3);font-size:11px;margin-top:8px\">技術附註：溫度計" + (lit === null ? "?" : lit) + "/5燈・曝險" +
+    (expo === null ? "?" : expo) + "・季線" + (rg.above60 ? "上" : "下") + "・月線" + (rg.above20 ? "上" : "下") +
+    "・TOM" + (inTom ? "窗內" : "窗外") + "(25日~次月5日,僅執行時點參考)・題材打法=H3/H5/H6觀察層候選(未上板規則,詳🧭地圖說明);" +
+    "口徑與歷史數據見下方「大盤態勢」與研究報告/research_heat_flow.html。</div>";
 }
 
 function renderThermoTab() {
