@@ -2542,10 +2542,11 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   點色=量價狀態(量=題材成交佔比變化,價=成員週報酬中位):
   <span style="color:#e74c3c">●增漲</span> <span style="color:#f39c12">●增平</span> <span style="color:#a569bd">●增跌</span>
   <span style="color:#f5b7b1">●縮漲</span> <span style="color:#95a5a6">●縮平</span> <span style="color:#5dade2">●縮跌</span>。
-  <b>兩條回測提醒(66週觀察層,詳研究報告/research_heat_flow.html)</b>:
-  ①紅點●增漲(放量大漲週)後兩週是全面板最差(-0.37%/勝47%)=<b>先別追,等回檔再上車</b>;
-  ②<b>領先象限裡的紫點●增跌(強勢題材放量回檔)=全面板最強買點格</b>(後兩週中位+5.59%/勝81%,2025/2026兩年皆成立,n=21小樣本);
-  ③4週平滑熱度趨勢有月級溫和領先性(IC~0.09)=傾斜參考。⚠此圖是現況地圖非預測器,提醒層非訊號;維運=python build_heat_flow.py(已入update_all)。</div>
+  <b>兩條提醒+歷史體檢(詳研究報告/research_heat_flow.html)</b>:
+  66週窗內(2025-04起)「別追增漲週(-0.37%/47%)」與「領先象限×增跌=最強買點(+5.59%/81%)」成立,
+  但日資料重建拉回2019全史後<b>兩者皆不顯著、且2022趨勢熊市H3反向(-1.79%/32%=接刀)</b>=
+  <b>regime相依:恐慌修復年(2024/2026)有效、趨勢熊市反噬</b>——定位=盤感提醒層非規則,溫度計燈亮期參考價值較高、熊市勿用;
+  4週平滑熱度趨勢月級溫和領先(IC~0.09)=傾斜參考。⚠此圖是現況地圖非預測器;維運=python build_heat_flow.py(已入update_all)。</div>
   <div class="heatmap-box" id="rrgMap"></div>
   <div class="controls" style="margin-top:16px">
     選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
