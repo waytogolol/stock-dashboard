@@ -255,10 +255,25 @@ def main():
             dual[key]["horizons"] = hz
             print(f"      持有期diff: {' '.join(hrow)}")
 
+    # --- 三值班格權益曲線+事件明細(2026-07-28使用者裁示:能上線的要有權益曲線且從2019看) ---
+    cells_def = [("H3", (base2.quad == "領先") & (base2.state == "增跌") & base2.above60.astype(bool)),
+                 ("H5", (base2.quad == "落後") & (base2.state == "增漲") & ~base2.above60.astype(bool)),
+                 ("H6", (base2.quad == "轉強") & (base2.state == "縮漲") & ~base2.above60.astype(bool))]
+    eq = {}
+    for nm, mask in cells_def:
+        ev = base2[mask].dropna(subset=["fwd2"]).sort_values("wk")
+        eq[nm] = {"dates": [str(d.date()) for d in ev.wk],
+                  "cum": [round(float(x), 1) for x in ev.fwd2.cumsum()],
+                  "themes": ev.main_group.tolist(),
+                  "events": ev.assign(wk=ev.wk.dt.strftime("%Y-%m-%d"))[
+                      ["wk", "main_group", "ret", "d_hs_tw", "breadth", "fwd1", "fwd2", "fwd4"]]
+                  .round(2).to_dict("records")}
+        print(f"{nm}權益: {len(ev)}事件 累計{ev.fwd2.sum():+.0f}pp ({eq[nm]['dates'][0] if len(ev) else '-'}~)")
+
     out = {"h3_all": {"n": len(h3), "fwd2": round(float(h3.fwd2.median()), 2),
                       "win": round(float((h3.fwd2 > 0).mean() * 100), 0),
                       "diff": round(float(obs), 2), "ci": [round(float(lo), 2), round(float(hi), 2)]},
-           "h3_regime": reg_out, "scan_flagged": scan_out, "dual_switch": dual}
+           "h3_regime": reg_out, "scan_flagged": scan_out, "dual_switch": dual, "equity": eq}
     with open("tmp_heat_flow_hist_results.json", "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False)
     print("\n完成: tmp_heat_flow_hist_panel.pkl / tmp_heat_flow_hist_results.json")

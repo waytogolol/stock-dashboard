@@ -489,6 +489,26 @@ def render_report(pn, R):
         {"考卷": "熱度位階擁擠度(trailing百分位)", "判決": "❌無反轉訊號(高位階+1.21≈中位階)"},
         {"考卷": "共振事件×熱度Δ分層", "判決": "❌方向反且不顯著(Δ≤0較好,n=37探索)"},
     ]
+    # 三值班格2019~權益曲線(hist json;2026-07-28使用者裁示:能上線的要有曲線且從2019看)
+    hist_eq_html = ""
+    if H.get("equity"):
+        hf2 = go.Figure()
+        for nm, color in [("H3站上季線", "#a569bd"), ("H5跌破季線", "#e74c3c"), ("H6跌破季線", "#f1a9a0")]:
+            e = H["equity"].get(nm[:2])
+            if e and e["dates"]:
+                hf2.add_trace(go.Scatter(x=e["dates"], y=e["cum"], mode="lines+markers",
+                                         text=e["themes"], name=f"{nm}(n={len(e['dates'])})",
+                                         hovertemplate="%{x} %{text}<br>累計%{y}pp",
+                                         line=dict(color=color, width=2), marker=dict(size=4)))
+        hf2.update_layout(title="三值班格權益曲線(2019~,逐事件fwd2累加pp;各格只在自己的regime開啟時產生事件)",
+                          template="plotly_dark", height=430,
+                          xaxis_title="事件週", yaxis_title="累計報酬(pp)")
+        hist_eq_html = pplot(hf2, output_type="div", include_plotlyjs=False)
+
+    def hist_ev_tbl(nm):
+        e = (H.get("equity") or {}).get(nm)
+        return tbl(e["events"]) if e else "<p>(缺,先跑 build_heat_flow_hist.py)</p>"
+
     eqf = go.Figure()
     eqf.add_trace(go.Scatter(x=R["h3_equity"]["date"], y=R["h3_equity"]["cum"],
                              mode="lines+markers", text=R["h3_equity"]["label"],
@@ -561,6 +581,14 @@ n=109,fwd2+2.60%/勝79%,diff+1.82pp CI[+0.89,+2.36]排0,逐年6/7正(僅2020 -1.
 <b>機制圖像</b>:多頭順勢(買強勢題材回檔=H3)/空頭反轉輪動(棄強買弱轉=H5H6)——「被洗越慘反彈越肥」定理的題材層版本。
 <span class="warn">⚠H5/H6發現途徑=探索掃描(非預註冊)要打折,逐年一致+前後段分割+持有期單調是自帶複驗;
 n=135/109;分類表倖存者偏差同前;升格待live——當下(2026-07-27起)大盤跌破季線=兩格值班中,live樣本累積中。</span></p>
+<h3>三值班格權益曲線(2019~,日資料重建歷史版;2026-07-28補,回應「能上線的怎麼沒有權益曲線+要從2019看」)</h3>
+{hist_eq_html}
+<p class="note">曲線=逐事件fwd2累加(概念曲線:同週多題材可並發、未做資金加權與併發上限;
+各格只在自己的regime開啟時產生事件——H3只在站上季線、H5/H6只在跌破季線,所以三條線的活躍段錯開,平坦段=該regime關閉非策略失效)。
+上方二b的H3權益曲線=66週rankings版(2025-04起),本節=2019起重建版,兩版並存對照。</p>
+<h3>H5事件明細(2019~全錄)</h3>{hist_ev_tbl('H5')}
+<h3>H6事件明細(2019~全錄)</h3>{hist_ev_tbl('H6')}
+<h3>H3季線開關版事件明細(2019~全錄)</h3>{hist_ev_tbl('H3')}
 <h3>全24格×季線掃描CI排0清單(9格全錄)</h3>{tbl(scan_rows)}
 <h3>雙開關對照表(H3/H5/H6×月線/季線,含逐年)</h3>{tbl(dual_rows)}
 <h3>持有期網格diff[CI](1/2/4/6/8週;◄=CI排0)</h3>{tbl(hz_rows)}
