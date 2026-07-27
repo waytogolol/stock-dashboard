@@ -906,13 +906,16 @@ def build():
                 "state": _e2.state_tw, "ret": round(float(_e2.ret), 1),
                 "dhs": None if pd.isna(_e2.d_hs_tw) else round(float(_e2.d_hs_tw), 2),
                 "breadth": round(float(_e2.breadth), 0)})
-        # 季線regime開關(2026-07-27使用者假說驗證成立): 站上季線=紫點格有效/跌破=接刀勿用
+        # 月線/季線regime開關(2026-07-27使用者假說+裁示雙開關): H3/H6主開關=季線;
+        # H5雙線皆通且雙線齊破(深熊)最肥+3.92pp
         _tx60 = pd.read_sql("SELECT close FROM index_daily WHERE market='TAIEX' "
                             "ORDER BY date DESC LIMIT 60", sqlite3.connect(DB_PATH))
         _above60 = bool(float(_tx60.close.iloc[0]) > float(_tx60.close.mean()))
-        data["theme_rrg"] = {"asof": str(_hf_last), "themes": _rrg_themes, "above60": _above60}
+        _above20 = bool(float(_tx60.close.iloc[0]) > float(_tx60.close.head(20).mean()))
+        data["theme_rrg"] = {"asof": str(_hf_last), "themes": _rrg_themes,
+                             "above60": _above60, "above20": _above20}
         print(f"題材輪動地圖: {len(_rrg_themes)}題材在圖 (資料至{_hf_last}, "
-              f"大盤{'站上' if _above60 else '跌破'}季線)")
+              f"大盤{'站上' if _above60 else '跌破'}季線/{'站上' if _above20 else '跌破'}月線)")
     except Exception as e:
         _sec_fail("題材輪動地圖未產生(需先跑build_heat_flow.py)", e)
         data["theme_rrg"] = {"asof": None, "themes": []}
@@ -2553,8 +2556,11 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   2019-2026逐年7/8正,<b>連2022熊市中站上季線的窗都成立</b>;<b>跌破季線時同一格=接刀</b>(-0.83%/42%,diff-1.61pp CI排0反向)勿用。
   「別追增漲」經全史體檢不成立已撤銷。
   <b>跌破季線時的替代打法(全格掃描發現,探索候選掛觀察)</b>:領先象限全避開(增跌/縮跌/增平皆負);
-  買點改看<b>落後象限的紅點●增漲</b>(+3.64%/勝78%,diff+2.86pp,6/7年正,持越久越肥fwd4+4.77%)與
-  轉強象限的淡紅點●縮漲(+2.60%/79%,2週甜蜜點)=<b>熊市買「落後題材的放量轉漲」,不買強勢題材回檔</b>。
+  買點改看<b>落後象限的紅點●增漲</b>(+3.64%/勝78%,diff+2.86pp,6/7年正;
+  <b>深熊連月線都破時更肥+3.92pp</b>=行情越爛買落後轉漲越有效,與恐慌溫度計同族)與
+  轉強象限的淡紅點●縮漲(+2.60%/79%)=<b>熊市買「落後題材的放量轉漲」,不買強勢題材回檔</b>。
+  雙開關對照:H3/H6主開關=季線(月線切不出);H5月線季線皆通=對切法穩健、三格中體質最好。
+  <b>持有期(逐水平CI驗證)</b>:H3=2~4週(1週壓線/6週後失顯著);<b>H5=1~8週全顯著且遞增</b>(季線版8週+4.85pp/深熊版+8.18pp=可以抱);H6=1~2週快打(4週後死)。
   4週平滑熱度趨勢月級溫和領先(IC~0.09)=傾斜參考。
   ⚠觀察層(H3站上季線格n=86;熊市兩格n=135/109,發現途徑=探索掃描要打折;分類表倖存者偏差);此圖是現況地圖非預測器;維運=python build_heat_flow.py(已入update_all)。</div>
   <div class="heatmap-box" id="rrgMap"></div>
@@ -3069,9 +3075,16 @@ function renderRrgMap() {
   const R = DATA.theme_rrg || {themes: []};
   const regEl = document.getElementById("rrgRegime");
   if (regEl && R.above60 !== undefined) {
-    regEl.textContent = R.above60 ? "【大盤現況:站上季線→打法=買領先象限的紫點回檔】"
-                                  : "【大盤現況:跌破季線→領先象限全避開,改看落後象限的紅點轉漲】";
-    regEl.style.color = R.above60 ? "#2ecc71" : "#e74c3c";
+    if (R.above60) {
+      regEl.textContent = "【大盤現況:站上季線→打法=買領先象限的紫點回檔(H3)】";
+      regEl.style.color = "#2ecc71";
+    } else if (R.above20) {
+      regEl.textContent = "【大盤現況:跌破季線(月線之上)→領先象限避開,改看落後象限紅點轉漲(H5/H6)】";
+      regEl.style.color = "#e67e22";
+    } else {
+      regEl.textContent = "【大盤現況:季線月線齊破(深熊)→領先象限避開;落後×放量轉漲(H5)=歷史最肥格+3.92pp】";
+      regEl.style.color = "#e74c3c";
+    }
   }
   if (!R.themes || !R.themes.length) {
     el.innerHTML = '<div class="hint">尚無資料(維運: python build_heat_flow.py 後重跑 export_html.py)</div>';

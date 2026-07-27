@@ -72,7 +72,7 @@ def build_hist_panel():
     pn = pn[pn.wk >= "2018-12-01"]
     g = pn.groupby("main_group")
     pn["d_hs_tw"] = g.hs_tw.diff()
-    for h in (1, 2, 4):
+    for h in (1, 2, 4, 6, 8):
         pn[f"fwd{h}"] = sum(g.ret.shift(-k) for k in range(1, h + 1))
 
     q1, q2 = pn.ret.quantile([1 / 3, 2 / 3])
@@ -164,11 +164,14 @@ def main():
     tx = pd.read_sql("SELECT date, close FROM index_daily WHERE market='TAIEX' ORDER BY date", con2)
     con2.close()
     tx["date"] = pd.to_datetime(tx.date)
+    tx["ma20"] = tx.close.rolling(20).mean()
     tx["ma60"] = tx.close.rolling(60).mean()
     tx["wkk"] = tx.date.dt.to_period("W-FRI").dt.end_time.dt.normalize()
     wreg = tx.sort_values("date").groupby("wkk").last()
+    wreg["above20"] = wreg.close > wreg.ma20
     wreg["above60"] = wreg.close > wreg.ma60
-    base2 = base.merge(wreg[["above60"]], left_on="wk", right_index=True, how="left").dropna(subset=["above60"])
+    base2 = base.merge(wreg[["above20", "above60"]], left_on="wk", right_index=True,
+                       how="left").dropna(subset=["above60"])
     h3r = base2[(base2.quad == "領先") & (base2.state == "增跌")]
     print("\n季線regime條件化(基準=同regime面板;使用者假說準預註冊):")
     reg_out = {}
@@ -210,10 +213,52 @@ def main():
     for r in sorted(scan_out, key=lambda r: -abs(r["diff"])):
         print(f"  {r['cell']}: n={r['n']} {r['fwd2']:+.2f}%/{r['win']:.0f}% diff{r['diff']:+.2f}pp CI{r['ci']}")
 
+    # --- H3/H5/H6 × 月線/季線雙開關對照(2026-07-27使用者裁示「季線月線都做」) ---
+    # 判決: H3/H6主開關=季線(月線CI含0);H5雙線皆通且月線版更肥(+3.92pp,深熊連月線都破時買落後轉漲最肥)
+    #       =H5對切法穩健體質最好;儀表板維持季線主開關,H5月線加強版記在報告。
+    print("\n雙開關對照(H3/H5/H6 × 月線/季線):")
+    dual = {}
+    for name, q, st, rd in [("H3", "領先", "增跌", "站上"), ("H5", "落後", "增漲", "跌破"),
+                            ("H6", "轉強", "縮漲", "跌破")]:
+        for ma, col in [("月線", "above20"), ("季線", "above60")]:
+            cond = base2[col].astype(bool) if rd == "站上" else ~base2[col].astype(bool)
+            b = base2[cond]
+            c = b[(b.quad == q) & (b.state == st)]
+            obs4, lo4, hi4 = cell_stats(c, b)
+            ys = []
+            for y, s in c.groupby(c.wk.dt.year):
+                byr = b[b.wk.dt.year == y]
+                if len(s) >= 3:
+                    ys.append(np.sign(s.fwd2.median() - byr.fwd2.median()))
+            ystr = f"{sum(1 for s_ in ys if s_ > 0)}/{len(ys)}年正"
+            key = f"{name}_{rd}{ma}"
+            dual[key] = {"n": len(c), "fwd2": round(float(c.fwd2.median()), 2),
+                         "win": round(float((c.fwd2 > 0).mean() * 100), 0),
+                         "diff": round(float(obs4), 2),
+                         "ci": [round(float(lo4), 2), round(float(hi4), 2)], "yearly": ystr}
+            print(f"  {name}({q}x{st}) {rd}{ma}: n={len(c):4d} {c.fwd2.median():+6.2f}%/"
+                  f"{(c.fwd2 > 0).mean() * 100:3.0f}% diff={obs4:+.2f}pp CI[{lo4:+.2f},{hi4:+.2f}]"
+                  f"{' ◄排0' if lo4 > 0 or hi4 < 0 else ''} {ystr}")
+            # 持有期網格1/2/4/6/8週(2026-07-27使用者裁示:哪個水平才顯著要逐一驗;⚠長水平重疊窗CI偏樂觀)
+            hz = {}
+            hrow = []
+            for h in (1, 2, 4, 6, 8):
+                cc = c.dropna(subset=[f"fwd{h}"])
+                bb = b.dropna(subset=[f"fwd{h}"])
+                if len(cc) < 8:
+                    continue
+                o5, l5, u5 = cell_stats(cc, bb, col=f"fwd{h}")
+                sig5 = "◄" if (l5 > 0 or u5 < 0) else " "
+                hz[f"fwd{h}"] = {"n": len(cc), "diff": round(float(o5), 2),
+                                 "ci": [round(float(l5), 2), round(float(u5), 2)]}
+                hrow.append(f"{h}w:{o5:+.2f}[{l5:+.2f},{u5:+.2f}]{sig5}")
+            dual[key]["horizons"] = hz
+            print(f"      持有期diff: {' '.join(hrow)}")
+
     out = {"h3_all": {"n": len(h3), "fwd2": round(float(h3.fwd2.median()), 2),
                       "win": round(float((h3.fwd2 > 0).mean() * 100), 0),
                       "diff": round(float(obs), 2), "ci": [round(float(lo), 2), round(float(hi), 2)]},
-           "h3_regime": reg_out, "scan_flagged": scan_out}
+           "h3_regime": reg_out, "scan_flagged": scan_out, "dual_switch": dual}
     with open("tmp_heat_flow_hist_results.json", "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False)
     print("\n完成: tmp_heat_flow_hist_panel.pkl / tmp_heat_flow_hist_results.json")
