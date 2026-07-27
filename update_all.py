@@ -139,6 +139,35 @@ def run_top200():
     return ok_all
 
 
+def classification_gap(con):
+    """分類表(all_classified.csv手動維護)覆蓋監控(2026-07-27使用者提醒):
+    新股竄上排行沒分類=題材熱度被稀釋。警戒線=任一市場前100名內未分類>=5;台股前150印出待分類清單。
+    補法: 編輯all_classified.csv加分類 -> python build_db.py <最新快照日> 重灌。"""
+    try:
+        import pandas as pd
+        df = pd.read_sql("""
+            SELECT r.country, r.code, r.name, r.rank,
+                   CASE WHEN c.code IS NULL THEN 0 ELSE 1 END AS cls
+            FROM rankings r LEFT JOIN (SELECT DISTINCT country, code FROM classification) c
+              ON c.country=r.country AND c.code=r.code
+            WHERE r.snapshot_date=(SELECT MAX(snapshot_date) FROM rankings)""", con)
+        print("\n===== 分類覆蓋監控(手動維護線:all_classified.csv) =====")
+        alerts = []
+        for m, g in df.groupby("country"):
+            top100 = int(((g.cls == 0) & (g["rank"] <= 100)).sum())
+            mark = "⚠" if top100 >= 5 else "  "
+            print(f"  {mark}{m}: 前100未分類{top100}  全榜未分類{int((g.cls == 0).sum())}/{len(g)}")
+            if top100 >= 5:
+                alerts.append(m)
+        tw = df[(df.country == "台") & (df.cls == 0) & (df["rank"] <= 150)].sort_values("rank")
+        if len(tw):
+            print("  台股前150待分類: " + " ".join(f"{r.code}{r.name}" for r in tw.itertuples()))
+        if alerts:
+            print(f"  ⚠{'/'.join(alerts)}市場頭部缺口大,建議近期補分類(編all_classified.csv後重跑build_db.py)")
+    except Exception as e:
+        print(f"  分類覆蓋檢查失敗: {e}")
+
+
 def freshness_report():
     print("\n===== 新鮮度總驗收(資料庫實際max日期) =====")
     con = sqlite3.connect(DB)
@@ -161,6 +190,7 @@ def freshness_report():
             print(f"  ⏸️ {table:24s} max={mx}  (凍結線:{why})")
         except Exception:
             pass
+    classification_gap(con)
     con.close()
     return reds
 
