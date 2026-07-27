@@ -2782,6 +2782,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
 </div>
 
 <div class="tab-content" id="tab7">
+  <div class="expo-watch-card" id="warRoom" style="border-left:4px solid var(--ac);margin-bottom:14px;line-height:1.8"></div>
   <div class="sc-view-switch">
     <button class="view-btn active" id="sigViewConfluBtn" onclick="switchSigView('conflu')">🎯訊號交集</button>
     <button class="view-btn" id="sigViewMacroBtn" onclick="switchSigView('macro')">大題材檢查清單</button>
@@ -4406,6 +4407,44 @@ function jumpToConfNote(file) {
 }
 
 // ── 大盤溫度計(2026-07-19上板): 市場層五燈+頁頂燈條 ─────────────────
+function renderWarRoom() {
+  // 大盤戰情板(2026-07-27使用者裁示:資金水位總開關要置頂,不開新頁籤放進場訊號頁最上方)
+  // 全部吃既有payload即時算,無新資料源;白話一句話一列,細節連到對應區塊
+  const el = document.getElementById("warRoom");
+  if (!el) return;
+  const mt = DATA.market_thermo || {};
+  const rg = DATA.theme_rrg || {};
+  const aw = DATA.attwatch || {watch: []};
+  const okN = (aw.watch || []).filter(function(w) { return w.ok; }).length;
+  const dom = new Date().getDate();
+  const inTom = dom >= 25 || dom <= 5;
+  let regimeTxt, playTxt, regimeColor;
+  if (rg.above60 === undefined) {
+    regimeTxt = "(輪動地圖資料未產生)"; playTxt = ""; regimeColor = "var(--tx3)";
+  } else if (rg.above60) {
+    regimeTxt = "站上季線(多頭)"; regimeColor = "#2ecc71";
+    playTxt = "題材打法=買<b>領先象限的放量回檔</b>(H3,持2~4週)。";
+  } else if (rg.above20) {
+    regimeTxt = "跌破季線・月線之上(空頭)"; regimeColor = "#e67e22";
+    playTxt = "題材打法=<b>領先象限全避開</b>;買<b>落後題材放量轉漲</b>(H5,可抱1~8週)與轉強縮漲(H6,1~2週快打)。";
+  } else {
+    regimeTxt = "季線月線齊破(深熊)"; regimeColor = "#e74c3c";
+    playTxt = "題材打法=<b>領先象限全避開</b>;<b>H5落後×放量轉漲=歷史最肥格</b>(深熊8週+8.18pp),H6快打;倉位嚴守曝險係數。";
+  }
+  const expo = (mt.exposure !== undefined && mt.exposure !== null) ? mt.exposure : "?";
+  const lit = (mt.n_lit !== undefined && mt.n_lit !== null) ? mt.n_lit : "?";
+  el.innerHTML =
+    "<div style=\"font-size:15px;font-weight:700;margin-bottom:6px\">🎛️ 大盤戰情板(資金水位總開關)</div>" +
+    "<div>🌡️ <b>水位</b>：溫度計" + lit + "/5燈・曝險係數<b>" + expo + "</b> → 任何訊號的實際倉位=基礎倉位×" + expo + "。</div>" +
+    "<div>🧭 <b>大盤位置</b>：<span style=\"color:" + regimeColor + ";font-weight:700\">" + regimeTxt + "</span>。" + playTxt +
+    " <span style=\"color:var(--tx3)\">值班題材看首頁🧭輪動地圖的★金框。</span></div>" +
+    "<div>📅 <b>月內節律</b>：現在" + (inTom ? "<b>TOM窗內</b>(25日~次月5日)" : "TOM窗外") +
+    "・僅執行時點偏好，非訊號、不改變任何規則。</div>" +
+    "<div>⚡ <b>事件線照常</b>：處置騎乘V4/V5、跌觸發規則卡✓(現" + okN + "檔)按事件日走(未測季線條件不受此開關管);" +
+    "賣方減碼訊號(🔓解質警戒/⚠款1+6漲警)見🎯交集頁紅旗。</div>" +
+    "<div style=\"color:var(--tx3);font-size:11px;margin-top:6px\">⚠題材打法H3/H5/H6=觀察層候選(66週+2019歷史體檢,升格待live);曝險係數口徑見下方「大盤態勢」。</div>";
+}
+
 function renderThermoTab() {
   const mt = DATA.market_thermo;
   if (!mt) return;
@@ -5738,6 +5777,7 @@ function init() {
   renderResoTab();
   renderConfluTab();
   renderThermoTab();
+  renderWarRoom();
   renderConfNotes();
   if (DATA.company_list.length) renderCompanyHistory();
   else {
