@@ -77,7 +77,7 @@ FROZEN = [
     ("cb_inst",      "date", "CB回補設計,非例行"),
     ("cb_overview",  "date", "CB回補設計,非例行"),
     ("margin_maintenance_official", "date", "無自動腳本"),
-    ("tdcc_weekly",  "date", "永久封存"),
+    ("tdcc_weekly",  "date", "歷史段封存;d4w新週由tdcc_holders接軌"),
 ]
 
 

@@ -1140,9 +1140,14 @@ def build():
             _px5["date"] = pd.to_datetime(_px5.date)
             _pxmap = {c: g.sort_values("date") for c, g in _px5.groupby("code")}
             # d4w=公告時千張大戶4週流向(2026-07-25複驗轉正: 20分盤正式/5分盤候選;口徑同build_disposition_tdcc)
+            # 2026-07-27接軌: tdcc_weekly(FinMind回補,止於7/09,Backer 8/15到期)歷史段+
+            # tdcc_holders(TDCC免費opendata,每週例行)新週段;重疊日1368檔數值全等(同源零失真)
             _tdc5 = pd.read_sql(
-                "SELECT code, date, p1000 FROM tdcc_weekly WHERE code IN (%s)"
-                % ",".join("?" * len(_codes5)), _c5, params=_codes5)
+                "SELECT code, date, p1000 FROM tdcc_weekly WHERE code IN (%s) "
+                "UNION SELECT code, date, big1000_pct FROM tdcc_holders WHERE code IN (%s)"
+                % (",".join("?" * len(_codes5)), ",".join("?" * len(_codes5))),
+                _c5, params=_codes5 + _codes5)
+            _tdc5 = _tdc5.drop_duplicates(["code", "date"])
             _tdc5["date"] = pd.to_datetime(_tdc5.date)
             _tdmap = {c: g.sort_values("date").reset_index(drop=True) for c, g in _tdc5.groupby("code")}
             _cls5 = classification[classification["country"] == "台"][["code", "main_group"]] \
