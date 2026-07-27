@@ -906,8 +906,13 @@ def build():
                 "state": _e2.state_tw, "ret": round(float(_e2.ret), 1),
                 "dhs": None if pd.isna(_e2.d_hs_tw) else round(float(_e2.d_hs_tw), 2),
                 "breadth": round(float(_e2.breadth), 0)})
-        data["theme_rrg"] = {"asof": str(_hf_last), "themes": _rrg_themes}
-        print(f"題材輪動地圖: {len(_rrg_themes)}題材在圖 (資料至{_hf_last})")
+        # 季線regime開關(2026-07-27使用者假說驗證成立): 站上季線=紫點格有效/跌破=接刀勿用
+        _tx60 = pd.read_sql("SELECT close FROM index_daily WHERE market='TAIEX' "
+                            "ORDER BY date DESC LIMIT 60", sqlite3.connect(DB_PATH))
+        _above60 = bool(float(_tx60.close.iloc[0]) > float(_tx60.close.mean()))
+        data["theme_rrg"] = {"asof": str(_hf_last), "themes": _rrg_themes, "above60": _above60}
+        print(f"題材輪動地圖: {len(_rrg_themes)}題材在圖 (資料至{_hf_last}, "
+              f"大盤{'站上' if _above60 else '跌破'}季線)")
     except Exception as e:
         _sec_fail("題材輪動地圖未產生(需先跑build_heat_flow.py)", e)
         data["theme_rrg"] = {"asof": None, "themes": []}
@@ -2542,11 +2547,12 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   點色=量價狀態(量=題材成交佔比變化,價=成員週報酬中位):
   <span style="color:#e74c3c">●增漲</span> <span style="color:#f39c12">●增平</span> <span style="color:#a569bd">●增跌</span>
   <span style="color:#f5b7b1">●縮漲</span> <span style="color:#95a5a6">●縮平</span> <span style="color:#5dade2">●縮跌</span>。
-  <b>兩條提醒+歷史體檢(詳研究報告/research_heat_flow.html)</b>:
-  66週窗內(2025-04起)「別追增漲週(-0.37%/47%)」與「領先象限×增跌=最強買點(+5.59%/81%)」成立,
-  但日資料重建拉回2019全史後<b>兩者皆不顯著、且2022趨勢熊市H3反向(-1.79%/32%=接刀)</b>=
-  <b>regime相依:恐慌修復年(2024/2026)有效、趨勢熊市反噬</b>——定位=盤感提醒層非規則,溫度計燈亮期參考價值較高、熊市勿用;
-  4週平滑熱度趨勢月級溫和領先(IC~0.09)=傾斜參考。⚠此圖是現況地圖非預測器;維運=python build_heat_flow.py(已入update_all)。</div>
+  <b>紫點格使用手冊(歷史體檢2019~+季線regime條件化後的最終口徑,詳研究報告/research_heat_flow.html)</b>:
+  <span id="rrgRegime" style="font-weight:bold"></span>
+  <b>大盤站上季線時</b>,領先象限的紫點(●增跌=強勢題材放量回檔)是買點觀察格:+1.40%/勝67%,同regime基準diff+1.22pp CI排0,
+  2019-2026逐年7/8正,<b>連2022熊市中站上季線的窗都成立</b>;<b>跌破季線時同一格=接刀</b>(-0.83%/42%,diff-1.61pp CI排0反向)勿用。
+  「別追增漲」經全史體檢不成立已撤銷。4週平滑熱度趨勢月級溫和領先(IC~0.09)=傾斜參考。
+  ⚠觀察層(站上季線格n=86,分類表倖存者偏差要打折);此圖是現況地圖非預測器;維運=python build_heat_flow.py(已入update_all)。</div>
   <div class="heatmap-box" id="rrgMap"></div>
   <div class="controls" style="margin-top:16px">
     選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
@@ -3057,6 +3063,11 @@ function renderRrgMap() {
   // 題材輪動地圖(2026-07-27上板): 資料=DATA.theme_rrg(build_heat_flow.py面板,6週尾巴)
   const el = document.getElementById("rrgMap");
   const R = DATA.theme_rrg || {themes: []};
+  const regEl = document.getElementById("rrgRegime");
+  if (regEl && R.above60 !== undefined) {
+    regEl.textContent = R.above60 ? "【大盤現況:站上季線→紫點格有效】" : "【大盤現況:跌破季線→紫點格=接刀勿用】";
+    regEl.style.color = R.above60 ? "#2ecc71" : "#e74c3c";
+  }
   if (!R.themes || !R.themes.length) {
     el.innerHTML = '<div class="hint">尚無資料(維運: python build_heat_flow.py 後重跑 export_html.py)</div>';
     return;

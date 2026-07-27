@@ -149,9 +149,40 @@ def main():
     zzo = ov[ov.state == "增漲"]
     print(f"  重建版增漲(rankings版=-0.37%/47%): n={len(zzo)} {zzo.fwd2.median():+.2f}%/{(zzo.fwd2 > 0).mean() * 100:.0f}%")
 
+    # --- 季線regime條件化(2026-07-27使用者假說「破月線/季線表現可能不一樣」,提出於看結果前=準預註冊) ---
+    # 判決: 季線是H3的開關--站上季線+1.40%/67% diff+1.22pp CI[+0.74,+2.37]排0且逐年7/8正(2022年內部也成立);
+    #       跌破季線-0.83%/42% diff-1.61pp CI[-2.37,-0.85]排0反向=接刀確認;月線分割較弱(CI含0)。
+    #       「別追增漲」regime化後也不成立(跌破季線反而+0.77pp)=正式撤銷。
+    con2 = sqlite3.connect(DB)
+    tx = pd.read_sql("SELECT date, close FROM index_daily WHERE market='TAIEX' ORDER BY date", con2)
+    con2.close()
+    tx["date"] = pd.to_datetime(tx.date)
+    tx["ma60"] = tx.close.rolling(60).mean()
+    tx["wkk"] = tx.date.dt.to_period("W-FRI").dt.end_time.dt.normalize()
+    wreg = tx.sort_values("date").groupby("wkk").last()
+    wreg["above60"] = wreg.close > wreg.ma60
+    base2 = base.merge(wreg[["above60"]], left_on="wk", right_index=True, how="left").dropna(subset=["above60"])
+    h3r = base2[(base2.quad == "領先") & (base2.state == "增跌")]
+    print("\n季線regime條件化(基準=同regime面板;使用者假說準預註冊):")
+    reg_out = {}
+    for lab, cond in [("站上季線", base2.above60.astype(bool)), ("跌破季線", ~base2.above60.astype(bool))]:
+        c = h3r[cond.reindex(h3r.index).fillna(False)]
+        b = base2[cond]
+        obs2, lo2, hi2 = cell_stats(c, b)
+        reg_out[lab] = {"n": len(c), "fwd2": round(float(c.fwd2.median()), 2),
+                        "win": round(float((c.fwd2 > 0).mean() * 100), 0),
+                        "diff": round(float(obs2), 2), "ci": [round(float(lo2), 2), round(float(hi2), 2)]}
+        print(f"  {lab}: n={len(c)} fwd2中位{c.fwd2.median():+.2f}% 勝率{(c.fwd2 > 0).mean() * 100:.0f}% "
+              f"diff={obs2:+.2f}pp CI[{lo2:+.2f},{hi2:+.2f}]{' ◄排0' if lo2 > 0 or hi2 < 0 else ''}")
+        for y, s in c.groupby(c.wk.dt.year):
+            byr = b[b.wk.dt.year == y]
+            if len(s) >= 3:
+                print(f"    {y}: n={len(s):3d} diff={s.fwd2.median() - byr.fwd2.median():+.2f}pp")
+
     out = {"h3_all": {"n": len(h3), "fwd2": round(float(h3.fwd2.median()), 2),
                       "win": round(float((h3.fwd2 > 0).mean() * 100), 0),
-                      "diff": round(float(obs), 2), "ci": [round(float(lo), 2), round(float(hi), 2)]}}
+                      "diff": round(float(obs), 2), "ci": [round(float(lo), 2), round(float(hi), 2)]},
+           "h3_regime": reg_out}
     with open("tmp_heat_flow_hist_results.json", "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False)
     print("\n完成: tmp_heat_flow_hist_panel.pkl / tmp_heat_flow_hist_results.json")
