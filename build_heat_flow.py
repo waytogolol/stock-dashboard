@@ -283,6 +283,20 @@ def main():
         print(f"{name} {q}×{st}: n={len(cell)} fwd2={cell.fwd2.median():.2f}% "
               f"diff={obs:+.2f}pp CI[{lo:.2f},{hi:.2f}] LOTO={loto} → {R['hyp'][-1]['verdict']}")
 
+    # --- ③a 四假說格×持有期網格(2026-07-27使用者追問;⚠預註冊只有fwd2,其餘水平=事後探索) ---
+    # 判讀(66週牛市段): H3超額集中頭兩週(fwd2唯一CI排0,長水平絕對報酬大但基準也墊高=只剩beta);
+    # H2領先x增漲 fwd1負(別追週)但fwd4/8/12跑贏基準≈中期動能仍在→「別追」管進場時點,「領先象限」管題材選擇
+    R["hyp_grid"] = []
+    for name, q, st, _ in HYP:
+        cell_all = rq[(rq.quad == q) & (rq.state_tw == st)]
+        row = {"格": f"{name}({q}x{st})", "n": len(cell_all)}
+        for h in (1, 2, 4, 8, 12):
+            c = cell_all[f"fwd{h}"].dropna()
+            b = rq[f"fwd{h}"].dropna()
+            row[f"fwd{h}w"] = (f"{c.median():+.1f}%/{(c > 0).mean() * 100:.0f}%"
+                               f"(基準{b.median():+.1f}%)") if len(c) >= 8 else "n<8"
+        R["hyp_grid"].append(row)
+
     # --- ③b H3格深掘(2026-07-27使用者裁示:要明細+權益曲線;成員級K棒檢視器=待辦另開) ---
     h3 = rq[(rq.quad == "領先") & (rq.state_tw == "增跌")].sort_values("snapshot_date")
     R["h3_events"] = h3[["snapshot_date", "main_group", "ret", "d_hs_tw", "breadth",
@@ -444,6 +458,10 @@ th{{background:#19253a}}h2{{color:#6cf;border-bottom:1px solid #345;padding-top:
 四假說格以外皆描述性未預註冊;全部結論觀察層起步。</span></p>
 <h2>一、輪動象限地圖(最新一期)</h2>{rrg_html}
 <h2>二、預註冊四假說格判決(fwd2週 vs 全面板基準,cluster bootstrap×{N_BOOT}+LOTO)</h2>{hyp_html}
+<h3>持有期網格(1/2/4/8/12週;⚠預註冊只有fwd2,其餘=事後探索)</h3>
+<p class="note">判讀:H3超額集中頭兩週(fwd2唯一diff CI排0;長水平絕對報酬變大但66週牛市段基準也墊高=只剩市場beta);
+H2領先×增漲fwd1負(=別追週)但fwd4/8/12跑贏基準≈強題材中期動能仍在——<b>「別追」管進場時點(1-2週戰術),「領先象限」管題材選擇(1-3月配置),兩條不衝突</b>。</p>
+{tbl(R['hyp_grid'])}
 <h2>二b、H3格深掘:領先象限×量增價跌=「強勢題材放量回檔是買點」(原假說「出貨警」完全反向)</h2>
 <p class="note">「被洗越慘反彈越肥」定理第五度重現、首次在題材層。逐年分割:{json.dumps(R['h3_yearly'], ensure_ascii=False)}<br>
 <span class="warn">⚠n={len(R['h3_events'])}小樣本;權益曲線=逐事件fwd2累加(概念曲線,未做資金加權/併發控制);
