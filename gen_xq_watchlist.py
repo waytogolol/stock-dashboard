@@ -249,6 +249,103 @@ def build_signal_lines(name_map):
     return lines, rows
 
 
+def _next_weekdays(base, n):
+    """base(date)起往後第n個平日(近似交易日,遇休市誤差1-2日屬正常,與儀表板同口徑)"""
+    from datetime import timedelta
+    d, cnt = base, 0
+    while cnt < n:
+        d += timedelta(days=1)
+        if d.weekday() < 5:
+            cnt += 1
+    return d
+
+
+def build_action_lines(name_map):
+    """行動盤(2026-07-27使用者裁示上線,XQ第三檔): 按「看到這組該做什麼」分組,與既有兩檔互補不重複。
+    A1/A2=處置V4/V5行動日落在未來5個平日內(尾盤買,毒格已在export端排除,d4w>0加分見摘要);
+    A3=跌觸發規則卡✓(live驗證中=小倉,使用者裁示先放行動組); B1=處置持有中(已有V4進場價,-10%攤平帶);
+    D1=交集⭐且>=2條; D2=共振8週窗內+外資確認✓。C組排雷(款16漲警/解質/漲觸發)使用者裁示不放,儀表板看。
+    同一檔可跨組出現(不同組=不同動作),組內不重複。"""
+    path = Path(SIGNALS_FILE)
+    if not path.exists():
+        print(f"[提醒] 找不到 {SIGNALS_FILE}，請先跑過 export_html.py 再產生行動盤（跳過）")
+        return [], [], {}
+    sig = json.loads(path.read_text(encoding="utf-8"))
+    if "attwatch_hits" not in sig:
+        print("[提醒] signals_export.json 是舊版(缺行動盤欄位)，請先重跑 export_html.py（跳過行動盤）")
+        return [], [], sig.get("regime", {})
+
+    today = date.today()
+    win_end = _next_weekdays(today, 5).isoformat()
+    t0 = today.isoformat()
+    lines, rows = [], []
+
+    def add_group(label, items):
+        """items=[(code, 行動日, 說明dict)];組內去重,標籤結尾必須是整數(XQ格式)"""
+        seen, uniq = set(), []
+        for it in items:
+            if it[0] not in seen:
+                seen.add(it[0])
+                uniq.append(it)
+        if not uniq:
+            return
+        lines.append(f"{label}_{len(uniq)}:")
+        for code, actd, info in uniq:
+            code_xq = xq_code("台", code)
+            lines.append(code_xq)
+            rows.append({"組": label, "代碼": code, "XQ代碼": code_xq,
+                         "公司": info.pop("公司", "") or name_map.get(("台", code), ""),
+                         "行動日": actd, **info})
+
+    dispo = sig.get("dispo_hits", [])
+    # A1/A2: 行動日在[今天, 未來第5個平日]內
+    add_group("處置V4本週", [
+        (h["code"], h["v4d"], {"公司": h.get("name"), "動作": "第3處置日尾盤買",
+                               "出場": h["exitd"] + "開盤",
+                               "d4w": h.get("d4w"), "分盤": h.get("mins"),
+                               "提示": "d4w>0加分(20分盤正式/5分盤候選);騎乘中處置前賣=死"})
+        for h in dispo if t0 <= h["v4d"] <= win_end])
+    add_group("處置V5本週", [
+        (h["code"], h["v5d"], {"公司": h.get("name"), "動作": "倒數第3日尾盤買",
+                               "出場": h["exitd"] + "開盤",
+                               "d4w": h.get("d4w"), "分盤": h.get("mins"),
+                               "提示": "前段跌更佳;出關日開盤出"})
+        for h in dispo if t0 <= h["v5d"] <= win_end])
+    # A3: 跌觸發規則卡✓(近25交易日episode首筆,export端已算好ok旗標)
+    add_group("跌觸發規則卡", [
+        (h["code"], h["entry"], {"公司": h.get("name"), "動作": "次交易日進,T+10出",
+                                 "跌幅%": h.get("mag"), "金流億": h.get("amt"), "PE": h.get("pe"),
+                                 "提示": "live驗證中(升格門檻:>=10筆中位>0勝率>=60%),小倉"})
+        for h in sig.get("attwatch_hits", []) if h.get("ok")])
+    # B1: 已過V4日=有進場價,持有管理
+    add_group("處置持有中", [
+        (h["code"], h["end"] + "出關", {"公司": h.get("name"), "動作": "持有管理",
+                                        "V4進場價": h.get("v4px"), "距進場%": h.get("cur"),
+                                        "攤平帶首觸": h.get("addond"), "d4w": h.get("d4w"),
+                                        "提示": "停損❌攤平✅(-10%帶);處置前賣=死,拿到出關"})
+        for h in dispo if h.get("v4px") is not None and h["end"] >= t0])
+    # D1: 交集⭐且>=2條(confluence_hits本身已>=2條)
+    add_group("交集星", [
+        (h["code"], "", {"公司": h.get("name"), "動作": "信心加碼候選",
+                         "條數": h.get("n"), "命中族": "+".join(h.get("fams", [])),
+                         "提示": "交集數量未回測,評估輔助非排行榜"})
+        for h in sig.get("confluence_hits", []) if h.get("star")])
+    # D2: 共振窗內+外資確認✓(fx=ok;warn/na不放,事件層級排雷結論);
+    # 8週窗全量可能50+檔,XQ組控制在20檔內=取事件週齡最新的(丟掉的是快過窗的舊事件)
+    _reso_ok = sorted([h for h in sig.get("reso_hits", []) if h.get("fx") == "ok"],
+                      key=lambda h: (h.get("weeks_ago") or 9, h["code"]))
+    if len(_reso_ok) > 20:
+        print(f"[行動盤] 共振外資確認{len(_reso_ok)}檔>20,取週齡最新20(餘{len(_reso_ok)-20}檔見儀表板🔥)")
+        _reso_ok = _reso_ok[:20]
+    add_group("共振外資確認", [
+        (h["code"], "", {"公司": "", "動作": "題材共振觀察",
+                         "題材": h.get("theme"), "週齡": h.get("weeks_ago"),
+                         "提示": "水位階梯加碼;外資確認fwd8中位+7.10%/勝65%"})
+        for h in _reso_ok])
+
+    return lines, rows, sig.get("regime", {})
+
+
 def main():
     parser = argparse.ArgumentParser(description="生成XQ題材熱度變化自選股匯入檔")
     parser.add_argument("--top", type=int, default=15,
@@ -303,6 +400,25 @@ def main():
         pd.DataFrame(sig_rows).to_csv(out_sig_summary, index=False, encoding="utf-8-sig")
         print(f"已輸出 系統訊號XQ檔：{out_sig_xq}（共 {len(sig_rows)} 筆，{len(set(r['代碼'] for r in sig_rows))} 檔不重複）")
         print(f"已輸出 系統訊號摘要：{out_sig_summary}\n")
+
+    # ── 行動盤(第三檔,2026-07-27使用者裁示): 按「該做什麼」分組,獨立一份XQ檔 ──
+    act_lines, act_rows, regime = build_action_lines(tw_name_map)
+    if act_lines:
+        out_act_xq = Path(OUT_DIR) / f"XQ_行動盤_{date_tag}.csv"
+        with open(out_act_xq, "wb") as f:
+            f.write(("\r\n".join(act_lines) + "\r\n").encode("big5", errors="replace"))
+        out_act_summary = Path(OUT_DIR) / f"行動盤_名單_{date_tag}.csv"
+        adf = pd.DataFrame(act_rows)
+        front = [c for c in ["組", "代碼", "XQ代碼", "公司", "行動日", "動作"] if c in adf.columns]
+        adf = adf[front + [c for c in adf.columns if c not in front]]
+        with open(out_act_summary, "w", encoding="utf-8-sig", newline="") as f:
+            f.write(f"# 大盤態勢: 溫度計{regime.get('n_lit', '?')}/5燈 曝險{regime.get('exposure', '?')}"
+                    f" | {regime.get('headline', '')} | 倉位=各訊號基礎倉位x曝險係數 | TOM窗見儀表板\n")
+            adf.to_csv(f, index=False)
+        from collections import Counter
+        _cnt = Counter(r["組"] for r in act_rows)
+        print(f"已輸出 行動盤XQ檔：{out_act_xq}（{'、'.join(f'{k}{v}' for k, v in _cnt.items())}）")
+        print(f"已輸出 行動盤名單：{out_act_summary}\n")
 
     print(f"{'方向':<4} {'排':>2} {'題材':<18} {'熱度Δ':>7}")
     print("-" * 40)

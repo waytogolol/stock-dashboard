@@ -2050,7 +2050,11 @@ def build():
         # 處置股觀察組(處置中非毒格,排除已出關;XQ盯盤用,行動日見儀表板)
         _t6 = pd.Timestamp.today().strftime("%Y-%m-%d")
         # 2026-07-19修: 只收4位數股票代碼(5-6位數=CB/權證處置,XQ股票清單放不進去)
-        dispo_hits = [{"code": r["code"], "v4d": r["v4d"], "v5d": r["v5d"], "exitd": r["exitd"]}
+        # 2026-07-27加寬: 行動盤(XQ第三檔)需要進場價/現價距/d4w/分盤,鍵值取自disposition rows不重算
+        dispo_hits = [{"code": r["code"], "name": r.get("name", ""), "v4d": r["v4d"],
+                       "v5d": r["v5d"], "exitd": r["exitd"], "end": r["end"],
+                       "v4px": r.get("v4px"), "cur": r.get("cur"), "addond": r.get("addond"),
+                       "d4w": r.get("d4w"), "mins": r.get("mins"), "theme": r.get("theme")}
                       for r in data.get("disposition", {}).get("rows", [])
                       if not r.get("poison") and r["end"] >= _t6
                       and len(str(r["code"])) == 4]
@@ -2061,15 +2065,31 @@ def build():
                       if r.get(k)],
              "star": bool(r.get("star"))}
             for r in (data.get("confluence") or {}).get("rows", []) if r["n"] >= 2]
+        # 行動盤新增(2026-07-27,XQ第三檔): 跌觸發觀察/共振窗內per-code/大盤態勢,全部取已算好的結構
+        attwatch_hits = [
+            {"code": w["code"], "name": w.get("name", ""), "ok": bool(w["ok"]),
+             "mag": w.get("mag"), "amt": w.get("amt"), "pe": w.get("pe"),
+             "ann": w["ann"], "entry": w["entry"], "exitd": w["exitd"]}
+            for w in (data.get("attwatch") or {}).get("watch", [])]
+        reso_hits = [
+            {"code": str(c), "theme": v.get("theme"), "weeks_ago": v.get("weeks_ago"),
+             "fx": v.get("fx")}
+            for c, v in (data.get("resonance") or {}).items()]
+        _mt = data.get("market_thermo") or {}
+        regime = {"n_lit": _mt.get("n_lit"), "exposure": _mt.get("exposure"),
+                  "headline": _mt.get("headline")}
         with open("signals_export.json", "w", encoding="utf-8") as f:
             json.dump({"rule_hits": rule_hits, "micro_hits": micro_hits,
                       "catchup_hits": catchup_hits, "chip_hits": chip_hits,
                       "revmom_hits": revmom_hits, "dispo_hits": dispo_hits,
                       "confluence_hits": confluence_hits,
+                      "attwatch_hits": attwatch_hits, "reso_hits": reso_hits,
+                      "regime": regime,
                       "snapshot_date": data.get("latest_date")}, f, ensure_ascii=False)
         print(f"訊號摘要已匯出 signals_export.json "
               f"(規則{len(rule_hits)}/微題材{len(micro_hits)}/補漲{len(catchup_hits)}/籌碼{len(chip_hits)}"
-              f"/月營收{len(revmom_hits)}/交集{len(confluence_hits)})")
+              f"/月營收{len(revmom_hits)}/交集{len(confluence_hits)}/跌觸發{len(attwatch_hits)}"
+              f"/共振{len(reso_hits)})")
     except Exception as e:
         _sec_fail("訊號摘要匯出失敗(不影響dashboard)", e)
 
