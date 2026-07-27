@@ -2551,8 +2551,12 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <span id="rrgRegime" style="font-weight:bold"></span>
   <b>大盤站上季線時</b>,領先象限的紫點(●增跌=強勢題材放量回檔)是買點觀察格:+1.40%/勝67%,同regime基準diff+1.22pp CI排0,
   2019-2026逐年7/8正,<b>連2022熊市中站上季線的窗都成立</b>;<b>跌破季線時同一格=接刀</b>(-0.83%/42%,diff-1.61pp CI排0反向)勿用。
-  「別追增漲」經全史體檢不成立已撤銷。4週平滑熱度趨勢月級溫和領先(IC~0.09)=傾斜參考。
-  ⚠觀察層(站上季線格n=86,分類表倖存者偏差要打折);此圖是現況地圖非預測器;維運=python build_heat_flow.py(已入update_all)。</div>
+  「別追增漲」經全史體檢不成立已撤銷。
+  <b>跌破季線時的替代打法(全格掃描發現,探索候選掛觀察)</b>:領先象限全避開(增跌/縮跌/增平皆負);
+  買點改看<b>落後象限的紅點●增漲</b>(+3.64%/勝78%,diff+2.86pp,6/7年正,持越久越肥fwd4+4.77%)與
+  轉強象限的淡紅點●縮漲(+2.60%/79%,2週甜蜜點)=<b>熊市買「落後題材的放量轉漲」,不買強勢題材回檔</b>。
+  4週平滑熱度趨勢月級溫和領先(IC~0.09)=傾斜參考。
+  ⚠觀察層(H3站上季線格n=86;熊市兩格n=135/109,發現途徑=探索掃描要打折;分類表倖存者偏差);此圖是現況地圖非預測器;維運=python build_heat_flow.py(已入update_all)。</div>
   <div class="heatmap-box" id="rrgMap"></div>
   <div class="controls" style="margin-top:16px">
     選一個主族群看明細：<select id="themePick" onchange="renderThemeDetail()"></select>
@@ -3065,7 +3069,8 @@ function renderRrgMap() {
   const R = DATA.theme_rrg || {themes: []};
   const regEl = document.getElementById("rrgRegime");
   if (regEl && R.above60 !== undefined) {
-    regEl.textContent = R.above60 ? "【大盤現況:站上季線→紫點格有效】" : "【大盤現況:跌破季線→紫點格=接刀勿用】";
+    regEl.textContent = R.above60 ? "【大盤現況:站上季線→打法=買領先象限的紫點回檔】"
+                                  : "【大盤現況:跌破季線→領先象限全避開,改看落後象限的紅點轉漲】";
     regEl.style.color = R.above60 ? "#2ecc71" : "#e74c3c";
   }
   if (!R.themes || !R.themes.length) {

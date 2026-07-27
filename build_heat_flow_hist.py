@@ -96,15 +96,22 @@ def build_hist_panel():
 
 
 def cell_stats(cell, base, col="fwd2"):
+    """cluster bootstrap(按題材重抽),numpy陣列版(pandas concat版跑24格會超時)"""
     themes = base.main_group.unique()
-    obs = cell[col].median() - base[col].median()
+    cg = {t: g[col].values for t, g in cell.groupby("main_group")}
+    bg = {t: g[col].values for t, g in base.groupby("main_group")}
+    obs = np.median(cell[col].values) - np.median(base[col].values)
     diffs = []
     for _ in range(N_BOOT):
         pick = rng.choice(themes, len(themes), replace=True)
-        cs = pd.concat([cell[cell.main_group == t] for t in pick if (cell.main_group == t).any()])
-        bs = pd.concat([base[base.main_group == t] for t in pick])
-        if len(cs) >= 5:
-            diffs.append(cs[col].median() - bs[col].median())
+        ca = [cg[t] for t in pick if t in cg]
+        if not ca:
+            continue
+        ca = np.concatenate(ca)
+        if len(ca) < 5:
+            continue
+        ba = np.concatenate([bg[t] for t in pick])
+        diffs.append(np.median(ca) - np.median(ba))
     lo, hi = np.percentile(diffs, [2.5, 97.5]) if diffs else (np.nan, np.nan)
     return obs, lo, hi
 
@@ -179,10 +186,34 @@ def main():
             if len(s) >= 3:
                 print(f"    {y}: n={len(s):3d} diff={s.fwd2.median() - byr.fwd2.median():+.2f}pp")
 
+    # --- 全24格×季線探索掃描(2026-07-27使用者「舉一反三有H5H6?」;⚠48檢定預期2-3假陽性,掛起標籤) ---
+    # 判決: 9格CI排0>>雜訊期望,且方向連貫=regime輪動地圖--多頭買領先回檔(H3)/空頭領先全毒、
+    #       買落後轉漲: H5候選=落後x增漲x跌破季線(+3.64%/78%,diff+2.86pp,6/7年正,前後段+2.54/+3.15,
+    #       fwd4遞增+3.53pp)、H6候選=轉強x縮漲x跌破(+2.60%/79%,diff+1.82pp,6/7年正,2週甜蜜點);
+    #       H1/H2/H4皆無季線開關(CI全含0)。
+    scan_out = []
+    for q in ["領先", "轉強", "轉弱", "落後"]:
+        for st in ["增漲", "增平", "增跌", "縮漲", "縮平", "縮跌"]:
+            for lab, cond in [("站上", base2.above60.astype(bool)), ("跌破", ~base2.above60.astype(bool))]:
+                b = base2[cond]
+                c = b[(b.quad == q) & (b.state == st)]
+                if len(c) < 30:
+                    continue
+                obs3, lo3, hi3 = cell_stats(c, b)
+                if lo3 > 0 or hi3 < 0:
+                    scan_out.append({"cell": f"{q}x{st}x{lab}季線", "n": len(c),
+                                     "fwd2": round(float(c.fwd2.median()), 2),
+                                     "win": round(float((c.fwd2 > 0).mean() * 100), 0),
+                                     "diff": round(float(obs3), 2),
+                                     "ci": [round(float(lo3), 2), round(float(hi3), 2)]})
+    print("\n全格×季線掃描CI排0(探索,掛起):")
+    for r in sorted(scan_out, key=lambda r: -abs(r["diff"])):
+        print(f"  {r['cell']}: n={r['n']} {r['fwd2']:+.2f}%/{r['win']:.0f}% diff{r['diff']:+.2f}pp CI{r['ci']}")
+
     out = {"h3_all": {"n": len(h3), "fwd2": round(float(h3.fwd2.median()), 2),
                       "win": round(float((h3.fwd2 > 0).mean() * 100), 0),
                       "diff": round(float(obs), 2), "ci": [round(float(lo), 2), round(float(hi), 2)]},
-           "h3_regime": reg_out}
+           "h3_regime": reg_out, "scan_flagged": scan_out}
     with open("tmp_heat_flow_hist_results.json", "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False)
     print("\n完成: tmp_heat_flow_hist_panel.pkl / tmp_heat_flow_hist_results.json")
