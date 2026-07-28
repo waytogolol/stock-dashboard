@@ -87,7 +87,7 @@ def calc_day(conn, d):
     return ratio
 
 
-OTC_START = "2019-01-01"
+OTC_START = "2011-01-01"  # TPEX API實測深度斷點:2011-01有/2010-07 fallback(防呆會擋)
 
 
 def roc(d):
@@ -96,10 +96,16 @@ def roc(d):
 
 
 def otc_calc_day(d):
-    """上櫃公式版單日;回傳ratio或None。"""
+    """上櫃公式版單日;回傳ratio或None。
+    ⚠防呆(2026-07-28發現): TPEX API對超出深度的舊日期會fallback回傳「最新一日」資料,
+    必須核對回應的date欄=請求日,否則歷史會被今天的數字污染。"""
     r = requests.get("https://www.tpex.org.tw/www/zh-tw/margin/balance",
                      params={"date": roc(d), "response": "json"}, headers=UA, timeout=30)
-    tbs = r.json().get("tables") or []
+    j = r.json()
+    # 回應date格式=YYYYMMDD(如20120702),與請求日去分隔後比對
+    if str(j.get("date", "")).replace("/", "").replace("-", "") != d.replace("-", ""):
+        return None
+    tbs = j.get("tables") or []
     if not tbs or not (tbs[0].get("data") or []):
         return None
     tb = tbs[0]
@@ -139,8 +145,8 @@ def update_otc(conn, no_cap):
                  "(date TEXT PRIMARY KEY, ratio REAL)")
     have = {r[0] for r in conn.execute("SELECT date FROM margin_maintenance_otc")}
     days = [r[0] for r in conn.execute(
-        "SELECT DISTINCT date FROM fm_daily_price WHERE date>=? ORDER BY date DESC",
-        (OTC_START,))]
+        "SELECT DISTINCT date FROM index_daily WHERE market='TAIEX' AND date>=? "
+        "ORDER BY date DESC", (OTC_START,))]
     todo = [d for d in days if d not in have]
     if not todo:
         print("上櫃維持率: 已最新")

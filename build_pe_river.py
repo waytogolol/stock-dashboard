@@ -107,8 +107,9 @@ def build_equity(px, per, rev):
                 outm[i, ci] = (past <= v[i]).mean() * 100
     pct = pd.DataFrame(outm, index=pem.index, columns=pem.columns)
     months = list(pxm.index)
-    series = {k: [] for k in ("base", "bot", "star", "div", "top")}
-    counts = {"bot": [], "star": [], "div": [], "top": []}
+    keys = ("bot", "star", "div", "top", "top95", "fresh")
+    series = {k: [] for k in ("base",) + keys}
+    counts = {k: [] for k in keys}
     use_ms = []
     for i in range(len(months) - 1):
         m, m1 = months[i], months[i + 1]
@@ -117,8 +118,13 @@ def build_equity(px, per, rev):
         if len(valid) < 50:
             continue
         pr = pct.loc[m]
+        prv = pct.loc[months[i - 1]] if i > 0 else pr * np.nan
         grp = {"bot": valid.index[(pr.reindex(valid.index) <= 10)],
-               "top": valid.index[(pr.reindex(valid.index) >= 90)]}
+               "top": valid.index[(pr.reindex(valid.index) >= 90)],
+               "top95": valid.index[(pr.reindex(valid.index) >= 95)],
+               # fresh=本月剛突破進河頂(上月<90)=「追高」的動能直覺版
+               "fresh": valid.index[(pr.reindex(valid.index) >= 90) &
+                                    (prv.reindex(valid.index) < 90)]}
         bset = set(grp["bot"])
         ri, po = rise.loc[m].reindex(valid.index), pos.loc[m].reindex(valid.index)
         grp["star"] = [c for c in valid.index if c in bset and ri.get(c) is True]
@@ -127,7 +133,7 @@ def build_equity(px, per, rev):
         base_r = float(valid.mean())
         use_ms.append(m1)
         series["base"].append(base_r)
-        for k in ("bot", "star", "div", "top"):
+        for k in keys:
             cs = list(grp[k])
             counts[k].append(len(cs))
             series[k].append(float(valid[cs].mean()) if cs else base_r)
@@ -347,6 +353,12 @@ HTML_TAIL = """
 河底的中位股確實沒事,但河底裡藏著一撮「便宜到下市」的價值陷阱,等權平均被左尾拖爛、複利再放大;
 你真的去買一籃河底股,吃到的是平均不是中位。②原價未還原股息:便宜股殖利率高,
 報酬被系統性低估約2-4%/年——但就算加回去,河底年化5.3% vs 基準14.5%的差距也補不上,判決不變。</p>
+<p><b>「反過來用高位階追」的答案(2026-07-28使用者追問,曲線已入圖B):</b>三種追法全不賺——
+<b>剛突破進河頂</b>(上月&lt;90→本月≥90,最像「追」的動作)<b>1.86x=明顯輸基準2.61x</b>;
+持續在河頂≥90組2.37x略輸;河頂極端≥95組2.60x≈基準打平。解讀:PE位階的<b>兩端都沒有機械化alpha</b>——
+「變貴」不是動能訊號(動能在價格與量,不在估值位階),「剛變貴」那一刻反而常是短期過熱點
+(與題材層「別追增漲」同構);而「一直很貴」的股票=市場長期給高估值有它的理由,
+空它們或躲它們同樣沒edge(≥95組≈基準)。高位階唯一正確用法=持股審查提醒,不是進出場訊號,雙向皆然。</p>
 <p><b>我的可行性總結(誠實版):</b><br>
 ① <b>個股層河流圖的任何機械化買法都不賺</b>——六路考卷全滅(先行/交互/過熱/龍頭/指紋/橫斷)之外,
 圖B再補一刀:連「河底+營收回升」這種法人直覺組合,機械執行都輸給無腦買全市場。
@@ -469,7 +481,8 @@ stockTable(D.bot,"tblBot");stockTable(D.top,"tblTop");
   if(eq.stock){
     const s=eq.stock,C={base:["全市場等權基準","#8a8878"],bot:["河底組(位階≤10)","#6bb7e3"],
       star:["★營收回升×河底","#e8c34a"],div:["⚠成長背離(河底×yoy>0未回升)","#e06c5a"],
-      top:["河頂組(位階≥90)","#c3a55a"]};
+      top:["河頂組(位階≥90)","#c3a55a"],top95:["河頂極端(≥95)","#b085d6"],
+      fresh:["剛突破進河頂(追高)","#d67ab1"]};
     Plotly.newPlot("chEqStock",Object.keys(C).map(function(k){
       return {x:s.ms,y:s.curves[k],name:C[k][0],mode:"lines",
         line:{color:C[k][1],width:k==="base"?2.5:1.7,dash:k==="base"?"dot":undefined},
