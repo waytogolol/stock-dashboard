@@ -1202,6 +1202,19 @@ def build():
                         left -= 1
                 return d
 
+            # 💰第3日成交值「當日全市場排名」(2026-07-29考卷:絕對億數8年漂12倍,排名口徑抗漂移;
+            #  >800名=雜訊段+0.00%/50%、<=300名=肥段;快取=每個日期只查一次橫斷面)
+            import bisect as _bisect
+            _rank_cache5 = {}
+
+            def _tv3_rank_of(_dstr, _mval):
+                if _dstr not in _rank_cache5:
+                    _rank_cache5[_dstr] = sorted(pd.read_sql(
+                        "SELECT money FROM fm_daily_price WHERE date=? AND money>0",
+                        _c5, params=(_dstr,)).money.values)
+                _arr = _rank_cache5[_dstr]
+                return len(_arr) - _bisect.bisect_right(_arr, _mval) + 1
+
             for _, _e in _act.iterrows():
                 _sidx = [d for d in _cal5 if d >= _e.start_date]
                 if not _sidx:
@@ -1223,7 +1236,7 @@ def build():
                 while _exitd.weekday() >= 5:
                     _exitd += pd.Timedelta(days=1)
                 _g5 = _pxmap.get(_e.code)
-                _pre, _tv3, _last, _cap = None, None, None, None
+                _pre, _tv3, _last, _cap, _tv3r = None, None, None, None, None
                 if _g5 is not None and len(_g5):
                     _w = _g5[_g5.date >= _s0]
                     _b4 = _g5[_g5.date < _s0].tail(20)
@@ -1233,6 +1246,8 @@ def build():
                         _pre = round(float(_w.close.iloc[-1] / _w.close.iloc[0] - 1) * 100, 1)
                         if len(_w) >= 3 and _w.money.iloc[2] > 0:
                             _tv3 = round(float(_w.money.iloc[2]) / 1e8, 2)
+                            _tv3r = _tv3_rank_of(_w.date.iloc[2].strftime("%Y-%m-%d"),
+                                                 float(_w.money.iloc[2]))
                         _last = _w.date.iloc[-1].strftime("%Y-%m-%d")
                 _poison = "人工管制" in str(_e.reason)
                 # 持有中管理欄(2026-07-25路徑考卷): V4進場價/距進場%/首次觸攤平帶日
@@ -1260,7 +1275,7 @@ def build():
                     "mkt": _e.market, "cum": int(_e.cum_count or 1), "mins": _e.match_min,
                     "theme": _cls5.get(_e.code), "poison": _poison,
                     "start": _e.start_date.strftime("%Y-%m-%d"), "end": _endd.strftime("%Y-%m-%d"),
-                    "seq": _seq, "pre": _pre, "tv3": _tv3, "cap": _cap, "px_asof": _last,
+                    "seq": _seq, "pre": _pre, "tv3": _tv3, "tv3r": _tv3r, "cap": _cap, "px_asof": _last,
                     "v4d": _v4d.strftime("%Y-%m-%d"), "v5d": _dv5.strftime("%Y-%m-%d"),
                     "exitd": _exitd.strftime("%Y-%m-%d"),
                     "v4px": _v4px, "cur": _cur, "addond": _addond, "d4w": _d4w,
@@ -2898,7 +2913,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div class="rule-item">機制：處置＝監管製造的可預測流動性凍結（分盤撮合＋預收全額款券趕走投機資金→公告衝擊跌），期滿前資金搶跑回流。逐日解剖(~1,890事件)：<b>公告首日−1.87%→中段築底→倒數第2日+1.43%(全週期最強日)→出關起連三日負</b>。「出關行情」是迷思——出關日進場的人是本策略的出場流動性。</div>
     <div class="rule-item">兩個進場形態(皆<b>尾盤收盤買</b>)：<b>V4＝第3個處置日</b>買、抱全段(~8交易日，淨中位+3.78%/勝率62%)；<b>V5＝倒數第3日</b>買、搶跑段(~4交易日，前段一直跌組+4.14%/66%——前段已大漲的別買，出關後是50/50肥尾樂透)。<b>出場鐵律＝出關日開盤，不戀棧</b>。</div>
     <div class="rule-item">加分項(劑量單調)：<b>20分鐘分盤</b>(第2次處置)+6.96%/71% &gt; 5分鐘+2.26%；<b>題材成員</b>+6.88%/70%(名單有事後偏差,幅度打折看)；公告衝擊跌越深越好。<b>⚠避開</b>：「人工管制撮合」類(−4.71%/38%)、第3日成交值&lt;0.3億的小票、前段已漲&gt;10%的強勢票。</div>
-    <div class="rule-item">💰<b>成交值加分(2026-07-29考卷,切樣本+四控全過)</b>：第3日成交值越大越好，全史五分位完美單調(小+0.18%/51%→大+5.50%/66%)；凍結驗證段(2023-26)大−小=+5.74pp CI排0、逐年7/8正、分盤內/市場內/換口徑(公告前20日均額)全同向——<b>同樣的單，優先給成交值大的(排「第3日值」欄由大到小挑)，最小1/3(&lt;約0.4億)≈雜訊直接跳過</b>。⚠regime警語：加分只在<b>站上季線</b>時成立(+4.80pp)；跌破季線時梯度消失略反(−1.33pp)＝熊市裡大小票一視同仁，別用這條加倉。唯一失效年=2022全面熊市。</div>
+    <div class="rule-item">💰<b>成交值加分(2026-07-29考卷,切樣本+四控全過)</b>：第3日成交值越大越好，全史五分位完美單調(小+0.18%/51%→大+5.50%/66%)；凍結驗證段(2023-26)大−小=+5.74pp CI排0、逐年7/8正、分盤內/市場內全同向。<b>門檻用「當日全市場成交值排名」不用絕對億數</b>(億數8年漂12倍會過時，排名抗漂移且梯度同樣成立+4.55pp)：<b>排名≤300＝肥段優先給(表中💰標記)；排名&gt;800＝雜訊段+0.00%/50%直接跳過(⬇標記)</b>；排名已列在「第3日值」欄括號內。⚠regime警語：加分只在<b>站上季線</b>時成立(+4.80pp)；跌破季線梯度消失略反(−1.33pp)＝熊市大小票一視同仁，💰/⬇標記自動隱藏。唯一失效年=2022全面熊市。</div>
     <div class="rule-item">持有中管理(2026-07-25路徑考卷,配對差LOTO 8/8+bootstrap)：進場後<b>不停損</b>(−10%停損8年0正=砍在統計谷底,跌破−10%後剩餘段中位5分+1.5%/20分+7.0%仍為正)、<b>不追強</b>(漲+3%加碼8年0正)；首次收盤<b>跌破−10%＝🟢攤平帶</b>(用<b>新資金</b>加1單位抱到出關,配對差5分+1.65pp/20分+1.80pp；<b>−15%以下肉沒了別攤</b>;勿預留半倉等攤平=等本金版輸day0滿倉)。<b>d4w欄</b>=公告時千張大戶4週流向,&gt;0✓=大戶逆接中(信心加碼層;<b>20分盤已轉正</b>/5分盤候選僅參考,覆蓋64%缺值顯—)。逐筆歷史K棒與標準路徑對照見 研究報告/research_disposition_trades.html。</div>
     <div class="rule-item">選件分層(回測V4淨額,倉位大小參考——T1給大份/T4給小份,取捨用先到先選+並發上限5)：
       <table style="margin:6px 0 2px">
@@ -5587,6 +5602,7 @@ function renderDispoTab() {
     if (t === d) return "🔔" + label + "＝今天";
     return label + " " + d.slice(5) + "未到";
   };
+  const bull60 = !!(DATA.theme_rrg || {}).above60;  // 💰成交值加分只在站上季線時標記(考卷regime條件)
   const rows = allRows.filter(function(r) { return String(r.code).length === 4; }).map(function(r) {
     let act, actRank;
     if (r.poison) { act = "⚠避開（人工管制類，回測−4.7%/38%）"; actRank = 9; }
@@ -5642,7 +5658,16 @@ function renderDispoTab() {
       "期間": r.start.slice(5) + "~" + r.end.slice(5) + "（已走" + r.seq + "日）",
       "前段%": r.pre === null ? "—" : ((r.pre > 0 ? "+" : "") + r.pre + "%"), "_pre": r.pre === null ? 0 : r.pre,
       "胃納": r.cap === null || r.cap === undefined ? "—" : r.cap + "億", "_cap": r.cap || 0,
-      "第3日值": r.tv3 === null ? "—" : r.tv3 + "億", "_tv": r.tv3 === null ? 0 : r.tv3,
+      "第3日值": (function() {
+        if (r.tv3 === null) return "—";
+        let s = r.tv3 + "億";
+        if (r.tv3r) {
+          s += "(#" + r.tv3r + ")";
+          if (bull60 && r.tv3r <= 300) s = "💰" + s;
+          else if (bull60 && r.tv3r > 800) s += "⬇";
+        }
+        return s;
+      })(), "_tv": r.tv3 === null ? 0 : r.tv3,
       "距進場": hold, "_cur": holdV,
       "d4w": d4, "_d4": (r.d4w === null || r.d4w === undefined) ? -999 : r.d4w,
       "今日行動": act + (warn.length ? "　" + warn.join(" ") : ""), "_ar": actRank,
@@ -5682,7 +5707,7 @@ function renderDispoTab() {
     {key: "期間", label: "處置期間"},
     {key: "前段%", label: "前段報酬", sortKey: "_pre", numeric: true},
     {key: "胃納", label: "胃納(前20日均值)", sortKey: "_cap", numeric: true},
-    {key: "第3日值", label: "第3日成交值", sortKey: "_tv", numeric: true},
+    {key: "第3日值", label: "第3日成交值(#當日全市場排名)", sortKey: "_tv", numeric: true},
     {key: "距進場", label: "距V4進場%(持有中)", sortKey: "_cur", numeric: true},
     {key: "d4w", label: "d4w(公告時)", sortKey: "_d4", numeric: true},
     {key: "今日行動", label: "今日行動（每天自動更新）", sortKey: "_ar", numeric: true},
