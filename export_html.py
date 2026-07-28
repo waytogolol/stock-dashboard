@@ -1367,9 +1367,11 @@ def build():
                 while _j6 in _cis:
                     _consec += 1
                     _j6 -= 1
-                # 連續段是否全款一(快速道條件)
+                # 連續段是否含款一(快速道條件;2026-07-29條文核對修正:「依款一發布」=當日款一
+                # 有列即可,多款並列(如款1+6)也算,舊版==\"1\"精確比對會低估危險度)
                 _tail6 = _g6[_g6.ci > _gci.max() - _consec]
-                _all1 = bool(len(_tail6)) and all(str(t or "") == "1" for t in _tail6.triggers)
+                _all1 = bool(len(_tail6)) and all(
+                    "1" in str(t or "").split(",") for t in _tail6.triggers)
                 _fast = max(0, 3 - _consec) if _all1 else None
                 # 標準道: 款一~八的公告日數
                 def _c18(row):
@@ -1378,17 +1380,26 @@ def build():
                 _n10_18 = int(sum(_c18(t) for t in _g6[_g6.ci >= _now_i - 9].triggers))
                 _n30_18 = int(sum(_c18(t) for t in _g6[_g6.announce_date >= _t6 - pd.Timedelta(days=45)].triggers))
                 _std10, _std30 = max(0, 6 - _n10_18), max(0, 12 - _n30_18)
+                # 連續5日款1-8路徑(2026-07-29條文核對新增:第六條第一項第二款前段,v1漏掉這條)
+                _c18set = {int(x) for x, t in zip(_g6.ci, _g6.triggers) if _c18(t)}
+                _fast5 = None
+                if _c18set:
+                    _consec18, _j7 = 0, max(_c18set)
+                    while _j7 in _c18set:
+                        _consec18 += 1
+                        _j7 -= 1
+                    _fast5 = max(0, 5 - _consec18)
                 _pd30 = int((_dsp6[(_dsp6.code == _cd6)].announce_date >= _t6 - pd.Timedelta(days=45)).sum())
                 _cum6 = None
                 _gpx = _pmap6.get(_cd6)
                 if _gpx is not None and len(_gpx) >= 7 and _gpx.close.iloc[-7] > 0:
                     _cum6 = round(float(_gpx.close.iloc[-1] / _gpx.close.iloc[-7] - 1) * 100, 1)
-                _danger = min([x for x in (_fast, _std10, _std30) if x is not None] or [9])
+                _danger = min([x for x in (_fast, _fast5, _std10, _std30) if x is not None] or [9])
                 _cd.append({
                     "code": _cd6, "name": _last6["name"] or "", "mkt": _last6.market,
                     "last": _last6.announce_date.strftime("%m-%d"), "n30": _cnt30, "n10_18": _n10_18,
                     "consec": _consec, "all1": _all1,
-                    "fast": _fast, "std10": _std10, "std30": _std30, "danger": int(_danger),
+                    "fast": _fast, "fast5": _fast5, "std10": _std10, "std30": _std30, "danger": int(_danger),
                     "mins": "20" if _pd30 >= 1 else "5", "cum6": _cum6,
                 })
         _c6.close()
@@ -4471,37 +4482,7 @@ function renderWarRoom() {
   }
   dos.push("<b>個股事件單照常</b>：處置股買點(V4第3日/V5倒數第3日尾盤買,抱到出關日開盤賣)、跌觸發規則卡" + (okN ? "（今天有✓" + okN + "檔）" : "") + "，照各自的日曆走、不受這面板影響。");
   donts.push("<b>看到紅旗就減碼</b>：🎯交集頁的「內部人解質警戒」「⚠款1+6漲警」是全體系最準的賣出提醒，別凹。");
-  // 📋今日點名(2026-07-29使用者提案「AI建議分析頁」→裁定=升級戰情板具體點名,不開新頁籤;
-  //   規則自動生成=每次重產永遠新鮮,具體到個股與日期)
-  const picks = [];
-  const nowP = new Date();
-  const tP = nowP.getFullYear() + "-" + String(nowP.getMonth() + 1).padStart(2, "0") + "-" +
-             String(nowP.getDate()).padStart(2, "0");
-  const dpP = DATA.disposition || {};
-  if (dpP.rows && dpP.rows.length) {
-    const nmP = function(r) {
-      let s = r.code + (r.name ? " " + r.name : "");
-      if (r.tv3r) s += "(#" + r.tv3r + (rg.above60 && r.tv3r <= 300 ? "💰" : "") + ")";
-      return s;
-    };
-    const rowsP = dpP.rows.filter(function(r) { return String(r.code).length === 4 && !r.poison; });
-    const grpP = [
-      ["⏰今日開盤出場", rowsP.filter(function(r) { return r.exitd === tP; })],
-      ["🔔今日尾盤＝V4買點", rowsP.filter(function(r) { return r.v4d === tP; })],
-      ["🔔今日尾盤＝V5買點", rowsP.filter(function(r) { return r.v5d === tP; })],
-      ["🟢攤平帶(持有者新資金加碼)", rowsP.filter(function(r) {
-        return r.cur !== null && r.cur !== undefined && tP <= r.end && r.cur <= -10 && r.cur > -15; })],
-      ["明日開盤出場", rowsP.filter(function(r) { return r.end === tP; })],
-    ].filter(function(g) { return g[1].length; })
-     .map(function(g) { return g[0] + "：" + g[1].map(nmP).join("、"); });
-    picks.push("<b>處置股</b>（價格至 " + (dpP.asof || "?") + "）｜" +
-               (grpP.length ? grpP.join("｜") : "今天沒有買點/出場日，持有者續抱") +
-               "（#=第3日成交值當日排名，💰=排名≤300且站上季線）");
-  }
-  const okWP = (aw.watch || []).filter(function(w) { return w.ok; });
-  picks.push("<b>跌觸發規則卡✓</b>（資料至 " + (aw.asof || "?") + "）｜" +
-             (okWP.length ? okWP.map(function(w) { return w.code + (w.name ? " " + w.name : ""); }).join("、") +
-              "（觀察清單live驗證中，⚠2026首負年，倉位縮小）" : "目前無符合三條件的候選"));
+  // (2026-07-29「今日點名」曾短暫上板,同日使用者裁示撤除=各頁籤自己看就好,勿重加)
   el.innerHTML =
     "<div style=\"font-size:15px;font-weight:700;margin-bottom:6px\">🎛️ 大盤戰情板——現在是什麼盤、該做什麼</div>" +
     "<div style=\"font-size:14px\"><span style=\"color:" + mktColor + ";font-weight:700\">" + mktDesc + "</span>" +
@@ -4509,9 +4490,6 @@ function renderWarRoom() {
     "<div style=\"margin-top:4px\">" + verdict + "</div>" +
     "<div style=\"margin-top:8px\">" + dos.map(function(s) { return "✅ " + s; }).join("<br>") + "</div>" +
     "<div style=\"margin-top:6px\">" + donts.map(function(s) { return "🚫 " + s; }).join("<br>") + "</div>" +
-    (picks.length ? "<div style=\"margin-top:8px;padding-top:6px;border-top:1px dashed var(--bd)\">" +
-      "<b>📋 今日點名（具體個股，每次重產自動同步）</b><br>" +
-      picks.map(function(s) { return "・" + s; }).join("<br>") + "</div>" : "") +
     "<div style=\"color:var(--tx3);font-size:11px;margin-top:8px\">⏱ 參考時間：儀表板產檔 " + (DATA.built_at || "?") +
     "・大盤均線判定用價格至 " + (rg.px_asof || "?") + "・題材熱度快照 " + (rg.asof || "?") +
     "・跌觸發清單資料至 " + ((DATA.attwatch || {}).asof || "?") +
@@ -4556,7 +4534,7 @@ function renderThermoTab() {
     {name: "🚨 融資警戒帶", lit: mt.warn.lit,
      read: "上市融資維持率 <b>" + mt.warn.ratio + "%</b>（" + mt.warn.asof + "）｜警戒線150%" +
            (mt.warn.otc !== null && mt.warn.otc !== undefined
-             ? "<br>上櫃(公式版) <b>" + mt.warn.otc + "%</b>（" + mt.warn.otc_asof + "，中小型槓桿水位參考，燈的判定仍用上市線）" : ""),
+             ? "<br>上櫃(公式版) <b>" + mt.warn.otc + "%</b>（" + mt.warn.otc_asof + "）｜2026-07-29考卷：<b>兩市同破150＝強出清買點(k60+11.1%/80%)；上櫃單獨破＝中小型領跌警訊別接(短線中位負)</b>；燈的判定仍用上市線" : ""),
      verdict: "全市場融資戶的平均維持率跌破150%＝斷頭潮水位（券商開始強制賣出融資戶持股＝最典型的被迫賣壓）。歷史9次進帶，之後60日中位+14.4%／勝率78%。",
      warn: "這是「水位狀態」不是「進場時點」——帶內要等急跌日（如雙收斂同亮）再進；2008慢熊第一次跌破是例外。"},
   ];
@@ -5583,7 +5561,8 @@ function renderAttwatchTab() {
   ], wRows, function(r) { return r._ok === 0 ? "hl-row" : null; });
   const cRows = (aw.countdown || []).map(function(r) {
     const paths = [];
-    if (r.fast !== null && r.fast !== undefined) paths.push("快速道差" + r.fast + "日");
+    if (r.fast !== null && r.fast !== undefined) paths.push("連3款一差" + r.fast + "日");
+    if (r.fast5 !== null && r.fast5 !== undefined) paths.push("連5款1-8差" + r.fast5 + "日");
     paths.push("10日6次差" + r.std10, "30日12次差" + r.std30);
     return {
       "股票": lnk(r.code, r.name), "_c": r.code,
