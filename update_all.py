@@ -11,8 +11,8 @@
   python update_all.py --dry-run  # 只列出這次會跑哪些步驟
   python update_all.py --push     # 全部跑完且驗收通過後,自動git add+commit+push(GitHub Pages更新)
 
-注意:凍結線(CB三表=一次性回補設計/margin_maintenance_official=無自動腳本/tdcc_weekly=永久封存/
-     rankings歷史XQ匯入已停用)不列紅燈,只顯示現況。每週收尾的make_backup.py不在此腳本內,結尾會提醒。
+注意:凍結線(CB三表=一次性回補設計/tdcc_weekly=永久封存/rankings歷史XQ匯入已停用)不列紅燈,
+     只顯示現況。融資維持率2026-07-28起有fetch_margin_maintenance.py入每日組(不再凍結)。每週收尾的make_backup.py不在此腳本內,結尾會提醒。
 """
 import argparse
 import os
@@ -40,6 +40,7 @@ STEPS = [
     ("三大法人",        [PY, "fetch_t86.py"],                     "daily"),
     ("融資券",          [PY, "fetch_margin.py"],                  "daily"),
     ("集保大戶",        [PY, "fetch_tdcc.py"],                    "daily"),
+    ("融資維持率",      [PY, "fetch_margin_maintenance.py"],      "daily"),
     ("五市場排行",      "TOP200",                                  "weekly"),  # 特殊:見run_top200
     ("rankings快照",    "BUILD_DB",                                "weekly"),  # 特殊:今天日期
     ("週收盤價",        [PY, "fetch_prices.py"],                  "weekly"),
@@ -54,6 +55,7 @@ STEPS = [
     ("dashboard",       [PY, "export_html.py"],                   "build"),
     ("XQ匯入檔",        [PY, "gen_xq_watchlist.py"],              "build"),
     ("處置K棒檢視器",   [PY, "build_disposition_trade_viewer.py"], "build"),
+    ("PE河流圖",        [PY, "build_pe_river.py"],                 "build"),
 ]
 
 # ---------- 新鮮度規則 ----------
@@ -65,6 +67,7 @@ FRESH_RULES = [
     ("margin_flow",    "date",          4),
     ("attention",      "announce_date", 4),
     ("disposition",    "announce_date", 5),
+    ("margin_maintenance_official", "date", 4),
     ("tdcc_holders",   "date",          9),
     ("tdcc_people",    "date",          9),
     ("tx_5min",        "date",          4),
@@ -79,7 +82,6 @@ FROZEN = [
     ("cb_daily",     "date", "CB回補設計,非例行"),
     ("cb_inst",      "date", "CB回補設計,非例行"),
     ("cb_overview",  "date", "CB回補設計,非例行"),
-    ("margin_maintenance_official", "date", "無自動腳本"),
     ("tdcc_weekly",  "date", "歷史段封存;d4w新週由tdcc_holders接軌"),
 ]
 

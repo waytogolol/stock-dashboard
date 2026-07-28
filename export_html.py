@@ -2949,10 +2949,11 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
 
   <div id="sigThermoView" style="display:none">
   <div class="rule-card">
-    <div class="rule-title">🌡️ 大盤溫度計（市場層五燈：恐慌出清＝進場窗，機制＝非資訊性賣壓才有反彈）</div>
-    <div class="rule-item">用法：燈亮＝該訊號的歷史進場窗開啟，各有建議持有期與到期倒數；多燈同亮＝證據疊加（2025-04-08溫度計×警戒帶同亮→k60+23%）。合成曝險=水位階梯v0（研究稿）：溫度計0.6/60日＋B 0.4/10日＋警戒帶0.3＋雙收斂0.3/20日＋跌停廣度0.3/20日，加總封頂1.0。</div>
-    <div class="rule-item">⚠死格警語：<b>2022-06型慢熊中段恐慌≠底</b>（溫度計唯一敗格）；<b>跌停spike第一腿≠底</b>（2020-01-30，跌停286家後k60−6.28%）；8-10月觸發B＝亞洲逆風季吃短不抱60日；A型環境（美亞同跌）別接，等下一個climax。</div>
-    <div class="rule-item">口徑註記：甜蜜格/跌停家數＝研究池1,379檔（與判決同尺，全市場版待複跑升級）；跌停＝前收×0.9進位至tick近似（考卷用官方tick精確版，門檻層級兩版同判）；並發數需當日價格——崩盤日先跑 fetch_daily_price --update 再重匯。</div>
+    <div class="rule-title">🌡️ 大盤溫度計——偵測「大盤恐慌殺到底」的五個買點燈</div>
+    <div class="rule-item"><b>這在幹嘛（一句話）</b>：五個燈各自偵測一種「市場被嚇壞、一堆人被迫賣股票」的極端日。關鍵機制：因為斷頭、停損、風控砍倉而賣（人被迫賣，不是公司變壞）＝賣完就沒賣壓了，歷史上之後多半反彈——所以<b>燈亮＝進場窗開啟，是買點提示不是逃命警報</b>。</div>
+    <div class="rule-item"><b>怎麼用</b>：燈亮那天照該燈卡片上的持有期買進抱著（每張卡片都寫了抱幾天、歷史賺多少、勝率多少）；<b>多個燈同一天亮＝多個獨立證據都說是底，可信度疊加</b>（例：2025-04-08兩燈同亮→之後60日+23%）。「曝險讀數」＝五燈加權的總信心分數（0~1）：1.0=可打滿常規倉位，0=空手觀望（權重：溫度計0.6/亞跌B 0.4/其餘各0.3，加總封頂1.0，研究稿非下單指令）。</div>
+    <div class="rule-item"><b>⚠什麼時候會失靈</b>：①<b>慢熊中段的恐慌不是底</b>——已經陰跌好幾個月後才出現的恐慌日，接了會繼續跌（2022-06是五燈系統唯一的失敗案例）；②<b>跌停家數暴增的「第一腿」不是底</b>（2020-01-30跌停286家，之後60日還跌6.3%，要等第二次）；③<b>美股也在跌的全球危機日別接</b>，等下一個恐慌極點；④8-10月的亞跌B訊號只吃短線（亞洲季節性逆風）。</div>
+    <div class="rule-item" style="color:var(--tx3)">技術註記：「甜蜜格」＝個股層恐慌接刀條件（近40日曾漲20%×已回檔≥20%×當日跌6~9%×成交值>1億）；「並發數」＝今天全市場同時符合的檔數，越多＝被砍得越兇越全面。樣本池1,379檔研究尺；跌停＝前收×0.9進位近似；崩盤日並發數需要當日價格，先跑 python update_all.py 再看。詳細研究過程與逐事件紀錄→研究報告/research_thermometer.html。</div>
   </div>
   <div id="thermoHeadline" style="font-size:1.05em;font-weight:700;margin:4px 0 10px;padding:10px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--sf)"></div>
   <div class="hint" id="thermoAsof" style="font-weight:600"></div>
@@ -4472,31 +4473,31 @@ function renderThermoTab() {
   };
   const cards = [
     {name: "🌡️ 恐慌溫度計", lit: mt.thermo.lit,
-     read: "今日甜蜜格並發 <b>" + mt.thermo.today + "</b>（門檻20／p99≈45／史max 77）" +
-           (mt.thermo.last ? "<br>最近觸發 " + mt.thermo.last + (mt.thermo.lit ? "，窗剩 " + mt.thermo.remain + " 交易日" : "") : "<br>60日內無觸發"),
-     verdict: "≥20＝史冊級出清日（8/8命中）。k20 +4.93%/86%、k60 +14.21%/83%。持有60日。",
-     warn: "死格＝2022-06慢熊中段。"},
+     read: "今日甜蜜格並發 <b>" + mt.thermo.today + "</b> 檔（亮燈門檻20／歷史最高77）" +
+           (mt.thermo.last ? "<br>最近觸發 " + mt.thermo.last + (mt.thermo.lit ? "，進場窗還剩 " + mt.thermo.remain + " 交易日" : "") : "<br>60日內無觸發"),
+     verdict: "全市場同一天≥20檔被殺到接刀條件＝史上只出現過8次的「全面出清日」，8次全反彈。亮燈日買進抱60日：中位+14.2%／勝率83%（只抱20日也有+4.9%／86%）。",
+     warn: "唯一失敗＝2022-06（陰跌好幾個月後的恐慌，接了繼續跌）。"},
     {name: "🌏 亞跌B訊號", lit: mt.b.lit,
-     read: "最新交易日：N225 " + (mt.b.n225 === null ? "休市" : mt.b.n225 + "%") +
-           "｜KOSPI " + (mt.b.kospi === null ? "休市" : mt.b.kospi + "%") +
-           "｜SPX前夜 " + (mt.b.us === null ? "—" : mt.b.us + "%") +
-           (mt.b.last ? "<br>最近B日 " + mt.b.last + (mt.b.lit ? "，窗剩 " + mt.b.remain + " 交易日" : "") : "<br>10日內無B日"),
-     verdict: "日韓≤−2%×美前夜>−1%＝美國沒事的亞洲賣壓。k10 +3.12%/78%。持有10日。",
-     warn: "8-10月觸發＝吃短；美亞同跌(A型)別接。"},
+     read: "最新交易日：日經 " + (mt.b.n225 === null ? "休市" : mt.b.n225 + "%") +
+           "｜韓股 " + (mt.b.kospi === null ? "休市" : mt.b.kospi + "%") +
+           "｜美股前夜 " + (mt.b.us === null ? "—" : mt.b.us + "%") +
+           (mt.b.last ? "<br>最近B日 " + mt.b.last + (mt.b.lit ? "，進場窗還剩 " + mt.b.remain + " 交易日" : "") : "<br>10日內無B日"),
+     verdict: "日韓大跌(≤−2%)但美股前一晚沒事(>−1%)＝亞洲自己嚇自己、源頭沒出事→台股偏反彈。亮燈日買進抱10日：中位+3.1%／勝率78%。",
+     warn: "8-10月觸發只吃短線別抱久；美股也在跌＝全球危機，這燈不算數。"},
     {name: "📉 位階雙收斂", lit: mt.conv.lit,
-     read: "台dd250 <b>" + mt.conv.dd250 + "%</b>｜當日 " + mt.conv.ret1 + "%｜10日 " + mt.conv.drop10 + "%" +
-           (mt.conv.lit ? "<br>窗剩 " + mt.conv.remain + " 交易日" : ""),
-     verdict: "位階−10~−20%×當日≤−2%×10日≤−6%。k20 +3.10%/69%。持有20日。",
-     warn: "位階−5~−10%＝接刀死區；≤−20%只吃短。"},
+     read: "大盤距一年高點 <b>" + mt.conv.dd250 + "%</b>｜今日 " + mt.conv.ret1 + "%｜近10日 " + mt.conv.drop10 + "%" +
+           (mt.conv.lit ? "<br>進場窗還剩 " + mt.conv.remain + " 交易日" : ""),
+     verdict: "「已經跌得夠深」(距高點−10~−20%)＋「現在正在急殺」(當日≤−2%且10日≤−6%)兩件事同時成立＝統計上的接刀點。買進抱20日：中位+3.1%／勝率69%。",
+     warn: "只跌5~10%＝還不夠深，是接刀死區別搶；跌超過20%只吃短反彈。"},
     {name: "🧱 跌停廣度", lit: mt.ld.lit,
-     read: "今日收盤跌停 <b>" + mt.ld.today + "</b> 家（門檻20／p99≈45）" +
-           (mt.ld.last ? "<br>最近觸發 " + mt.ld.last + (mt.ld.lit ? "，窗剩 " + mt.ld.remain + " 交易日" : "") : "<br>20日內無觸發"),
-     verdict: "≥20家＝出清第二軸（訊號集中熱門股層）。k10 +3.09%/75%。持有20日。",
-     warn: "第一腿spike≠底（2020-01-30）。"},
+     read: "今日收盤跌停 <b>" + mt.ld.today + "</b> 家（亮燈門檻20）" +
+           (mt.ld.last ? "<br>最近觸發 " + mt.ld.last + (mt.ld.lit ? "，進場窗還剩 " + mt.ld.remain + " 交易日" : "") : "<br>20日內無觸發"),
+     verdict: "≥20家收盤鎖跌停＝連想賣都賣不掉的全面斷頭日（從「廣度」再量一次出清，與溫度計互相印證）。買進抱20日：中位+3.1%／勝率75%。",
+     warn: "跌停家數暴增的「第一次」不是底（2020-01-30跌停286家後60日仍−6.3%），等第二波。"},
     {name: "🚨 融資警戒帶", lit: mt.warn.lit,
-     read: "大盤維持率 <b>" + mt.warn.ratio + "%</b>（" + mt.warn.asof + "）｜警戒線150%",
-     verdict: "<150%＝斷頭出清水位（9事件勝率78%，60日中位+14.4%）。",
-     warn: "2008慢熊首破例外；此為狀態非時點，帶內等急跌收斂日再進。"},
+     read: "大盤融資維持率 <b>" + mt.warn.ratio + "%</b>（" + mt.warn.asof + "）｜警戒線150%",
+     verdict: "全市場融資戶的平均維持率跌破150%＝斷頭潮水位（券商開始強制賣出融資戶持股＝最典型的被迫賣壓）。歷史9次進帶，之後60日中位+14.4%／勝率78%。",
+     warn: "這是「水位狀態」不是「進場時點」——帶內要等急跌日（如雙收斂同亮）再進；2008慢熊第一次跌破是例外。"},
   ];
   cardsEl.innerHTML = cards.map(function(c) {
     return "<div style=\"flex:1 1 300px;border:1px solid var(--bd);border-radius:8px;padding:10px;background:var(--sf)" +
@@ -5567,23 +5568,32 @@ function renderDispoTab() {
   let nAction = 0;
   // 2026-07-19: 拆股票(4位數)/CB(5-6位數)兩表+分盤/Tier篩選(使用者需求)
   const allRows = dp.rows || [];
+  // 2026-07-28使用者反映「V5買點 07-31｜持有者抱至出關」看不出是未到還是已開始
+  // → 拆兩欄:「今日行動」只講今天要做什麼;「策略時程」列全部日期,每個都標 ✓已過/🔔今天/未到
+  const dtag = function(d, label) {
+    if (t > d) return label + " " + d.slice(5) + "✓已過";
+    if (t === d) return "🔔" + label + "＝今天";
+    return label + " " + d.slice(5) + "未到";
+  };
   const rows = allRows.filter(function(r) { return String(r.code).length === 4; }).map(function(r) {
     let act, actRank;
     if (r.poison) { act = "⚠避開（人工管制類，回測−4.7%/38%）"; actRank = 9; }
-    else if (t > r.exitd) { act = "已出關（" + r.exitd + " 開盤=出場點）"; actRank = 8; }
+    else if (t > r.exitd) { act = "已結束（出場日已過）"; actRank = 8; }
     else if (t === r.exitd) { act = "⏰ 今日開盤出場（出關日）"; actRank = 0; }
-    else if (t === r.end) { act = "⏰ 持有者：明日（" + r.exitd + "）開盤出場"; actRank = 1; }
-    else if (t === r.v5d) { act = "🔔 今日尾盤＝V5買點（出關前倒數第3日）"; actRank = 0; }
-    else if (t === r.v4d) { act = "🔔 今日尾盤＝V4買點（第3處置日）"; actRank = 0; }
-    else if (t < r.v4d) { act = "等V4買點 " + r.v4d; actRank = 3; }
-    else if (t < r.v5d) { act = "V5買點 " + r.v5d + "｜持有者抱至出關"; actRank = 2; }
-    else { act = "持有至出關 " + r.exitd + " 開盤"; actRank = 2; }
+    else if (t === r.end) { act = "⏰ 持有者：明日開盤出場"; actRank = 1; }
+    else if (t === r.v5d) { act = "🔔 今日尾盤買進（V5買點）"; actRank = 0; }
+    else if (t === r.v4d) { act = "🔔 今日尾盤買進（V4買點）"; actRank = 0; }
+    else if (t < r.v4d) { act = "⏳還沒到買點，先等"; actRank = 3; }
+    else if (t < r.v5d) { act = "今天不是買點｜空手等V5｜已買的續抱"; actRank = 2; }
+    else { act = "今天不是買點｜已買的抱到出場日"; actRank = 2; }
     // 持有中管理(2026-07-25路徑考卷): -10~-15%=已驗證攤平帶(新資金加碼點,升行動鈴)
     if (r.cur !== null && r.cur !== undefined && !r.poison && t <= r.end &&
         r.cur <= -10 && r.cur > -15) {
-      act += "｜🟢攤平帶";
+      act += "｜🟢攤平帶（虧10~15%的加碼點，今天就能攤）";
       if (actRank > 1) actRank = 1;
     }
+    const sched = r.poison ? "—" :
+      dtag(r.v4d, "買①V4") + " → " + dtag(r.v5d, "買②V5") + " → " + dtag(r.exitd, "出場開盤");
     if (actRank <= 1 && !r.poison) nAction++;
     let hold = "—", holdV = -999;
     if (r.cur !== null && r.cur !== undefined) {
@@ -5616,7 +5626,8 @@ function renderDispoTab() {
       "第3日值": r.tv3 === null ? "—" : r.tv3 + "億", "_tv": r.tv3 === null ? 0 : r.tv3,
       "距進場": hold, "_cur": holdV,
       "d4w": d4, "_d4": (r.d4w === null || r.d4w === undefined) ? -999 : r.d4w,
-      "行動": act + (warn.length ? "　" + warn.join(" ") : ""), "_ar": actRank,
+      "今日行動": act + (warn.length ? "　" + warn.join(" ") : ""), "_ar": actRank,
+      "策略時程": sched,
     };
   });
   // 篩選只影響顯示,行動鈴數(nAction)看全部股票列
@@ -5637,7 +5648,8 @@ function renderDispoTab() {
     {key: "第3日值", label: "第3日成交值", sortKey: "_tv", numeric: true},
     {key: "距進場", label: "距V4進場%(持有中)", sortKey: "_cur", numeric: true},
     {key: "d4w", label: "d4w(公告時)", sortKey: "_d4", numeric: true},
-    {key: "行動", label: "行動（依今日日期自動判定）", sortKey: "_ar", numeric: true},
+    {key: "今日行動", label: "今日行動（每天自動更新）", sortKey: "_ar", numeric: true},
+    {key: "策略時程", label: "策略時程（買①V4→買②V5→出場，皆自動標已過/未到）"},
   ], shown, function(r) { return r._ar === 0 ? "hl-row" : null; });
   // CB處置表(5-6位數代碼,對應股票=前4碼)
   const cbEl = document.getElementById("dispoCbTable");
