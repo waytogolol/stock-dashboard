@@ -140,13 +140,15 @@ def otc_calc_day(d):
     return round(num / den * 100, 3)
 
 
-def update_otc(conn, no_cap):
+def update_otc(conn, no_cap, d_from=None, d_to=None):
     conn.execute("CREATE TABLE IF NOT EXISTS margin_maintenance_otc"
                  "(date TEXT PRIMARY KEY, ratio REAL)")
     have = {r[0] for r in conn.execute("SELECT date FROM margin_maintenance_otc")}
     days = [r[0] for r in conn.execute(
         "SELECT DISTINCT date FROM index_daily WHERE market='TAIEX' AND date>=? "
         "ORDER BY date DESC", (OTC_START,))]
+    if d_from:
+        days = [d for d in days if d_from <= d <= d_to]
     todo = [d for d in days if d not in have]
     if not todo:
         print("上櫃維持率: 已最新")
@@ -173,7 +175,16 @@ def update_otc(conn, no_cap):
 
 
 def main():
+    global SLEEP
     force_calc = "--calc" in sys.argv
+    if "--fast" in sys.argv:  # 回補衝刺用,例行仍3秒禮貌限速
+        SLEEP = 1.0
+    if "--range" in sys.argv:  # 平行回補工人: --range 起日 迄日 (只跑上櫃段,跳過FinMind)
+        i = sys.argv.index("--range")
+        conn = sqlite3.connect(DB)
+        update_otc(conn, no_cap=True, d_from=sys.argv[i + 1], d_to=sys.argv[i + 2])
+        conn.close()
+        return
     conn = sqlite3.connect(DB)
     last = conn.execute("SELECT MAX(date) FROM margin_maintenance_official").fetchone()[0]
     rows = None if force_calc else fetch_finmind(last)

@@ -41,6 +41,7 @@ STEPS = [
     ("融資券",          [PY, "fetch_margin.py"],                  "daily"),
     ("集保大戶",        [PY, "fetch_tdcc.py"],                    "daily"),
     ("融資維持率",      [PY, "fetch_margin_maintenance.py"],      "daily"),
+    ("融資總餘額",      [PY, "fetch_margin_total.py"],            "daily"),
     ("五市場排行",      "TOP200",                                  "weekly"),  # 特殊:見run_top200
     ("rankings快照",    "BUILD_DB",                                "weekly"),  # 特殊:今天日期
     ("週收盤價",        [PY, "fetch_prices.py"],                  "weekly"),
@@ -69,6 +70,7 @@ FRESH_RULES = [
     ("disposition",    "announce_date", 5),
     ("margin_maintenance_official", "date", 4),
     ("margin_maintenance_otc",      "date", 4),
+    ("margin_total",                "date", 4),
     ("tdcc_holders",   "date",          9),
     ("tdcc_people",    "date",          9),
     ("tx_5min",        "date",          4),
