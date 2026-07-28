@@ -4471,6 +4471,37 @@ function renderWarRoom() {
   }
   dos.push("<b>個股事件單照常</b>：處置股買點(V4第3日/V5倒數第3日尾盤買,抱到出關日開盤賣)、跌觸發規則卡" + (okN ? "（今天有✓" + okN + "檔）" : "") + "，照各自的日曆走、不受這面板影響。");
   donts.push("<b>看到紅旗就減碼</b>：🎯交集頁的「內部人解質警戒」「⚠款1+6漲警」是全體系最準的賣出提醒，別凹。");
+  // 📋今日點名(2026-07-29使用者提案「AI建議分析頁」→裁定=升級戰情板具體點名,不開新頁籤;
+  //   規則自動生成=每次重產永遠新鮮,具體到個股與日期)
+  const picks = [];
+  const nowP = new Date();
+  const tP = nowP.getFullYear() + "-" + String(nowP.getMonth() + 1).padStart(2, "0") + "-" +
+             String(nowP.getDate()).padStart(2, "0");
+  const dpP = DATA.disposition || {};
+  if (dpP.rows && dpP.rows.length) {
+    const nmP = function(r) {
+      let s = r.code + (r.name ? " " + r.name : "");
+      if (r.tv3r) s += "(#" + r.tv3r + (rg.above60 && r.tv3r <= 300 ? "💰" : "") + ")";
+      return s;
+    };
+    const rowsP = dpP.rows.filter(function(r) { return String(r.code).length === 4 && !r.poison; });
+    const grpP = [
+      ["⏰今日開盤出場", rowsP.filter(function(r) { return r.exitd === tP; })],
+      ["🔔今日尾盤＝V4買點", rowsP.filter(function(r) { return r.v4d === tP; })],
+      ["🔔今日尾盤＝V5買點", rowsP.filter(function(r) { return r.v5d === tP; })],
+      ["🟢攤平帶(持有者新資金加碼)", rowsP.filter(function(r) {
+        return r.cur !== null && r.cur !== undefined && tP <= r.end && r.cur <= -10 && r.cur > -15; })],
+      ["明日開盤出場", rowsP.filter(function(r) { return r.end === tP; })],
+    ].filter(function(g) { return g[1].length; })
+     .map(function(g) { return g[0] + "：" + g[1].map(nmP).join("、"); });
+    picks.push("<b>處置股</b>（價格至 " + (dpP.asof || "?") + "）｜" +
+               (grpP.length ? grpP.join("｜") : "今天沒有買點/出場日，持有者續抱") +
+               "（#=第3日成交值當日排名，💰=排名≤300且站上季線）");
+  }
+  const okWP = (aw.watch || []).filter(function(w) { return w.ok; });
+  picks.push("<b>跌觸發規則卡✓</b>（資料至 " + (aw.asof || "?") + "）｜" +
+             (okWP.length ? okWP.map(function(w) { return w.code + (w.name ? " " + w.name : ""); }).join("、") +
+              "（觀察清單live驗證中，⚠2026首負年，倉位縮小）" : "目前無符合三條件的候選"));
   el.innerHTML =
     "<div style=\"font-size:15px;font-weight:700;margin-bottom:6px\">🎛️ 大盤戰情板——現在是什麼盤、該做什麼</div>" +
     "<div style=\"font-size:14px\"><span style=\"color:" + mktColor + ";font-weight:700\">" + mktDesc + "</span>" +
@@ -4478,6 +4509,9 @@ function renderWarRoom() {
     "<div style=\"margin-top:4px\">" + verdict + "</div>" +
     "<div style=\"margin-top:8px\">" + dos.map(function(s) { return "✅ " + s; }).join("<br>") + "</div>" +
     "<div style=\"margin-top:6px\">" + donts.map(function(s) { return "🚫 " + s; }).join("<br>") + "</div>" +
+    (picks.length ? "<div style=\"margin-top:8px;padding-top:6px;border-top:1px dashed var(--bd)\">" +
+      "<b>📋 今日點名（具體個股，每次重產自動同步）</b><br>" +
+      picks.map(function(s) { return "・" + s; }).join("<br>") + "</div>" : "") +
     "<div style=\"color:var(--tx3);font-size:11px;margin-top:8px\">⏱ 參考時間：儀表板產檔 " + (DATA.built_at || "?") +
     "・大盤均線判定用價格至 " + (rg.px_asof || "?") + "・題材熱度快照 " + (rg.asof || "?") +
     "・跌觸發清單資料至 " + ((DATA.attwatch || {}).asof || "?") +
