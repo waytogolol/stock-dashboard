@@ -11,8 +11,13 @@
     對帳驗證(scratch validate_mm_formula2.py): 2024~2026測試日誤差<=0.14pp、最近日-0.01pp=口徑完全還原
     (證實FinMind數列=上市/純融資口徑);2022-23個別日-1~-2.7pp為歷史資料端差異,live前瞻無虞。
     ⚠公式版分子價格覆蓋要用MI_INDEX(fm_daily_price缺ETF約200檔會低估7pp,勿省這一刀)。
+上櫃線(2026-07-28使用者追問「上櫃是否也做得出來」,同日驗證收工): margin_maintenance_otc表,
+  純公式版(無FinMind對應數列): Σ(TPEX margin/balance逐股資餘額張×1000×dailyQuotes收盤)÷
+  balance.summary融資金(仟元)今日餘額;覆蓋99.5-100%,API歷史至少回到2019,壓力日與上市形狀一致
+  (2025-04-09上櫃128.99 vs 上市130.36)但水位不同步=中小型槓桿獨立資訊;回補新到舊冪等,
+  每run上限350日(update_all步驟3600s內),--backfill不設上限一次補完。
 注意: 官方源有毛刺(如2020-03-24=92.6%),照舊原樣入庫,讀取端自行濾<100(既有慣例)。
-用法: python fetch_margin_maintenance.py [--calc 跳過FinMind直接用公式版]
+用法: python fetch_margin_maintenance.py [--calc 跳過FinMind直接用公式版] [--backfill 上櫃回補不設上限]
 """
 import sqlite3
 import sys
@@ -82,6 +87,85 @@ def calc_day(conn, d):
     return ratio
 
 
+OTC_START = "2019-01-01"
+
+
+def roc(d):
+    y, m, dd = d.split("-")
+    return f"{int(y) - 1911}/{m}/{dd}"
+
+
+def otc_calc_day(d):
+    """上櫃公式版單日;回傳ratio或None。"""
+    r = requests.get("https://www.tpex.org.tw/www/zh-tw/margin/balance",
+                     params={"date": roc(d), "response": "json"}, headers=UA, timeout=30)
+    tbs = r.json().get("tables") or []
+    if not tbs or not (tbs[0].get("data") or []):
+        return None
+    tb = tbs[0]
+    den = None
+    for row in tb.get("summary") or []:
+        if len(row) > 6 and str(row[1]).startswith("融資金"):
+            den = float(str(row[6]).replace(",", "")) * 1000
+    if not den:
+        return None
+    bals = []
+    for row in tb.get("data") or []:
+        try:
+            bals.append((str(row[0]).strip(), float(str(row[6]).replace(",", ""))))
+        except (ValueError, IndexError):
+            continue
+    time.sleep(SLEEP)
+    r = requests.get("https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes",
+                     params={"date": roc(d), "response": "json"}, headers=UA, timeout=60)
+    px = {}
+    for tb2 in r.json().get("tables") or []:
+        f = tb2.get("fields") or []
+        if "收盤" in f and "代號" in f:
+            ic, ip = f.index("代號"), f.index("收盤")
+            for row in tb2.get("data") or []:
+                try:
+                    px[str(row[ic]).strip()] = float(str(row[ip]).replace(",", ""))
+                except (ValueError, IndexError):
+                    continue
+    if not px:
+        return None
+    num = sum(b * 1000 * px[c] for c, b in bals if c in px)
+    return round(num / den * 100, 3)
+
+
+def update_otc(conn, no_cap):
+    conn.execute("CREATE TABLE IF NOT EXISTS margin_maintenance_otc"
+                 "(date TEXT PRIMARY KEY, ratio REAL)")
+    have = {r[0] for r in conn.execute("SELECT date FROM margin_maintenance_otc")}
+    days = [r[0] for r in conn.execute(
+        "SELECT DISTINCT date FROM fm_daily_price WHERE date>=? ORDER BY date DESC",
+        (OTC_START,))]
+    todo = [d for d in days if d not in have]
+    if not todo:
+        print("上櫃維持率: 已最新")
+        return
+    cap = len(todo) if no_cap else 350
+    print(f"上櫃維持率(公式版): 待補{len(todo)}日,本輪跑{min(cap, len(todo))}日(新到舊,冪等可中斷)")
+    ok = 0
+    for i, d in enumerate(todo[:cap]):
+        try:
+            v = otc_calc_day(d)
+        except Exception as e:
+            print(f"  {d}: 例外 {str(e)[:60]}")
+            v = None
+        if v is not None:
+            conn.execute("INSERT OR REPLACE INTO margin_maintenance_otc VALUES (?,?)", (d, v))
+            conn.commit()
+            ok += 1
+        if (i + 1) % 50 == 0:
+            print(f"  [{i + 1}/{min(cap, len(todo))}] 成功{ok}", flush=True)
+        time.sleep(SLEEP)
+    lo, hi, n = conn.execute(
+        "SELECT MIN(date), MAX(date), COUNT(*) FROM margin_maintenance_otc").fetchone()
+    print(f"上櫃維持率: 本輪+{ok}日, 表{lo}~{hi}共{n:,}筆")
+
+
 def main():
     force_calc = "--calc" in sys.argv
     conn = sqlite3.connect(DB)
@@ -103,6 +187,7 @@ def main():
     new_last, n = conn.execute(
         "SELECT MAX(date), COUNT(*) FROM margin_maintenance_official").fetchone()
     print(f"完成({src}): {last} -> {new_last} (+{len(rows)}筆覆寫含重疊, 總{n:,}筆)")
+    update_otc(conn, no_cap="--backfill" in sys.argv)
     conn.close()
 
 

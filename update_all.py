@@ -68,6 +68,7 @@ FRESH_RULES = [
     ("attention",      "announce_date", 4),
     ("disposition",    "announce_date", 5),
     ("margin_maintenance_official", "date", 4),
+    ("margin_maintenance_otc",      "date", 4),
     ("tdcc_holders",   "date",          9),
     ("tdcc_people",    "date",          9),
     ("tx_5min",        "date",          4),

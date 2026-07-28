@@ -60,6 +60,92 @@ def load():
     return cl, per, px, rev, names
 
 
+def build_equity(px, per, rev):
+    """權益曲線區(2026-07-28使用者追問「沒看到權益曲線+策略可行性」)。
+    A=題材便宜格逐事件累加(tmp_valuation_panel.pkl,判決口徑fwd2m/fwd2x);
+    B=個股層月頻換倉組合(expanding位階>=18月無前視;空月=持有基準;等權無成本)。"""
+    eq = {}
+    try:
+        pn = pd.read_pickle("tmp_valuation_panel.pkl")
+        ev = pn[(pn.pe_pctl <= 10) & pn.fwd2m.notna()].sort_values("m")
+        eq["theme"] = {"ms": ev.m.tolist(),
+                       "abs": [round(v, 1) for v in ev.fwd2m.cumsum()],
+                       "exc": [round(v, 1) for v in ev.fwd2x.cumsum()],
+                       "n": len(ev),
+                       "yr": ev.m.str[:4].value_counts().sort_index().to_dict()}
+    except Exception as e:
+        print("題材便宜格權益曲線略過:", e)
+    # --- B 個股層月頻組合 ---
+    px = px.copy()
+    px["m"] = px.date.dt.strftime("%Y-%m")
+    pxm = px.sort_values("date").groupby(["code", "m"]).close.last().unstack("code")
+    per = per.copy()
+    per["m"] = per.date.dt.strftime("%Y-%m")
+    pem = per.sort_values("date").groupby(["code", "m"]).per.last().unstack("code")
+    pem = pem.reindex(pxm.index)
+    px = px[px.close > 0]
+    pxm = px.sort_values("date").groupby(["code", "m"]).close.last().unstack("code")
+    mret = pxm.pct_change(fill_method=None).replace([np.inf, -np.inf], np.nan)
+    # 原價未還原,除權/減資會造成假極端月報酬:超出[-80%,+300%]視為資料事件排除
+    mret = mret.where((mret > -0.8) & (mret < 3.0))
+    yoyw = rev.pivot_table(index="m", columns="code", values="yoy").reindex(pxm.index)
+    rise = yoyw > yoyw.shift(1)
+    pos = yoyw > 0
+    # expanding位階(>=18個月有效才給值,無前視)
+    mat = pem.values
+    outm = np.full(mat.shape, np.nan)
+    for ci in range(mat.shape[1]):
+        v = mat[:, ci]
+        ok = np.isfinite(v)
+        cum = 0
+        for i in range(len(v)):
+            if not ok[i]:
+                continue
+            cum += 1
+            if cum >= 18:
+                past = v[:i + 1][ok[:i + 1]]
+                outm[i, ci] = (past <= v[i]).mean() * 100
+    pct = pd.DataFrame(outm, index=pem.index, columns=pem.columns)
+    months = list(pxm.index)
+    series = {k: [] for k in ("base", "bot", "star", "div", "top")}
+    counts = {"bot": [], "star": [], "div": [], "top": []}
+    use_ms = []
+    for i in range(len(months) - 1):
+        m, m1 = months[i], months[i + 1]
+        r = mret.loc[m1]
+        valid = r.dropna()
+        if len(valid) < 50:
+            continue
+        pr = pct.loc[m]
+        grp = {"bot": valid.index[(pr.reindex(valid.index) <= 10)],
+               "top": valid.index[(pr.reindex(valid.index) >= 90)]}
+        bset = set(grp["bot"])
+        ri, po = rise.loc[m].reindex(valid.index), pos.loc[m].reindex(valid.index)
+        grp["star"] = [c for c in valid.index if c in bset and ri.get(c) is True]
+        grp["div"] = [c for c in valid.index
+                      if c in bset and po.get(c) is True and ri.get(c) is not True]
+        base_r = float(valid.mean())
+        use_ms.append(m1)
+        series["base"].append(base_r)
+        for k in ("bot", "star", "div", "top"):
+            cs = list(grp[k])
+            counts[k].append(len(cs))
+            series[k].append(float(valid[cs].mean()) if cs else base_r)
+    # 起點=河底樣本首次>=10檔的月份
+    st = next((j for j, n in enumerate(counts["bot"]) if n >= 10), 0)
+    curves = {}
+    for k, rs in series.items():
+        c, out = 1.0, []
+        for v in rs[st:]:
+            c *= (1 + v)
+            out.append(round(c, 4))
+        curves[k] = out
+    eq["stock"] = {"ms": use_ms[st:], "curves": curves,
+                   "n_bot": counts["bot"][st:], "n_star": counts["star"][st:],
+                   "n_div": counts["div"][st:], "n_top": counts["top"][st:]}
+    return eq
+
+
 def main():
     cl, per, px, rev, names = load()
     per.loc[per.per <= 0, "per"] = np.nan
@@ -173,7 +259,7 @@ def main():
     payload = {"weeks": wlabels, "themes": themes, "stocks": stocks,
                "theme_order": [t for t, _ in theme_rows],
                "bot": bot_rows[:200], "top": top_rows[:120],
-               "asof": wlabels[-1]}
+               "asof": wlabels[-1], "eq": build_equity(px, per, rev)}
 
     html = HTML_HEAD + "<script>const D=" + json.dumps(
         payload, ensure_ascii=False, separators=(",", ":")) + ";</script>" + HTML_TAIL
@@ -245,6 +331,36 @@ HTML_TAIL = """
 <div id="tblBot"></div>
 <h2>河頂警示(個股PE位階≥90;輕度減碼審查)</h2>
 <div id="tblTop"></div>
+
+<h2>📈 權益曲線與策略可行性判讀(2026-07-28補)</h2>
+<div class="note" style="color:#c3c2b7;font-size:13px">
+<p><b>一句話判決:河流圖是「工具」不是「策略」——唯一夠格當訊號的是題材版便宜格(熊市限定),
+個股版河底沒有絕對超額報酬,別把它當選股機。</b>下面兩張圖就是證據,好壞都攤開。</p>
+<p><b>圖A(題材便宜格)怎麼讀:</b>每次「某題材PE位階跌到自己歷史最低10%」就是一個事件,買該題材成員抱2個月,
+把報酬逐事件累加。絕對與超額(減大盤)同向向上=真訊號;但事件年分佈極度集中(73%在2022熊市)——
+<b>它是「熊市裡撿被殺到地板的題材」的工具,多頭年幾乎沒有事件,不能常態使用</b>。</p>
+<p><b>圖B(個股河底月頻組合)實際結果(2019-07~2026-07,85個月,誠實揭露):</b>
+每月底把全市場「PE位階≤10(河底)」的股票等權買進持有一個月,與全市場等權基準比。
+結果比初驗判決更難看:<b>基準2.61x、河底組只有1.44x=大幅落後</b>;
+★營收回升×河底1.33x反而墊底;河頂組2.37x只略輸基準。兩個口徑差異要先懂:
+①初驗的「河底≈基準(中位數)」跟這裡的「等權平均複利大落後」<b>同時為真</b>——
+河底的中位股確實沒事,但河底裡藏著一撮「便宜到下市」的價值陷阱,等權平均被左尾拖爛、複利再放大;
+你真的去買一籃河底股,吃到的是平均不是中位。②原價未還原股息:便宜股殖利率高,
+報酬被系統性低估約2-4%/年——但就算加回去,河底年化5.3% vs 基準14.5%的差距也補不上,判決不變。</p>
+<p><b>我的可行性總結(誠實版):</b><br>
+① <b>個股層河流圖的任何機械化買法都不賺</b>——六路考卷全滅(先行/交互/過熱/龍頭/指紋/橫斷)之外,
+圖B再補一刀:連「河底+營收回升」這種法人直覺組合,機械執行都輸給無腦買全市場。
+台股2019-26是動能市,「便宜」單獨作為買進理由=撿到的多半是別人丟掉的理由。<br>
+② <b>河流圖的真價值=看盤定位工具+審查提醒</b>:個股掉到河底→問「它是被錯殺還是正在變爛?」
+(圖B說:不查證直接買=輸);持股衝到河頂→檢查要不要減碼(輕警示,但做空必死,河頂組還有2.37x);
+★=候選池入口,之後要人工查質地,不是買進清單。<br>
+③ <b>真正能賺的一格在題材版(圖A)</b>:熊市(跌破季線/溫度計亮)→題材便宜格挑「整個題材跌到自己地板」
+→這是驗證過絕對+超額雙軌排0的訊號;個股層只拿來在該題材內避開最爛的,
+<b>進場時點交給已驗證訊號</b>(溫度計五燈/H5/跌觸發規則卡),河流圖不管時點。<br>
+④ <b>循環股(記憶體/CPO)完全豁免這套邏輯</b>,低PE=獲利頂,河流圖對它們只有反指標價值。</p>
+</div>
+<div id="chEqTheme" style="height:360px"></div>
+<div id="chEqStock" style="height:380px"></div>
 <div class="note" style="margin-top:20px">產生器 build_pe_river.py(隨update_all重產);位階=全史百分位;
 營收=fm_month_rev最新期vs前期yoy;判決出處=research_valuation.html;資料至 <span id="asof"></span>。</div>
 <script>
@@ -336,6 +452,34 @@ function stockTable(list,elId){
   document.getElementById(elId).innerHTML=h+"</table>";
 }
 stockTable(D.bot,"tblBot");stockTable(D.top,"tblTop");
+// ---- 權益曲線 ----
+(function(){
+  const eq=D.eq||{};
+  if(eq.theme){
+    const t=eq.theme;
+    Plotly.newPlot("chEqTheme",[
+      {x:t.ms,y:t.abs,name:"絕對報酬累加",mode:"lines+markers",line:{color:"#6bb7e3",width:2},marker:{size:5},
+       hovertemplate:"%{x} 累計%{y:+.1f}pp<extra>絕對</extra>"},
+      {x:t.ms,y:t.exc,name:"超額(減大盤)累加",mode:"lines+markers",line:{color:"#7ec97e",width:2},marker:{size:5},
+       hovertemplate:"%{x} 累計%{y:+.1f}pp<extra>超額</extra>"}],
+      Object.assign({title:"圖A 題材便宜格(位階≤10)逐事件fwd2m累加,n="+t.n+
+        "(年分佈:"+Object.entries(t.yr).map(function(e){return e[0]+"×"+e[1];}).join("/")+
+        "=熊市工具)",yaxis:{title:"累計pp"}},BG));
+  }
+  if(eq.stock){
+    const s=eq.stock,C={base:["全市場等權基準","#8a8878"],bot:["河底組(位階≤10)","#6bb7e3"],
+      star:["★營收回升×河底","#e8c34a"],div:["⚠成長背離(河底×yoy>0未回升)","#e06c5a"],
+      top:["河頂組(位階≥90)","#c3a55a"]};
+    Plotly.newPlot("chEqStock",Object.keys(C).map(function(k){
+      return {x:s.ms,y:s.curves[k],name:C[k][0],mode:"lines",
+        line:{color:C[k][1],width:k==="base"?2.5:1.7,dash:k==="base"?"dot":undefined},
+        hovertemplate:"%{x}: %{y:.3f}<extra>"+C[k][0]+"</extra>"};}),
+      Object.assign({title:"圖B 個股層月頻換倉組合(等權,expanding位階無前視,空月持基準;河底月均"+
+        Math.round(s.n_bot.reduce(function(a,b){return a+b;},0)/s.n_bot.length)+"檔/★月均"+
+        Math.round(s.n_star.reduce(function(a,b){return a+b;},0)/s.n_star.length)+"檔)",
+        yaxis:{title:"淨值(起點=1)",type:"log"}},BG));
+  }
+})();
 // 初始畫面
 if(D.theme_order.length){selT.value=D.theme_order[0];drawTheme();}
 if(D.bot.length){inp.value=D.bot[0];drawStock();}

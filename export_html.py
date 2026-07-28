@@ -1507,6 +1507,12 @@ def build():
                  for m in ("TAIEX", "N225", "KOSPI", "SPX")}
         _mm6 = pd.read_sql("SELECT date, ratio FROM margin_maintenance_official "
                            "WHERE ratio>=100 ORDER BY date", _c6, parse_dates=["date"])
+        try:  # 上櫃維持率(公式版,2026-07-28上線):顯示層讀數,警戒燈判定仍用上市線(研究口徑)
+            _mo6 = pd.read_sql("SELECT date, ratio FROM margin_maintenance_otc "
+                               "WHERE ratio>=100 ORDER BY date DESC LIMIT 1", _c6,
+                               parse_dates=["date"])
+        except Exception:
+            _mo6 = pd.DataFrame()
         _c6.close()
         _lf6 = pd.read_pickle("tmp_limit_flags.pkl")
         _pool6 = set(_lf6[~_lf6.code.str.startswith("00")].code.unique())
@@ -1648,7 +1654,9 @@ def build():
             "ld": {"today": _ldcnt[_last6], "lit": _lit["ld"], "remain": _remain6(_ldd6, 20),
                    "last": str(_ldd6[-1].date()) if _ldd6 else None},
             "warn": {"ratio": round(float(_mm_last.ratio), 1),
-                     "asof": str(_mm_last.date.date()), "lit": _lit["warn"]},
+                     "asof": str(_mm_last.date.date()), "lit": _lit["warn"],
+                     "otc": round(float(_mo6.iloc[0].ratio), 1) if len(_mo6) else None,
+                     "otc_asof": str(_mo6.iloc[0].date.date()) if len(_mo6) else None},
             "exposure": round(_expo6, 2),
             "n_lit": sum(_lit.values()),
             "headline": _headline,
@@ -4496,7 +4504,9 @@ function renderThermoTab() {
      verdict: "≥20家收盤鎖跌停＝連想賣都賣不掉的全面斷頭日（從「廣度」再量一次出清，與溫度計互相印證）。買進抱20日：中位+3.1%／勝率75%。",
      warn: "跌停家數暴增的「第一次」不是底（2020-01-30跌停286家後60日仍−6.3%），等第二波。"},
     {name: "🚨 融資警戒帶", lit: mt.warn.lit,
-     read: "大盤融資維持率 <b>" + mt.warn.ratio + "%</b>（" + mt.warn.asof + "）｜警戒線150%",
+     read: "上市融資維持率 <b>" + mt.warn.ratio + "%</b>（" + mt.warn.asof + "）｜警戒線150%" +
+           (mt.warn.otc !== null && mt.warn.otc !== undefined
+             ? "<br>上櫃(公式版) <b>" + mt.warn.otc + "%</b>（" + mt.warn.otc_asof + "，中小型槓桿水位參考，燈的判定仍用上市線）" : ""),
      verdict: "全市場融資戶的平均維持率跌破150%＝斷頭潮水位（券商開始強制賣出融資戶持股＝最典型的被迫賣壓）。歷史9次進帶，之後60日中位+14.4%／勝率78%。",
      warn: "這是「水位狀態」不是「進場時點」——帶內要等急跌日（如雙收斂同亮）再進；2008慢熊第一次跌破是例外。"},
   ];
