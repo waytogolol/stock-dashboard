@@ -2913,6 +2913,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     </select>
     <span class="hint" style="display:inline">（制度只有5分/20分兩檔；更嚴的「人工管制撮合」=⚠毒格已標）</span>
   </div>
+  <div id="dispoAgenda" class="hint" style="line-height:1.9"></div>
   <div class="scroll-box"><table id="dispoNowTable"></table></div>
   <h3 class="sec-title" style="margin-top:16px">CB處置（5位數代碼＝可轉債標的）</h3>
   <div class="hint">CB被處置＝標的股投機過熱的外溢訊號；不適用V4/V5股票回測口徑，供關聯觀察（對應股票＝前4碼）。</div>
@@ -5594,6 +5595,13 @@ function renderDispoTab() {
     }
     const sched = r.poison ? "—" :
       dtag(r.v4d, "買①V4") + " → " + dtag(r.v5d, "買②V5") + " → " + dtag(r.exitd, "出場開盤");
+    // 下個日程(2026-07-28使用者要求能按進場日期看順序): 尚未發生的最近一個事件日
+    let nextD = "9999-99-99", nextLab = "";
+    if (!r.poison) {
+      if (t <= r.v4d) { nextD = r.v4d; nextLab = "買V4"; }
+      else if (t <= r.v5d) { nextD = r.v5d; nextLab = "買V5"; }
+      else if (t <= r.exitd) { nextD = r.exitd; nextLab = "出場"; }
+    }
     if (actRank <= 1 && !r.poison) nAction++;
     let hold = "—", holdV = -999;
     if (r.cur !== null && r.cur !== undefined) {
@@ -5627,9 +5635,27 @@ function renderDispoTab() {
       "距進場": hold, "_cur": holdV,
       "d4w": d4, "_d4": (r.d4w === null || r.d4w === undefined) ? -999 : r.d4w,
       "今日行動": act + (warn.length ? "　" + warn.join(" ") : ""), "_ar": actRank,
-      "策略時程": sched,
+      "策略時程": sched, "_next": nextD, "_nl": nextLab, "_nm": nm,
     };
   });
+  // 📅未來日程速覽: 按日期分組(近10個日程日),一眼看進場/出場順序
+  const agEl = document.getElementById("dispoAgenda");
+  if (agEl) {
+    const byDate = {};
+    rows.forEach(function(r) {
+      if (r._next === "9999-99-99" || !r._nl) return;
+      (byDate[r._next] = byDate[r._next] || []).push(
+        r._nm + "(" + r._nl + (r._nl !== "出場" ? "·" + r._mins + "分" : "") + ")");
+    });
+    const dts = Object.keys(byDate).sort().slice(0, 10);
+    agEl.innerHTML = dts.length
+      ? "<b>📅 未來日程速覽（買點/出場依日期排；也可點表格「策略時程」欄標題改成日程排序）</b><br>" +
+        dts.map(function(d) {
+          const tag = d === t ? "<b style=\"color:var(--red)\">今天 " + d.slice(5) + "</b>" : d.slice(5);
+          return tag + "：" + byDate[d].join("、");
+        }).join("<br>")
+      : "";
+  }
   // 篩選只影響顯示,行動鈴數(nAction)看全部股票列
   const fMins = (document.getElementById("dispoFilterMins") || {}).value || "";
   const fTier = (document.getElementById("dispoFilterTier") || {}).value || "";
@@ -5649,7 +5675,7 @@ function renderDispoTab() {
     {key: "距進場", label: "距V4進場%(持有中)", sortKey: "_cur", numeric: true},
     {key: "d4w", label: "d4w(公告時)", sortKey: "_d4", numeric: true},
     {key: "今日行動", label: "今日行動（每天自動更新）", sortKey: "_ar", numeric: true},
-    {key: "策略時程", label: "策略時程（買①V4→買②V5→出場，皆自動標已過/未到）"},
+    {key: "策略時程", label: "策略時程（點我＝依下個日程日期排序）", sortKey: "_next"},
   ], shown, function(r) { return r._ar === 0 ? "hl-row" : null; });
   // CB處置表(5-6位數代碼,對應股票=前4碼)
   const cbEl = document.getElementById("dispoCbTable");
