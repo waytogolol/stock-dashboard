@@ -1167,6 +1167,7 @@ def build():
         _cal5 = pd.to_datetime(pd.read_sql(
             "SELECT DISTINCT date FROM fm_daily_price ORDER BY date", _c5)["date"]).tolist()
         _dsp_rows = []
+        _exit_rows = []
         if len(_act) and _cal5:
             _codes5 = sorted(_act.code.unique())
             _px5 = pd.read_sql(
@@ -1214,6 +1215,33 @@ def build():
                         _c5, params=(_dstr,)).money.values)
                 _arr = _rank_cache5[_dstr]
                 return len(_arr) - _bisect.bisect_right(_arr, _mval) + 1
+
+            # 出關熱度+逃生鈴(2026-07-30使用者裁示上板;考卷=build_dispo_second_jail.py Q0
+            #  +tmp_sj_sega逃生鈴:熱gap<=1出關7日內再處置21.4%/溫8.7%/冷4.2%;逃生延長Σ+8,476
+            #  vs V4+6,949且MDD更淺=熱票續抱到鈴響次日開盤;觀察層live驗證中)
+            _att5 = pd.read_sql(
+                "SELECT code, announce_date, triggers FROM attention WHERE announce_date>=?",
+                _c5, params=[(_today5 - pd.Timedelta(days=75)).strftime("%Y-%m-%d")])
+            _att5["announce_date"] = pd.to_datetime(_att5.announce_date)
+
+            def _c18_5(t):
+                return any(x in {"1", "2", "3", "4", "5", "6", "7", "8"}
+                           for x in str(t or "").split(","))
+
+            _calpos5 = {d: i for i, d in enumerate(_cal5)}
+            _att5 = _att5[_att5.triggers.map(_c18_5)]
+            _attpos5 = {c: sorted({_calpos5[d] for d in g.announce_date if d in _calpos5})
+                        for c, g in _att5.groupby("code")}
+            _nowpos5 = len(_cal5) - 1
+
+            def _gap_at5(code, at_pos):
+                _a = _attpos5.get(code, [])
+                _n10 = sum(1 for i in _a if at_pos - 9 <= i <= at_pos)
+                _n30 = sum(1 for i in _a if at_pos - 29 <= i <= at_pos)
+                return min(6 - _n10, 12 - _n30)
+
+            def _heat_lab5(gp):
+                return "熱" if gp <= 1 else ("溫" if gp <= 3 else "冷")
 
             for _, _e in _act.iterrows():
                 _sidx = [d for d in _cal5 if d >= _e.start_date]
@@ -1270,6 +1298,13 @@ def build():
                     _i5 = int(_tg5.date.searchsorted(_cut5, side="right")) - 1
                     if _i5 >= 4 and (_cut5 - _tg5.date.iloc[_i5]).days <= 21:
                         _d4w = round(float(_tg5.p1000.iloc[_i5] - _tg5.p1000.iloc[_i5 - 4]), 2)
+                # v2026-07-30: 出關熱度(現時gap)+公告前20日狂跌警語(歷史勝率56%/中位+2%)
+                _jgap = _gap_at5(_e.code, _nowpos5)
+                _fall20 = None
+                if _g5 is not None and pd.notna(_e.announce_date):
+                    _pre5 = _g5[_g5.date < _e.announce_date]
+                    if len(_pre5) >= 21 and _pre5.close.iloc[-21] > 0:
+                        _fall20 = round(float(_pre5.close.iloc[-1] / _pre5.close.iloc[-21] - 1) * 100, 1)
                 _dsp_rows.append({
                     "code": _e.code, "name": _nm5.get(_e.code, ""),
                     "mkt": _e.market, "cum": int(_e.cum_count or 1), "mins": _e.match_min,
@@ -1279,11 +1314,41 @@ def build():
                     "v4d": _v4d.strftime("%Y-%m-%d"), "v5d": _dv5.strftime("%Y-%m-%d"),
                     "exitd": _exitd.strftime("%Y-%m-%d"),
                     "v4px": _v4px, "cur": _cur, "addond": _addond, "d4w": _d4w,
+                    "jgap": int(_jgap), "jheat": _heat_lab5(_jgap), "fall20": _fall20,
                 })
+            # 🔔出關監控(近21日出關且未再入窗): gap現值+逃生鈴(今晚新款1-8注意∧gap<=1)
+            _exited5 = _dsp[(_dsp.end_date < _today5)
+                            & (_dsp.end_date >= _today5 - pd.Timedelta(days=32))]
+            _active_now5 = set(_act[_act.end_date >= _today5].code)
+            _exit_rows = []
+            for _, _x in _exited5.sort_values("end_date").groupby("code").tail(1).iterrows():
+                if _x.code in _active_now5:
+                    continue
+                _epos = _calpos5.get(_x.end_date)
+                if _epos is None:
+                    continue
+                _dsince = _nowpos5 - _epos
+                if _dsince > 16:
+                    continue
+                _gnow = _gap_at5(_x.code, _nowpos5)
+                _gexit = _gap_at5(_x.code, _epos)
+                _a5 = _attpos5.get(_x.code, [])
+                _bell = bool(_a5) and (_a5[-1] == _nowpos5) and _gnow <= 1
+                _rec = ("🔔鈴響:明開盤出" if _bell
+                        else ("已達15日=規則出場點" if _dsince >= 15
+                              else ("續抱觀察(鈴未響)" if _gexit <= 1 else "冷票:照V4出場即可")))
+                _exit_rows.append({
+                    "code": _x.code, "name": _nm5.get(_x.code, ""),
+                    "end": _x.end_date.strftime("%m-%d"), "dsince": int(_dsince),
+                    "gap": int(_gnow), "heat_exit": _heat_lab5(_gexit),
+                    "bell": _bell, "rec": _rec})
+            _exit_rows.sort(key=lambda r: (not r["bell"], r["gap"]))
         _c5.close()
         data["disposition"] = {"asof": _cal5[-1].strftime("%Y-%m-%d") if _cal5 else None,
-                               "rows": _dsp_rows}
-        print(f"處置股觀察: {len(_dsp_rows)}檔在窗(價格日曆至{data['disposition']['asof']})")
+                               "rows": _dsp_rows, "exitwatch": _exit_rows}
+        print(f"處置股觀察: {len(_dsp_rows)}檔在窗(價格日曆至{data['disposition']['asof']}) "
+              f"出關監控{len(data['disposition']['exitwatch'])}檔"
+              f"(鈴響{sum(1 for r in data['disposition']['exitwatch'] if r['bell'])})")
     except Exception as e:
         _sec_fail("處置股觀察未產生", e)
         data["disposition"] = {"asof": None, "rows": []}
@@ -3100,7 +3165,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div class="rule-item">兩個進場形態(皆<b>尾盤收盤買</b>)：<b>V4＝第3個處置日</b>買、抱全段(~8交易日，淨中位+3.78%/勝率62%)；<b>V5＝倒數第3日</b>買、搶跑段(~4交易日，前段一直跌組+4.14%/66%——前段已大漲的別買，出關後是50/50肥尾樂透)。<b>出場鐵律＝出關日開盤，不戀棧</b>。</div>
     <div class="rule-item">加分項(劑量單調)：<b>20分鐘分盤</b>(第2次處置)+6.96%/71% &gt; 5分鐘+2.26%；<b>題材成員</b>+6.88%/70%(名單有事後偏差,幅度打折看)；公告衝擊跌越深越好。<b>⚠避開</b>：「人工管制撮合」類(−4.71%/38%)、第3日成交值&lt;0.3億的小票、前段已漲&gt;10%的強勢票。</div>
     <div class="rule-item">💰<b>成交值加分(2026-07-29考卷,切樣本+四控全過)</b>：第3日成交值越大越好，全史五分位完美單調(小+0.18%/51%→大+5.50%/66%)；凍結驗證段(2023-26)大−小=+5.74pp CI排0、逐年7/8正、分盤內/市場內全同向。<b>門檻用「當日全市場成交值排名」不用絕對億數</b>(億數8年漂12倍會過時，排名抗漂移且梯度同樣成立+4.55pp)：<b>排名≤300＝肥段優先給(表中💰標記)；排名&gt;800＝雜訊段+0.00%/50%直接跳過(⬇標記)</b>；排名已列在「第3日值」欄括號內。⚠regime警語：加分只在<b>站上季線</b>時成立(+4.80pp)；跌破季線梯度消失略反(−1.33pp)＝熊市大小票一視同仁，💰/⬇標記自動隱藏。唯一失效年=2022全面熊市。<b>疊加觀察格(掛起等live,2026-07-29上板)</b>：💰後面的<b>×d4w</b>(公告時大戶逆接)/<b>×題</b>(題材成員)＝兩個已各自驗證的加分項疊在同一檔——排單優先序給最前面，但<b>疊加本身未轉正</b>(交叉樣本太小等live累積)，別因雙標記加大部位。</div>
-    <div class="rule-item">持有中管理(2026-07-25路徑考卷,配對差LOTO 8/8+bootstrap)：進場後<b>不停損</b>(−10%停損8年0正=砍在統計谷底,跌破−10%後剩餘段中位5分+1.5%/20分+7.0%仍為正)、<b>不追強</b>(漲+3%加碼8年0正)；首次收盤<b>跌破−10%＝🟢攤平帶</b>(用<b>新資金</b>加1單位抱到出關,配對差5分+1.65pp/20分+1.80pp；<b>−15%以下肉沒了別攤</b>;勿預留半倉等攤平=等本金版輸day0滿倉)。<b>d4w欄</b>=公告時千張大戶4週流向,&gt;0✓=大戶逆接中(信心加碼層;<b>20分盤已轉正</b>/5分盤候選僅參考,覆蓋64%缺值顯—)。逐筆歷史K棒與標準路徑對照見 研究報告/research_disposition_trades.html。</div>
+    <div class="rule-item">持有中管理(2026-07-25路徑考卷,配對差LOTO 8/8+bootstrap)：進場後<b>不停損</b>(−10%停損8年0正=砍在統計谷底,跌破−10%後剩餘段中位5分+1.5%/20分+7.0%仍為正)、<b>不追強</b>(漲+3%加碼8年0正)；首次收盤<b>跌破−10%＝🟢攤平帶</b>(用<b>新資金</b>加1單位抱到出關,配對差5分+1.65pp/20分+1.80pp；<b>−15%以下肉沒了別攤</b>;勿預留半倉等攤平=等本金版輸day0滿倉)。<b>d4w欄</b>=公告時千張大戶4週流向,&gt;0✓=大戶逆接中(信心加碼層;<b>20分盤已轉正</b>/5分盤候選僅參考,覆蓋64%缺值顯—)。逐筆歷史K棒與標準路徑對照見 研究報告/research_disposition_trades.html。<b>出關熱度欄(2026-07-30上板,觀察層)</b>＝現時基數距二次處置門檻gap：<b style="color:var(--red)">熱(gap≤1)＝出關後7日內21.4%再處置(二進宮=20分盤+全民預收)</b>、溫8.7%、冷4.2%——熱票出關別急著走(續抱到出關監控表的逃生鈴響,回測併入主線Σ+8,476pp vs 原版+6,949且MDD更淺)、冷票照規則出關日開盤出。<b>⚠狂跌進處置警語</b>＝公告前20日跌≥20%的(如恐慌日跌停潮處置)歷史勝率僅56%/中位+2%(vs 全池69%/+6.8%)＝V4肉來自妖股過熱矯正,跌勢確認型沒有壓抑買盤,縮單或跳過。全家權益曲線對照見 研究報告/research_dispo_equity_overview.html。</div>
     <div class="rule-item">選件分層(回測V4淨額,倉位大小參考——T1給大份/T4給小份,取捨用先到先選+並發上限5)：
       <table style="margin:6px 0 2px">
         <tr><th>Tier</th><th>條件</th><th>淨中位</th><th>勝率</th><th>月均</th></tr>
@@ -3125,6 +3190,9 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   </div>
   <div id="dispoAgenda" class="hint" style="line-height:1.9"></div>
   <div class="scroll-box"><table id="dispoNowTable"></table></div>
+  <h3 class="sec-title" style="margin-top:16px">🔔 出關監控（近15日出關·逃生鈴）<span style="color:var(--tx3);font-size:12px;font-weight:400">2026-07-30上板·觀察層live驗證中</span></h3>
+  <div class="hint">出關≠自由：出關日基數還很滿的「熱票」21.4%會在7日內再處置（溫8.7%／冷4.2%）。<b>逃生鈴</b>＝「最新資料日有新款1-8注意公告∧gap≤1」→<b>次日開盤出</b>；回測：熱票續抱到鈴響 vs 呆抱15日＝報酬/MDD 7.04 vs 4.44、夏普1.94 vs 1.30（價值在剪左尾）；併入V4主線（熱票不出場改抱到鈴響）Σ+8,476pp vs 原版+6,949、MDD更淺。<b>尾盤搶跑不必</b>——觸發日隔夜那腿平均為正（妖股慣性），晚上算、明早執行就好。詳 研究報告/research_dispo_second_jail.html。</div>
+  <div class="scroll-box"><table id="dispoExitTable"></table></div>
   <h3 class="sec-title" style="margin-top:16px">CB處置（5位數代碼＝可轉債標的）</h3>
   <div class="hint">CB被處置＝標的股投機過熱的外溢訊號；不適用V4/V5股票回測口徑，供關聯觀察（對應股票＝前4碼）。</div>
   <div class="scroll-box"><table id="dispoCbTable"></table></div>
@@ -5845,6 +5913,7 @@ function renderDispoTab() {
     let warn = [];
     if (r.tv3 !== null && r.tv3 < 0.3) warn.push("⚠量小" + r.tv3 + "億");
     if (r.pre !== null && r.pre > 10) warn.push("⚠前段已漲(樂透格)");
+    if (r.fall20 !== null && r.fall20 !== undefined && r.fall20 <= -20) warn.push("⚠狂跌進處置(前20日" + r.fall20 + "%,歷史勝率56%/中位+2%)");
     const tier = (r.theme && r.mins === "20") ? 1 : (r.theme ? 2 : (r.mins === "20" ? 3 : 4));
     return {
       "股票": link, "_c": r.code, "_mins": String(r.mins),
@@ -5872,6 +5941,10 @@ function renderDispoTab() {
       })(), "_tv": r.tv3 === null ? 0 : r.tv3,
       "距進場": hold, "_cur": holdV,
       "d4w": d4, "_d4": (r.d4w === null || r.d4w === undefined) ? -999 : r.d4w,
+      "出關熱度": (r.jheat === undefined || r.jheat === null) ? "—"
+        : (r.jheat === "熱" ? "<b style=\"color:var(--red)\">熱(gap" + (r.jgap > 0 ? "+" : "") + r.jgap + ")</b>"
+           : r.jheat + "(gap+" + r.jgap + ")"),
+      "_jg": (r.jgap === undefined || r.jgap === null) ? 99 : r.jgap,
       "今日行動": act + (warn.length ? "　" + warn.join(" ") : ""), "_ar": actRank,
       "策略時程": sched, "_next": nextD, "_nl": nextLab, "_nm": nm,
     };
@@ -5912,9 +5985,41 @@ function renderDispoTab() {
     {key: "第3日值", label: "第3日成交值(#當日全市場排名)", sortKey: "_tv", numeric: true},
     {key: "距進場", label: "距V4進場%(持有中)", sortKey: "_cur", numeric: true},
     {key: "d4w", label: "d4w(公告時)", sortKey: "_d4", numeric: true},
+    {key: "出關熱度", label: "出關熱度(gap=距二次處置門檻)", sortKey: "_jg", numeric: true},
     {key: "今日行動", label: "今日行動（每天自動更新）", sortKey: "_ar", numeric: true},
     {key: "策略時程", label: "策略時程（點我＝依下個日程日期排序）", sortKey: "_next"},
   ], shown, function(r) { return r._ar === 0 ? "hl-row" : null; });
+  // 🔔出關監控表(2026-07-30上板: 出關熱度+逃生鈴,觀察層)
+  const exEl = document.getElementById("dispoExitTable");
+  if (exEl) {
+    const lnk2 = function(code, name) {
+      const nm2 = code + " " + (name || "");
+      return (DATA.company_history && DATA.company_history["台|" + code])
+        ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + code + "');showTab(2)\"" +
+          " style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + nm2 + "</a>" : nm2;
+    };
+    const exRows = (DATA.disposition.exitwatch || []).map(function(r) {
+      return {
+        "股票": lnk2(r.code, r.name), "_c": r.code,
+        "出關日": r.end, "已出關(交易日)": r.dsince, "_d": r.dsince,
+        "出關時熱度": r.heat_exit === "熱"
+          ? "<b style=\"color:var(--red)\">熱(再關率21%)</b>" : r.heat_exit + (r.heat_exit === "溫" ? "(9%)" : "(4%)"),
+        "現在gap": (r.gap > 0 ? "+" : "") + r.gap, "_g": r.gap,
+        "逃生鈴": r.bell ? "<b style=\"color:var(--red)\">🔔響</b>" : "—", "_b": r.bell ? 0 : 1,
+        "建議": r.bell ? "<b style=\"color:var(--red)\">" + r.rec + "</b>" : r.rec,
+      };
+    });
+    exEl._sortState = {colIndex: 5, dir: 0};
+    buildTable(exEl, [
+      {key: "股票", label: "股票", sortKey: "_c"},
+      {key: "出關日", label: "出關日"},
+      {key: "已出關(交易日)", label: "已出關N日", sortKey: "_d", numeric: true},
+      {key: "出關時熱度", label: "出關時熱度(7日內再處置率)"},
+      {key: "現在gap", label: "現在gap", sortKey: "_g", numeric: true},
+      {key: "逃生鈴", label: "逃生鈴", sortKey: "_b", numeric: true},
+      {key: "建議", label: "建議(觀察層)"},
+    ], exRows, function(r) { return r._b === 0 ? "hl-row" : null; });
+  }
   // CB處置表(5-6位數代碼,對應股票=前4碼)
   const cbEl = document.getElementById("dispoCbTable");
   if (cbEl) {
