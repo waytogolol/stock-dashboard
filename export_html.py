@@ -1303,8 +1303,9 @@ def build():
         _codes6 = sorted(_at6.code.unique())
         _watch, _cd = [], []
         if _codes6:
-            _px6 = pd.read_sql("SELECT code, date, close, money FROM fm_daily_price WHERE code IN (%s)"
-                               % ",".join("?" * len(_codes6)), _c6, params=_codes6)
+            _px6 = pd.read_sql("SELECT code, date, close, money, volume FROM fm_daily_price "
+                               "WHERE code IN (%s)" % ",".join("?" * len(_codes6)),
+                               _c6, params=_codes6)
             _px6["date"] = pd.to_datetime(_px6.date)
             _cal6 = pd.DatetimeIndex(sorted(pd.read_sql(
                 "SELECT DISTINCT date FROM fm_daily_price ORDER BY date DESC LIMIT 120", _c6)["date"]))
@@ -1316,6 +1317,43 @@ def build():
             _dsp6["end_date"] = pd.to_datetime(_dsp6.end_date, errors="coerce")
             _in_dispo6 = set(_dsp6.loc[_dsp6.end_date >= _t6, "code"])  # 已在處置窗=計時器排除(歸處置頁管)
             _at6["ci"] = _at6.announce_date.map(lambda d: _ci6.get(d, float("nan")))
+            # ---- 計時器v2資料(2026-07-29): 全市場等權均幅(款一/二差幅口徑近似=兩市融資股池,
+            #      條文原文「全體股票平均」為等權;指數=市值加權不適用)+股本(款四週轉)----
+            _tw_set6 = {r[0] for r in _c6.execute(
+                "SELECT DISTINCT code FROM margin_flow WHERE date=(SELECT MAX(date) FROM margin_flow)")}
+            _otc_set6 = {r[0] for r in _c6.execute(
+                "SELECT DISTINCT code FROM margin_flow_otc "
+                "WHERE date=(SELECT MAX(date) FROM margin_flow_otc)")}
+            _uni6 = sorted((_tw_set6 | _otc_set6) - {c for c in _tw_set6 | _otc_set6
+                                                     if c.startswith("00")})
+            _mktavg6 = {}
+            try:
+                _d95 = (_t6 - pd.Timedelta(days=150)).strftime("%Y-%m-%d")
+                _pxu6 = pd.read_sql(
+                    "SELECT code, date, close FROM fm_daily_price WHERE date>=? AND close>0 "
+                    "AND code IN (%s)" % ",".join("?" * len(_uni6)),
+                    _c6, params=[_d95] + _uni6, parse_dates=["date"])
+                _cw6 = _pxu6.pivot(index="date", columns="code", values="close")
+                for _mk6, _set6 in (("上市", _tw_set6), ("上櫃", _otc_set6)):
+                    _cols6 = [c for c in _cw6.columns if c in _set6]
+                    _sub6 = _cw6[_cols6]
+                    _mktavg6[_mk6] = {}
+                    for _w6 in (6, 30, 60, 90):
+                        if len(_sub6) > _w6:
+                            _r6w = (_sub6.iloc[-1] / _sub6.iloc[-1 - _w6] - 1) * 100
+                            _mktavg6[_mk6][_w6] = float(_r6w.mean())
+            except Exception as _e9:
+                print(f"  (v2全市場均幅未產生: {_e9})")
+            _shares6 = dict(_c6.execute(
+                "SELECT code, shares FROM capital WHERE date=(SELECT MAX(date) FROM capital)"))
+            try:
+                _mgn6 = pd.read_sql(
+                    "SELECT code, date, short_fin_ratio, fin_use FROM margin_flow "
+                    "WHERE code IN (%s) AND date>=?" % ",".join("?" * len(_codes6)),
+                    _c6, params=_codes6 + [(_t6 - pd.Timedelta(days=14)).strftime("%Y-%m-%d")],
+                    parse_dates=["date"])
+            except Exception:
+                _mgn6 = pd.DataFrame(columns=["code", "date", "short_fin_ratio", "fin_use"])
             import re as _re6
             for _cd6, _g6 in _at6.groupby("code"):
                 _g6 = _g6.sort_values("announce_date")
@@ -1359,9 +1397,21 @@ def build():
                 if _last6.announce_date < _t6 - pd.Timedelta(days=30) or not len(_gci) \
                         or _cd6 in _in_dispo6:
                     continue
+                # v2結構修正(§6-8,2026-07-29): 處置期間的注意不計基數+出關後重新起算
+                # ——舊公告(最近一次處置結束前)全部剔除,再犯檔不再虛高
+                _dw6 = _dsp6[_dsp6.code == _cd6].dropna(subset=["end_date"])
+                _g6b = _g6
+                if len(_dw6):
+                    _lastend6 = _dw6.end_date.max()
+                    if _lastend6 < _t6:
+                        _g6b = _g6[_g6.announce_date > _lastend6]
+                _gci_b = _g6b.ci.dropna()
+                if not len(_gci_b):
+                    continue
+                _gci = _gci_b
                 _now_i = len(_cal6) - 1
-                _cnt30 = int((_g6.announce_date >= _t6 - pd.Timedelta(days=30)).sum())
-                _cnt10 = int((_g6.ci >= _now_i - 9).sum())
+                _cnt30 = int((_g6b.announce_date >= _t6 - pd.Timedelta(days=30)).sum())
+                _cnt10 = int((_g6b.ci >= _now_i - 9).sum())
                 _cis = set(int(x) for x in _gci)
                 _consec, _j6 = 0, int(_gci.max())
                 while _j6 in _cis:
@@ -1369,7 +1419,7 @@ def build():
                     _j6 -= 1
                 # 連續段是否含款一(快速道條件;2026-07-29條文核對修正:「依款一發布」=當日款一
                 # 有列即可,多款並列(如款1+6)也算,舊版==\"1\"精確比對會低估危險度)
-                _tail6 = _g6[_g6.ci > _gci.max() - _consec]
+                _tail6 = _g6b[_g6b.ci > _gci.max() - _consec]
                 _all1 = bool(len(_tail6)) and all(
                     "1" in str(t or "").split(",") for t in _tail6.triggers)
                 _fast = max(0, 3 - _consec) if _all1 else None
@@ -1377,11 +1427,11 @@ def build():
                 def _c18(row):
                     return any(x in {"1", "2", "3", "4", "5", "6", "7", "8"}
                                for x in str(row or "").split(","))
-                _n10_18 = int(sum(_c18(t) for t in _g6[_g6.ci >= _now_i - 9].triggers))
-                _n30_18 = int(sum(_c18(t) for t in _g6[_g6.announce_date >= _t6 - pd.Timedelta(days=45)].triggers))
+                _n10_18 = int(sum(_c18(t) for t in _g6b[_g6b.ci >= _now_i - 9].triggers))
+                _n30_18 = int(sum(_c18(t) for t in _g6b[_g6b.announce_date >= _t6 - pd.Timedelta(days=45)].triggers))
                 _std10, _std30 = max(0, 6 - _n10_18), max(0, 12 - _n30_18)
                 # 連續5日款1-8路徑(2026-07-29條文核對新增:第六條第一項第二款前段,v1漏掉這條)
-                _c18set = {int(x) for x, t in zip(_g6.ci, _g6.triggers) if _c18(t)}
+                _c18set = {int(x) for x, t in zip(_g6b.ci, _g6b.triggers) if _c18(t)}
                 _fast5 = None
                 if _c18set:
                     _consec18, _j7 = 0, max(_c18set)
@@ -1394,6 +1444,58 @@ def build():
                 _gpx = _pmap6.get(_cd6)
                 if _gpx is not None and len(_gpx) >= 7 and _gpx.close.iloc[-7] > 0:
                     _cum6 = round(float(_gpx.close.iloc[-1] / _gpx.close.iloc[-7] - 1) * 100, 1)
+                # ---- v2款門檻掃描(2026-07-29): 款一差幅/款二長窗/款四週轉/款七券資比/款十一價差 ----
+                _mk6v = str(_last6.market)
+                _avgs = _mktavg6.get(_mk6v, {})
+                _diff6 = (round(_cum6 - _avgs[6], 1)
+                          if _cum6 is not None and 6 in _avgs else None)
+                _k1th = 32 if _mk6v == "上市" else 30
+                _k1hit = (_cum6 is not None and _diff6 is not None
+                          and abs(_cum6) >= _k1th and abs(_diff6) >= 20
+                          and _cum6 * _diff6 > 0)
+                _scan = []
+                if _k1hit:
+                    _scan.append(f"款一✓主條件已達({_cum6:+.0f}%/差幅{_diff6:+.0f})")
+                elif _cum6 is not None and abs(_cum6) >= _k1th * 0.7:
+                    _scan.append(f"款一{_cum6:+.0f}%(門檻±{_k1th},差幅"
+                                 f"{'—' if _diff6 is None else f'{_diff6:+.0f}'})")
+                if _gpx is not None and len(_gpx) >= 91:
+                    _k2th = {"上市": ((30, 100, 85), (60, 130, 110), (90, 160, 135)),
+                             "上櫃": ((30, 100, 80), (60, 140, 80), (90, 160, 80))}[
+                        "上市" if _mk6v == "上市" else "上櫃"]
+                    for _w7, _th7, _df7 in _k2th:
+                        _p0 = _gpx.close.iloc[-1 - _w7]
+                        if _p0 <= 0:
+                            continue
+                        _rw7 = (_gpx.close.iloc[-1] / _p0 - 1) * 100
+                        if abs(_rw7) >= _th7 * 0.6:
+                            _dfw = (round(_rw7 - _avgs[_w7], 0)
+                                    if _w7 in _avgs else None)
+                            _scan.append(f"款二{_w7}日{_rw7:+.0f}%(門檻{_th7}"
+                                         f"{'✓' if abs(_rw7) >= _th7 and _dfw is not None and abs(_dfw) >= _df7 else ''})")
+                            break
+                _sh6 = _shares6.get(_cd6)
+                if _sh6 and _gpx is not None and "volume" in _gpx.columns and len(_gpx):
+                    _tv6 = _gpx.volume.iloc[-1]
+                    if pd.notna(_tv6) and _sh6 > 0:
+                        _turn6 = _tv6 / _sh6 * 100
+                        if _turn6 >= 5:
+                            _scan.append(f"週轉{_turn6:.0f}%(款四線10)")
+                _mg6 = _mgn6[_mgn6.code == _cd6].sort_values("date") if len(_mgn6) else None
+                if _mg6 is not None and len(_mg6) >= 2:
+                    _srf6 = _mg6.short_fin_ratio.iloc[-1]
+                    _srfmin = _mg6.short_fin_ratio.tail(6).min()
+                    if pd.notna(_srf6) and _srf6 >= 12:
+                        _mult6 = (_srf6 / _srfmin) if _srfmin and _srfmin > 0 else None
+                        _scan.append(f"券資比{_srf6:.0f}%(款七線20"
+                                     + (f",6日放大{_mult6:.1f}x" if _mult6 else "") + ")")
+                if _gpx is not None and len(_gpx) >= 7:
+                    _pc6 = float(_gpx.close.iloc[-1])
+                    _pd6v = _pc6 - float(_gpx.close.iloc[-7])
+                    _th11 = 100 + 25 * max(0, int(_pc6 // 500))
+                    _w6px = _gpx.close.tail(6)
+                    if abs(_pd6v) >= _th11 * 0.7 and (_pc6 >= _w6px.max() or _pc6 <= _w6px.min()):
+                        _scan.append(f"款十一價差{_pd6v:+.0f}元(門檻{_th11})")
                 _danger = min([x for x in (_fast, _fast5, _std10, _std30) if x is not None] or [9])
                 _cd.append({
                     "code": _cd6, "name": _last6["name"] or "", "mkt": _last6.market,
@@ -1401,6 +1503,8 @@ def build():
                     "consec": _consec, "all1": _all1,
                     "fast": _fast, "fast5": _fast5, "std10": _std10, "std30": _std30, "danger": int(_danger),
                     "mins": "20" if _pd30 >= 1 else "5", "cum6": _cum6,
+                    "diff6": _diff6, "k1hit": bool(_k1hit),
+                    "kscan": "｜".join(_scan) if _scan else "",
                 })
         _c6.close()
         _cd.sort(key=lambda r: (r["danger"], -r["n30"]))
@@ -2979,10 +3083,10 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   </div>
   <div class="hint" id="attwatchAsof" style="font-weight:600"></div>
   <div class="scroll-box"><table id="attWatchTable"></table></div>
-  <h3 class="sec-title" style="margin-top:16px">⏳ 處置倒數計時器 v1（升級規則條文精算・款門檻距離為近似）</h3>
+  <h3 class="sec-title" style="margin-top:16px">⏳ 處置倒數計時器 v2（2026-07-29升版：出關基數重算＋款門檻距離掃描）</h3>
   <div class="rule-card">
-    <div class="rule-item">升級條文（上市/上櫃邏輯一致）：<b>快速道</b>＝連續3個營業日因款一觸發→直接處置；<b>標準道</b>＝最近10日有6日、或30日內12日因款一~八觸發→處置。分盤：30日內第1次處置→<b>5分盤</b>、第2次以上→<b>20分盤</b>（10個營業日）。危險度＝距最近一條升級路徑還差幾個觸發日；<b>6日累積%</b>欄＝款一門檻的原料（門檻近似：上市±32%/上櫃±30%，以官方公告為準）。</div>
-    <div class="rule-item" style="color:var(--tx3)">用途：①跌觸發持股的風險監控（快進處置的=虧損高風險群）②處置V4的提前佈局名單（危險度0-1＝隨時可能公告，公告日=V5口徑「公告收盤前」判斷窗）③20分盤預測=30日內已有處置紀錄者。v1為條文的觸發日數精算+款一近似，款2-13門檻距離為v2範圍。</div>
+    <div class="rule-item">升級條文（上市/上櫃邏輯一致）：<b>快速道</b>＝連續3個營業日因款一觸發→直接處置；<b>標準道</b>＝最近10日有6日、或30日內12日因款一~八觸發→處置。分盤：30日內第1次處置→<b>5分盤</b>、第2次以上→<b>20分盤</b>（10個營業日）。危險度＝距最近一條升級路徑還差幾個觸發日。<b>v2新增</b>：①<b>出關基數重算</b>（§6-8處置期間注意不計基數＋出關後重新起算——再犯檔不再把處置前的舊公告灌進基數，危險度更真）②<b>款一差幅補算</b>（6日累積欄括號＝與全體平均差幅；條文是雙條件：上市±32%/上櫃±30%<b>且</b>與全體差幅≥20，全體平均以兩市融資股等權近似）③<b>款門檻掃描欄</b>＝款二長窗30/60/90日起迄漲跌（慣犯棘輪款，61%慣犯吃這款）／款四當日週轉率（股本表換算）／款七券資比／款十一高價股價差——只列接近門檻的項目；<b style="color:var(--red)">紅字＝款一主條件已達成，下個公告日大概率直接觸發款一（快速道原料）</b>。</div>
+    <div class="rule-item" style="color:var(--tx3)">用途：①跌觸發持股的風險監控（快進處置的=虧損高風險群）②處置V4的提前佈局名單（危險度0-1＝隨時可能公告，公告日=V5口徑「公告收盤前」判斷窗）③20分盤預測=30日內已有處置紀錄者。v2未覆蓋：款五/六集中度（數字公告後才有）、款八TDR溢折價（無海外原股價）、款十二借券/款十三當沖（資料回補中；且款九~十三不計處置基數＝之後只需標示不必算距離）、款十四黑箱；款一「同類股比較」腿以全體差幅近似（同類=交易所產業分類≠題材分類）。</div>
   </div>
   <div class="scroll-box"><table id="attCdTable"></table></div>
   </div>
@@ -5644,8 +5748,11 @@ function renderAttwatchTab() {
       "最近公告": r.last, "30日次數": r.n30, "連續日": r.consec + (r.all1 ? "(全款一)" : ""),
       "升級路徑": paths.join("｜"),
       "預測分盤": r.mins + "分盤" + (r.mins === "20" ? "（30日內已有處置）" : ""),
-      "6日累積%": r.cum6 === null || r.cum6 === undefined ? "—" : ((r.cum6 > 0 ? "+" : "") + r.cum6 + "%"),
+      "6日累積%": (r.cum6 === null || r.cum6 === undefined ? "—" : ((r.cum6 > 0 ? "+" : "") + r.cum6 + "%")) +
+        (r.diff6 === null || r.diff6 === undefined ? "" : "<span style=\"color:var(--tx3)\">（差幅" + (r.diff6 > 0 ? "+" : "") + r.diff6 + "）</span>"),
       "_c6": r.cum6 || 0, "市場": r.mkt,
+      "款門檻掃描": r.k1hit ? "<b style=\"color:var(--red)\">" + r.kscan + "</b>" : (r.kscan || "—"),
+      "_k1": r.k1hit ? 0 : 1,
     };
   });
   cEl._sortState = {colIndex: 1, dir: 0};
@@ -5657,9 +5764,10 @@ function renderAttwatchTab() {
     {key: "連續日", label: "連續觸發"},
     {key: "升級路徑", label: "各升級路徑距離"},
     {key: "預測分盤", label: "若處置→分盤"},
-    {key: "6日累積%", label: "6日累積漲跌(款一原料)", sortKey: "_c6", numeric: true},
+    {key: "6日累積%", label: "6日累積漲跌(款一原料·括號=與全體差幅)", sortKey: "_c6", numeric: true},
+    {key: "款門檻掃描", label: "款門檻掃描v2(紅=款一主條件已達)", sortKey: "_k1", numeric: true},
     {key: "市場", label: "市場"},
-  ], cRows, function(r) { return r._d <= 1 ? "hl-row" : null; });
+  ], cRows, function(r) { return (r._d <= 1 || r._k1 === 0) ? "hl-row" : null; });
   const nOk = (aw.watch || []).filter(function(r) { return r.ok; }).length;
   const nHot = (aw.countdown || []).filter(function(r) { return r.danger <= 1; }).length;
   document.getElementById("attwatchAsof").textContent =
