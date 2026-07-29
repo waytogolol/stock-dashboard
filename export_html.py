@@ -1312,7 +1312,7 @@ def build():
             _cal6 = pd.to_datetime(_cal6)
             _ci6 = {d: i for i, d in enumerate(_cal6)}
             _pmap6 = {c: g.sort_values("date").reset_index(drop=True) for c, g in _px6.groupby("code")}
-            _dsp6 = pd.read_sql("SELECT code, announce_date, end_date FROM disposition", _c6)
+            _dsp6 = pd.read_sql("SELECT code, announce_date, end_date, reason FROM disposition", _c6)
             _dsp6["announce_date"] = pd.to_datetime(_dsp6.announce_date, errors="coerce")
             _dsp6["end_date"] = pd.to_datetime(_dsp6.end_date, errors="coerce")
             _in_dispo6 = set(_dsp6.loc[_dsp6.end_date >= _t6, "code"])  # 已在處置窗=計時器排除(歸處置頁管)
@@ -1397,14 +1397,17 @@ def build():
                 if _last6.announce_date < _t6 - pd.Timedelta(days=30) or not len(_gci) \
                         or _cd6 in _in_dispo6:
                     continue
-                # v2結構修正(§6-8,2026-07-29): 處置期間的注意不計基數+出關後重新起算
-                # ——舊公告(最近一次處置結束前)全部剔除,再犯檔不再虛高
+                # v2結構修正二訂(§6-8,2026-07-29使用者抓包後條文+實證覆核):
+                # 基數重置「僅限」委員會決議型處置(§6-8明文列舉督導會報/特管會兩委員會)——
+                # 一般自動處置(連3款一/10日6次等)基數不重置,處置前+處置期間注意照算,
+                # 出關可無縫二進宮(實證=連續處置間隔≤7天1,048對中991對為一般自動型)。
                 _dw6 = _dsp6[_dsp6.code == _cd6].dropna(subset=["end_date"])
                 _g6b = _g6
                 if len(_dw6):
-                    _lastend6 = _dw6.end_date.max()
-                    if _lastend6 < _t6:
-                        _g6b = _g6[_g6.announce_date > _lastend6]
+                    _lastrow6 = _dw6.loc[_dw6.end_date.idxmax()]
+                    _rsn6 = str(_lastrow6.reason)
+                    if _lastrow6.end_date < _t6 and ("人工管制" in _rsn6 or "決議" in _rsn6):
+                        _g6b = _g6[_g6.announce_date > _lastrow6.end_date]
                 _gci_b = _g6b.ci.dropna()
                 if not len(_gci_b):
                     continue
@@ -3085,7 +3088,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div class="scroll-box"><table id="attWatchTable"></table></div>
   <h3 class="sec-title" style="margin-top:16px">⏳ 處置倒數計時器 v2（2026-07-29升版：出關基數重算＋款門檻距離掃描）</h3>
   <div class="rule-card">
-    <div class="rule-item">升級條文（上市/上櫃邏輯一致）：<b>快速道</b>＝連續3個營業日因款一觸發→直接處置；<b>標準道</b>＝最近10日有6日、或30日內12日因款一~八觸發→處置。分盤：30日內第1次處置→<b>5分盤</b>、第2次以上→<b>20分盤</b>（10個營業日）。危險度＝距最近一條升級路徑還差幾個觸發日。<b>v2新增</b>：①<b>出關基數重算</b>（§6-8處置期間注意不計基數＋出關後重新起算——再犯檔不再把處置前的舊公告灌進基數，危險度更真）②<b>款一差幅補算</b>（6日累積欄括號＝與全體平均差幅；條文是雙條件：上市±32%/上櫃±30%<b>且</b>與全體差幅≥20，全體平均以兩市融資股等權近似）③<b>款門檻掃描欄</b>＝款二長窗30/60/90日起迄漲跌（慣犯棘輪款，61%慣犯吃這款）／款四當日週轉率（股本表換算）／款七券資比／款十一高價股價差——只列接近門檻的項目；<b style="color:var(--red)">紅字＝款一主條件已達成，下個公告日大概率直接觸發款一（快速道原料）</b>。</div>
+    <div class="rule-item">升級條文（上市/上櫃邏輯一致）：<b>快速道</b>＝連續3個營業日因款一觸發→直接處置；<b>標準道</b>＝最近10日有6日、或30日內12日因款一~八觸發→處置。分盤：30日內第1次處置→<b>5分盤</b>、第2次以上→<b>20分盤</b>（10個營業日）。危險度＝距最近一條升級路徑還差幾個觸發日。<b>v2新增</b>：①<b>基數重置正確化</b>（§6-8條文覆核＋實證：重置<b>僅限委員會決議型處置</b>（人工管制/督導會報決議）；<b>一般自動處置的基數不重置</b>——處置前＋處置期間的注意照算，出關可無縫二進宮20分盤（自家資料實證：連續處置間隔≤7天的1,048對中991對是一般自動型）。⚠推論：處置中的股票雖不在本表（歸處置頁），其基數仍在累積，出關瞬間可能直接再處置）②<b>款一差幅補算</b>（6日累積欄括號＝與全體平均差幅；條文是雙條件：上市±32%/上櫃±30%<b>且</b>與全體差幅≥20，全體平均以兩市融資股等權近似）③<b>款門檻掃描欄</b>＝款二長窗30/60/90日起迄漲跌（慣犯棘輪款，61%慣犯吃這款）／款四當日週轉率（股本表換算）／款七券資比／款十一高價股價差——只列接近門檻的項目；<b style="color:var(--red)">紅字＝款一主條件已達成，下個公告日大概率直接觸發款一（快速道原料）</b>。</div>
     <div class="rule-item" style="color:var(--tx3)">用途：①跌觸發持股的風險監控（快進處置的=虧損高風險群）②處置V4的提前佈局名單（危險度0-1＝隨時可能公告，公告日=V5口徑「公告收盤前」判斷窗）③20分盤預測=30日內已有處置紀錄者。v2未覆蓋：款五/六集中度（數字公告後才有）、款八TDR溢折價（無海外原股價）、款十二借券/款十三當沖（資料回補中；且款九~十三不計處置基數＝之後只需標示不必算距離）、款十四黑箱；款一「同類股比較」腿以全體差幅近似（同類=交易所產業分類≠題材分類）。</div>
   </div>
   <div class="scroll-box"><table id="attCdTable"></table></div>
