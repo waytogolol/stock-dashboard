@@ -231,6 +231,163 @@ def main():
         if m is not None:
             print(f"  {y}: {m:+.2f}%/{w:.0f}%(n={n})")
 
+    # ================= 報告(2026-07-29使用者要求:權益曲線+績效數據) =================
+    import json
+    GREEN, RED, BLUE, YELLOW, GRAY = "#7ec97e", "#e06c5a", "#6bb7e3", "#c3a55a", "#8a8878"
+    BG = {"paper_bgcolor": "#1a1a19", "plot_bgcolor": "#22221f",
+          "font": {"color": "#ddd", "size": 12},
+          "margin": {"t": 42, "l": 52, "r": 18, "b": 40}, "legend": {"orientation": "h"}}
+
+    def cum_curve(sub, k):
+        """單利累加曲線(逐事件k日淨報酬pp,依出關日排序)+績效dict。"""
+        s = sub.dropna(subset=[f"f{k}"]).sort_values("end")
+        rets = s[f"f{k}"].values
+        cum = np.cumsum(rets)
+        dd = float((cum - np.maximum.accumulate(cum)).min()) if len(cum) else 0.0
+        st = {"n": len(s), "win": float((rets > 0).mean() * 100) if len(s) else None,
+              "avg": float(np.mean(rets)) if len(s) else None,
+              "med": float(np.median(rets)) if len(s) else None,
+              "sum": float(cum[-1]) if len(s) else 0.0, "mdd": dd,
+              "pf": (-rets[rets > 0].sum() / rets[rets <= 0].sum()
+                     if len(s) and (rets <= 0).any() else None)}
+        return [str(d.date()) for d in s.end], [round(float(v), 1) for v in cum], st
+
+    charts = []
+    HOLD_K = 10
+    tr = {}
+    for g_, color in (("熱", RED), ("溫", YELLOW), ("冷", BLUE)):
+        xs, ys, st = cum_curve(v4p[v4p.grp == g_], HOLD_K)
+        tr[g_] = st
+        charts.append({"x": xs, "y": ys, "name": f"{g_}組(Σ{st['sum']:+.0f}pp,MDD{st['mdd']:.0f}pp)",
+                       "mode": "lines", "line": {"color": color, "width": 2},
+                       "hovertemplate": "%{x}: %{y}pp<extra>" + g_ + "</extra>"})
+    c_eq = ("c_eq", charts,
+            {"title": f"權益曲線(V4池,出關+1開盤買持{HOLD_K}日,單利累加pp;讀形狀別讀絕對值)",
+             "yaxis": {"title": "累計pp"}})
+    grad_rows = []
+    for gv in sorted(ev.gap.unique()):
+        sub = ev[ev.gap == gv]
+        if len(sub) >= 10:
+            grad_rows.append((int(gv), len(sub), sub.renext.mean() * 100))
+    c_grad = ("c_grad", [{
+        "x": [f"gap{g:+d}" for g, _, _ in grad_rows],
+        "y": [round(r, 1) for _, _, r in grad_rows], "type": "bar",
+        "marker": {"color": [RED if r >= 15 else YELLOW if r >= 8 else GREEN
+                             for _, _, r in grad_rows]},
+        "text": [f"n={n}" for _, n, _ in grad_rows], "textposition": "outside",
+        "hovertemplate": "%{x}: %{y}%<extra></extra>"}],
+        {"title": "Q0預測器:出關日基數距門檻gap → 7日內再處置率(%),紅線=全體基準率8.2%",
+         "yaxis": {"title": "再處置率%"},
+         "shapes": [{"type": "line", "x0": -0.5, "x1": len(grad_rows) - 0.5,
+                     "y0": base, "y1": base, "xref": "x",
+                     "line": {"color": RED, "width": 1, "dash": "dot"}}]})
+
+    def grp_table(pool, lab):
+        h = f"<table><tr><th>{lab}</th><th>n</th>" + "".join(
+            f"<th>k{k}中位/勝率</th>" for k in KS) + "</tr>"
+        for g_ in ("熱", "溫", "冷"):
+            sub = pool[pool.grp == g_]
+            tds = ""
+            for k in KS:
+                m, w, n = med_win(sub[f"f{k}"])
+                tds += (f"<td class='{'good' if m > 0 else 'bad'}'>{m:+.2f}%/{w:.0f}%</td>"
+                        if m is not None else "<td>—</td>")
+            h += f"<tr><th>{g_}</th><td>{len(sub)}</td>{tds}</tr>"
+        return h + "</table>"
+
+    perf = "<table><tr><th>績效(V4池,持10日)</th><th>熱</th><th>溫</th><th>冷</th></tr>"
+    for key, lab2 in (("n", "交易數"), ("win", "勝率%"), ("avg", "平均%"), ("med", "中位%"),
+                      ("sum", "單利Σpp"), ("mdd", "MDD(pp)"), ("pf", "獲利因子")):
+        cells = "".join(f"<td>{tr[g_][key]:.1f}</td>" if tr[g_][key] is not None else "<td>—</td>"
+                        for g_ in ("熱", "溫", "冷"))
+        perf += f"<tr><th>{lab2}</th>{cells}</tr>"
+    perf += "</table>"
+
+    yr_tbl = "<table><tr><th>逐年(V4池k10中位/勝率)</th><th>熱</th><th>冷</th><th>差pp</th></tr>"
+    for y in sorted(v4p.y.unique()):
+        ya = v4p[(v4p.y == y) & (v4p.grp == "熱")]
+        yb = v4p[(v4p.y == y) & (v4p.grp == "冷")]
+        ma, wa, na = med_win(ya.f10)
+        mb, wb, nb = med_win(yb.f10)
+        if ma is None or mb is None:
+            continue
+        d_ = ma - mb
+        yr_tbl += (f"<tr><th>{y}</th><td>{ma:+.2f}%/{wa:.0f}%(n={na})</td>"
+                   f"<td>{mb:+.2f}%/{wb:.0f}%(n={nb})</td>"
+                   f"<td class='{'good' if d_ > 0 else 'bad'}'>{d_:+.2f}</td></tr>")
+    yr_tbl += "</table>"
+
+    hot = v4p[v4p.grp == "熱"].sort_values("end", ascending=False)
+    det = ("<table><tr><th>熱組逐事件(V4池,新→舊)</th><th>出關日</th><th>gap</th>"
+           "<th>7日內再處置</th><th>分盤</th><th>k10</th><th>k20</th></tr>")
+    for r in hot.itertuples():
+        f10s = f"{r.f10:+.1f}%" if pd.notna(r.f10) else "—"
+        f20s = f"{r.f20:+.1f}%" if pd.notna(r.f20) else "—"
+        det += (f"<tr><th>{r.code}</th><td>{r.end.date()}</td><td>{int(r.gap):+d}</td>"
+                f"<td>{'✓' if r.renext else ''}</td><td>{r.mins}分</td>"
+                f"<td class='{'good' if pd.notna(r.f10) and r.f10 > 0 else 'bad'}'>{f10s}</td>"
+                f"<td class='{'good' if pd.notna(r.f20) and r.f20 > 0 else 'bad'}'>{f20s}</td></tr>")
+    det += "</table>"
+
+    divs = "".join(f'<div id="{d}" style="height:380px"></div>' for d, _, _ in (c_grad, c_eq))
+    plots = "".join(f"Plotly.newPlot('{d}',{json.dumps(t, ensure_ascii=False)},"
+                    f"Object.assign({json.dumps(ly, ensure_ascii=False)},BG));"
+                    for d, t, ly in (c_grad, c_eq))
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>二進宮預測考卷(2026-07-29)</title>
+<script src="plotly.min.js"></script><style>
+body{{background:#1a1a19;color:#fff;font-family:"Noto Sans TC",sans-serif;margin:24px;max-width:1100px}}
+h1{{font-size:20px}} h2{{font-size:15px;color:#c3c2b7;margin-top:28px;border-bottom:1px solid #333;padding-bottom:4px}}
+table{{border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;margin:8px 0}}
+td,th{{border:1px solid #333;padding:4px 10px;text-align:right}} th{{text-align:left;color:#c3c2b7}}
+.note{{color:#8a8878;font-size:12.5px;line-height:1.8}} .good{{color:{GREEN}}} .bad{{color:{RED}}}
+.warn{{color:{YELLOW}}} .hl{{background:#2a2a28}}</style></head><body>
+<h1>🔁 二進宮預測考卷:出關日基數狀態=事前可算的新資訊(2026-07-29)</h1>
+<div class="note">預註冊四題見build_dispo_second_jail.py docstring。背景=§6-8二訂(同日):一般自動處置的
+基數穿越處置期繼續累積→出關前就能算「距二次處置門檻幾步」。n={len(ev)}出關事件(2019-02起,排除人工管制)。</div>
+
+<h2>🗣️ 白話導讀</h2>
+<div class="note">
+<p><b>這卷在問什麼:</b>股票處置出關那天,官方基數(最近10日/30日的款1-8注意次數)是公開可算的。
+基數還很滿的「熱票」出關後大機率馬上再被關(二進宮=20分鐘分盤+全民預收);基數乾淨的「冷票」則真正自由。
+這兩群的出關後走勢,從來沒人事前分過。</p>
+<p><b>判決一句話:</b>預測器成立(熱票再處置率21.4%=冷票5倍,梯度完美單調);報酬層方向=
+「熱票較肥」(妖股動能未斷,與漲觸發升級組+7.24%同構)但CI含0=觀察層。
+<b>實戰讀法:持有中的處置股,出關前看它熱不熱——熱票別假設出關就恢復流動性(1/5機率馬上再關),
+但也別急著跑(續抱10日中位+1.95% vs 冷票-1.89%)。</b></p>
+</div>
+
+<h2>📋 判決表</h2>
+<table>
+<tr><th>題</th><th>判決</th><th>關鍵數字</th></tr>
+<tr class="hl"><td>Q0 預測器</td><td class="good">✅成立</td><td>7日內再處置率:gap≤-4超標36%/熱(≤1)21.4%/溫8.7%/冷(≥4)4.2%,基準8.2%;完美單調、零前視</td></tr>
+<tr><td>Q1 報酬層</td><td class="warn">🟡觀察層</td><td>V4池熱k10+1.95%/55% vs 冷-1.89%/45%,差+3.84pp CI[-0.73,+11.27]含0;逐年6/8正+5分盤內+3.56/20分盤內+3.14兩控同向</td></tr>
+<tr><td>Q2 續抱決策</td><td class="warn">方向支持但薄</td><td>熱組續抱10日+1.95%/55% vs 冷-1.89%/45%→V4出場規則不動,熱票「別急著跑」為觀察建議</td></tr>
+<tr><td>Q3 正交性</td><td class="good">✓真新維度</td><td>Spearman(gap,窗內報酬)=-0.167=與G3(窗內路徑)幾乎無關;G3「窗內弱勢較好」在熱/冷內皆重現=兩維度可疊</td></tr>
+<tr><td>死格</td><td class="bad">⚠</td><td>2021年熱組k20 -8.00%/41%(n=41)=最大反例年;報酬層升格需live或更多熊年樣本</td></tr>
+</table>
+
+{divs}
+
+<h2>各組報酬(出關+1開盤起,中位/勝率)</h2>
+{grp_table(v4p, "V4池(T1-T3∧amt20≥0.3億)")}
+{grp_table(ev, "全池")}
+<h2>績效彙總(V4池,持10日,單利)</h2>
+{perf}
+<div class="note">⚠單利累加口徑=每筆等權,無資金上限;熱組n=253筆/7.5年≈34筆/年;
+權益曲線讀形狀(斜率與回撤段)別讀絕對值。</div>
+<h2>逐年對照</h2>
+{yr_tbl}
+<h2>熱組逐事件明細</h2>
+{det}
+<h2>限制</h2>
+<div class="note">再處置率未到100%=出關後仍需繼續中注意才會再關(安分票會被窗口稀釋)=機率預測;
+Q1 CI含0=觀察層不進規則;2021反例年未解;gap口徑只算標準道(10日6次/30日12次),快速道(連3/連5)
+在出關情境幾乎不適用(處置期間連續性被切斷);人工管制型已排除(§6-8重置適用彼、不適用此)。</div>
+</body><script>const BG={json.dumps(BG)};{plots}</script></html>"""
+    out = "研究報告/research_dispo_second_jail.html"
+    open(out, "w", encoding="utf-8").write(html)
+    print(f"\n報告已產出 {out} ({len(html):,} chars)")
+
 
 if __name__ == "__main__":
     main()
