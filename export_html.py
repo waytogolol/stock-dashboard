@@ -1539,7 +1539,26 @@ def build():
                                parse_dates=["date"])
         except Exception:
             _mo6 = pd.DataFrame()
+        # 乾淨格讀數(2026-07-29使用者裁示上板,顯示層不動燈): 融資餘額距240日高點縮減深度
+        # 考卷=build_margin_flush_exam.py E5b: 回檔中縮水>30%=乾淨格f60+5.90%/71%,
+        # 縮10~20%=死亡谷f20-3.03%/21%,乾淨格−死亡谷+6.84pp CI排0=「殺夠深才乾淨,殺一半最毒」
+        _depth6 = {}
+        try:
+            for _key6, _sql6 in (
+                    ("tw", "SELECT today_balance v FROM margin_total "
+                           "WHERE name='MarginPurchaseMoney' ORDER BY date DESC LIMIT 245"),
+                    ("otc", "SELECT money_today v FROM margin_total_otc "
+                            "ORDER BY date DESC LIMIT 245")):
+                _b6 = pd.read_sql(_sql6, _c6).v
+                if len(_b6) >= 200:
+                    _depth6[_key6] = round(float((_b6.iloc[0] / _b6.max() - 1) * 100), 1)
+        except Exception as _de6:
+            print(f"  (乾淨格讀數未產生: {_de6})")
         _c6.close()
+
+        def _depth_zone6(v):
+            return ("乾淨格" if v <= -30 else "過渡段" if v <= -20
+                    else "死亡谷" if v <= -10 else "淺段")
         _lf6 = pd.read_pickle("tmp_limit_flags.pkl")
         _pool6 = set(_lf6[~_lf6.code.str.startswith("00")].code.unique())
         _px6 = _px6[_px6.code.isin(_pool6)]
@@ -1682,7 +1701,10 @@ def build():
             "warn": {"ratio": round(float(_mm_last.ratio), 1),
                      "asof": str(_mm_last.date.date()), "lit": _lit["warn"],
                      "otc": round(float(_mo6.iloc[0].ratio), 1) if len(_mo6) else None,
-                     "otc_asof": str(_mo6.iloc[0].date.date()) if len(_mo6) else None},
+                     "otc_asof": str(_mo6.iloc[0].date.date()) if len(_mo6) else None,
+                     "depth": _depth6.get("tw"), "depth_otc": _depth6.get("otc"),
+                     "depth_zone": _depth_zone6(_depth6["tw"]) if "tw" in _depth6 else None,
+                     "depth_zone_otc": _depth_zone6(_depth6["otc"]) if "otc" in _depth6 else None},
             "exposure": round(_expo6, 2),
             "n_lit": sum(_lit.values()),
             "headline": _headline,
@@ -1989,6 +2011,50 @@ def build():
                     _cf_up6[str(_r7.code)] = max(_cf_up6.get(str(_r7.code), ""), str(_r7.announce_date)[:10])
         except Exception as _e7:
             print(f"  (款1+6漲警未產生: {_e7})")
+        # ⚠上櫃大戶接刀(2026-07-29使用者裁示上板,考卷=build_margin_capitulation.py C3上櫃對照):
+        # 上櫃深跌股(ret20<=-20%∧amt20>=0.3億)∧融資20日殺出(<=-5%)∧千張大戶4週上升(d4w>0)
+        # =後20日相對其他上櫃股-2.22%/勝40%,大戶接−大戶跑-3.03pp CI[-4.64,-1.17]排0且逐年0/5(五年全反);
+        # horizon延伸(tmp_c3_otc_horizons.py)=f60差消失→避開窗~4週。防呆旗標:別把「大戶承接」當加分。
+        # 觀察層live驗證中;與7/24共振×千張上櫃反向二度互證。
+        _cf_knife = {}
+        try:
+            _c8 = sqlite3.connect(DB_PATH)
+            _dts8 = [r[0] for r in _c8.execute(
+                "SELECT DISTINCT date FROM margin_flow_otc ORDER BY date DESC LIMIT 21")]
+            if len(_dts8) >= 21:
+                _fin_now8 = dict(_c8.execute(
+                    "SELECT code, fin_bal FROM margin_flow_otc WHERE date=?", (_dts8[0],)))
+                _fin_prev8 = dict(_c8.execute(
+                    "SELECT code, fin_bal FROM margin_flow_otc WHERE date=?", (_dts8[-1],)))
+                _cand8 = [c for c in _cf_fams
+                          if c in _fin_now8 and (_fin_prev8.get(c) or 0) >= 500]
+                for _cd8 in _cand8:
+                    _fchg8 = (_fin_now8[_cd8] / _fin_prev8[_cd8] - 1) * 100
+                    if _fchg8 > -5:
+                        continue
+                    _px8 = pd.read_sql(
+                        "SELECT date, close, money FROM fm_daily_price WHERE code=? "
+                        "AND close>0 ORDER BY date DESC LIMIT 21", _c8, params=(_cd8,))
+                    if len(_px8) < 21:
+                        continue
+                    _r20_8 = (_px8.close.iloc[0] / _px8.close.iloc[20] - 1) * 100
+                    _a20_8 = _px8.money.iloc[:20].mean() / 1e8
+                    if _r20_8 > -20 or _a20_8 < 0.3:
+                        continue
+                    _tdr8 = pd.read_sql(
+                        "SELECT date, p1000 FROM (SELECT date, p1000 FROM tdcc_weekly WHERE code=? "
+                        "UNION SELECT date, big1000_pct AS p1000 FROM tdcc_holders WHERE code=?) "
+                        "ORDER BY date DESC LIMIT 5", _c8, params=(_cd8, _cd8))
+                    if len(_tdr8) < 5:
+                        continue
+                    _d4w8 = float(_tdr8.p1000.iloc[0] - _tdr8.p1000.iloc[4])
+                    if _d4w8 > 0:
+                        _cf_knife[_cd8] = f"d4w+{_d4w8:.1f}·融資{_fchg8:.0f}%·跌{_r20_8:.0f}%"
+            _c8.close()
+            if _cf_knife:
+                print(f"  ⚠上櫃大戶接刀旗標: {len(_cf_knife)}檔 {sorted(_cf_knife)}")
+        except Exception as _e8:
+            print(f"  (上櫃大戶接刀旗標未產生: {_e8})")
         # 名稱解析(沿用既有備援鏈): company_names → rankings中文名稱/name → 家族自帶名稱
         _cf_nm = {}
         for _r in names[names["country"] == "台"].itertuples():
@@ -2037,6 +2103,8 @@ def build():
                 _cx.append("⚠處置毒格")
             if _row["n"] >= 1 and _cd in _cf_up6:
                 _cx.append(f"⚠款1+6漲警({_cf_up6[_cd][5:]})")
+            if _row["n"] >= 1 and _cd in _cf_knife:
+                _cx.append(f"⚠上櫃大戶接刀({_cf_knife[_cd]})")
             _row["cx"] = "、".join(_cx)
             # ---- 已驗證規則層(2026-07-24): 該檔「現在」符合哪幾條已回測規則,括號=該規則單獨回測數字 ----
             # 非組合預測、不做加總計分(疊加效果未驗證);⭐=命中R1-R3強層之一且無衝突旗標。
@@ -2826,7 +2894,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div class="rule-card">
     <div class="rule-item">彙總對象＝本頁其他檢視「現役」名單的<b>聯集</b>，各欄口徑逐條沿用原檢視已算好的判定、不另行重算：①規則①-⑤觸發題材的前3大成員　②微題材脈衝A/B級成員　③補漲雷達A/B級　④籌碼徽章外資位階≥80（中小型口徑，排名前50大權值股不列）　⑤題材營收動能score=4前5大營收成員　⑥🔥共振8週窗內標籤　⑦處置股觀察窗內非毒格（標分盤/Tier）——這七條計入「正向交集數」；⑧🔓內部解質警戒＝<b>賣方訊號</b>，不計入正向數、只作<b style="color:var(--red)">衝突旗標</b>。</div>
     <div class="rule-item" style="color:var(--red);font-weight:600">⚠ 交集「數量」本身未經回測——本專案驗證過的是特定配對的多層確認（如籌碼✓當規則訊號的加分項、微題材🅰的毛利確認），不是「訊號越多越好」的計分制；此頁是評估輔助的索引，不是排行榜。規則①-⑤與🔥共振同屬動能家族，同時亮不算兩個獨立確認——「獨立家族數」欄已把 規則+共振、微題材+補漲 各併為一家（家族＝動能／微題材·補漲／籌碼／營收動能／處置）。</div>
-    <div class="rule-item" style="color:var(--tx3)">衝突列（紅底）＝有正向訊號同時掛🔓解質警戒、落在⚠處置毒格（人工管制類）、或掛<b>⚠款1+6漲警</b>（近14日內因「累積漲幅＋本益比」雙款列注意股——回測後10日-7.12%/勝28%/60%進處置＝全體系最強立即減碼訊號；與慣犯研究「款6=元凶」及監視業務第三層款6專屬條款三卷咬合）——優先檢討減碼而非加碼，且不受下方門檻篩選影響、永遠顯示。點股名跳單股歷史；各欄細節回原檢視頁看（此頁只是索引）。</div>
+    <div class="rule-item" style="color:var(--tx3)">衝突列（紅底）＝有正向訊號同時掛🔓解質警戒、落在⚠處置毒格（人工管制類）、或掛<b>⚠款1+6漲警</b>（近14日內因「累積漲幅＋本益比」雙款列注意股——回測後10日-7.12%/勝28%/60%進處置＝全體系最強立即減碼訊號；與慣犯研究「款6=元凶」及監視業務第三層款6專屬條款三卷咬合）、或掛<b>⚠上櫃大戶接刀</b>（2026-07-29上板，觀察層live驗證中：上櫃深跌股(20日跌&gt;20%)×融資被殺出×千張大戶比例4週上升——直覺是「散戶斷頭大戶承接=利多」，回測<b>完全反向</b>：後20日相對其他上櫃股-2.2%/勝40%，與「大戶也在跑」組差-3.03pp CI排0且2022-26五年全反，與共振×千張上櫃反向二度互證＝上櫃中小型「大戶進場」常是主力自救/掩護；<b>避開窗約4週</b>（60日後差異消失），意思是「別把大戶承接當買進加分」而非要你賣掉持股）——優先檢討減碼而非加碼，且不受下方門檻篩選影響、永遠顯示。點股名跳單股歷史；各欄細節回原檢視頁看（此頁只是索引）。</div>
     <div class="rule-item">⭐<b>優先關注</b>（2026-07-24上線）＝命中至少一條<b>強驗證規則</b>（R1處置T1甜蜜格／R2處置T1-T3／R3共振✓外資）且無衝突旗標，固定顯示並浮在預設排序最上方；「已驗證規則」欄逐條列出該檔目前符合的已回測規則，<b>規則後括號＝該條規則單獨的回測數字，非組合預測</b>；排序分層依據＝單一最強規則（R1&gt;R2&gt;R3&gt;R4&gt;R5），<b>不做加總計分</b>（疊加效果未驗證，見上方警語）。R4籌碼A1近似（外資位階≥80×週漲&gt;10%，4週中位+2.7%/勝57%、2023起有效窗）與R5營收動能s4（60日超額+2.6%）為較弱／regime依賴證據（R5僅2025-26強年顯著）——淡色標註參考、不給⭐。<b>R3鮮度規則（2026-07-26收緊）</b>：回測+7.1%是從事件週起算的，⭐只給共振事件<b>≤2週</b>的R3；超過2週＝<b>☆過鮮</b>（淡色，僅供追蹤，現在進場已不是回測驗證過的那筆交易）。</div>
   </div>
   <div class="hint" id="confluAsof" style="font-weight:600"></div>
@@ -4534,9 +4602,14 @@ function renderThermoTab() {
     {name: "🚨 融資警戒帶", lit: mt.warn.lit,
      read: "上市融資維持率 <b>" + mt.warn.ratio + "%</b>（" + mt.warn.asof + "）｜警戒線150%" +
            (mt.warn.otc !== null && mt.warn.otc !== undefined
-             ? "<br>上櫃(公式版) <b>" + mt.warn.otc + "%</b>（" + mt.warn.otc_asof + "）｜2026-07-29考卷：<b>兩市同破150＝強出清買點(k60+11.1%/80%)；上櫃單獨破＝中小型領跌警訊別接(短線中位負)</b>；燈的判定仍用上市線" : ""),
+             ? "<br>上櫃(公式版) <b>" + mt.warn.otc + "%</b>（" + mt.warn.otc_asof + "）｜2026-07-29考卷：<b>兩市同破150＝強出清買點(k60+11.1%/80%)；上櫃單獨破＝中小型領跌警訊別接(短線中位負)</b>；燈的判定仍用上市線" : "") +
+           (mt.warn.depth !== null && mt.warn.depth !== undefined
+             ? "<br>💧殺出深度（融資餘額距240日高點）：上市 <b>" + mt.warn.depth + "%</b>＝" + mt.warn.depth_zone +
+               (mt.warn.depth_otc !== null && mt.warn.depth_otc !== undefined
+                 ? "｜上櫃 <b>" + mt.warn.depth_otc + "%</b>＝" + mt.warn.depth_zone_otc : "") +
+               "｜<b>縮水&gt;30%＝乾淨格</b>（回檔中歷史f60+5.9%/勝71%）、<b>縮10~20%＝死亡谷</b>（斷頭殺到一半，f20中位−3.0%/勝21%，別把反彈當底部確認）" : ""),
      verdict: "全市場融資戶的平均維持率跌破150%＝斷頭潮水位（券商開始強制賣出融資戶持股＝最典型的被迫賣壓）。歷史9次進帶，之後60日中位+14.4%／勝率78%。",
-     warn: "這是「水位狀態」不是「進場時點」——帶內要等急跌日（如雙收斂同亮）再進；2008慢熊第一次跌破是例外。"},
+     warn: "水位與殺出深度都是「狀態」不是「進場時點」——帶內/死亡谷要等出清日訊號（溫度計/雙收斂/跌停廣度亮燈）再進，燈亮日照燈的劇本操作不衝突；2008慢熊第一次跌破是例外。"},
   ];
   cardsEl.innerHTML = cards.map(function(c) {
     return "<div style=\"flex:1 1 300px;border:1px solid var(--bd);border-radius:8px;padding:10px;background:var(--sf)" +
