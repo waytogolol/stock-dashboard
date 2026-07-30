@@ -1979,6 +1979,11 @@ def build():
             _join9 = min((s for s, e in _eps9(_wv[_other9]["vp"]) if s >= _anchor9), default=None)
             _wave9["anchor"] = str(_anchor9.date())
             _wave9["join"] = str(_join9.date()) if _join9 is not None else None
+            # SPX錨後旗標(2026-07-31收官考卷升級): 櫃買先爆本身3正3負,鑰匙=錨定後20日內SPX是否著火
+            # (安靜3/3正中位+8.70%/著火3/3負-8.11%,6/6完美分離;方向性=錨定前已熄的美股火不算)
+            _svp9 = _wv["SPX"]["vp"]
+            _wave9["spx_after"] = bool((_svp9[(_svp9.index >= _anchor9)
+                                             & (_svp9.index <= _anchor9 + pd.Timedelta(days=20))] > 80).any())
             if _join9 is None:
                 _wave9["type"] = "otc_only" if _am9 == "otc" else "tw_only"
             elif abs((_join9 - _anchor9).days) <= 3:
@@ -3367,9 +3372,9 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div id="weatherHeadline" class="rule-item" style="font-weight:700"></div>
     <details style="margin-top:4px">
       <summary style="cursor:pointer;color:var(--tx2)">展開說明／口徑</summary>
-      <div class="rule-item" style="margin-top:6px"><b>這在幹嘛（一句話）</b>：把「現在是什麼天氣」壓成兩個數字畫在一張圖上。<b>X軸＝波動期限結構</b>（加權10日波動÷60日波動）：&gt;1＝風暴進行中（升溫）、&lt;1＝風暴退場（退潮）；<b>Y軸＝胃納</b>（櫃買/加權比值20日變化%）：正＝資金敢買中小型題材、負＝縮回權值避險。點的30日軌跡＝天氣往哪邊變。</div>
+      <div class="rule-item" style="margin-top:6px"><b>這在幹嘛（一句話）</b>：把「現在是什麼天氣」壓成兩個數字畫在一張圖上。<b>X軸＝波動期限結構</b>（加權10日波動÷60日波動）：&gt;1＝風暴進行中（升溫）、&lt;1＝風暴退場（退潮）；<b>Y軸＝胃納</b>（櫃買/加權<b>指數比值</b>20日變化%）：正＝資金敢買中小型題材、負＝縮回權值避險。⚠胃納是「價格相對強弱」<b>不是成交量</b>——與P5縮量止跌的「量縮」完全無關（那是進場扳機，這是天氣座標）。點的30日軌跡＝天氣往哪邊變。</div>
       <div class="rule-item"><b>怎麼用（值班表）</b>：兩派策略是接力棒——<b>亂世（升溫×胃納縮）＝事件策略值班</b>（跌觸發+9.86%/勝76%、甜蜜格/處置照燈操作），營收題材逆風別硬做；<b>題材天堂（退潮×胃納張）＝營收動能score4值班</b>（+13.81%/勝76%）；<b>修復觀望＝等三重發車鈴</b>（①波動退潮&lt;0.8 ②櫃買排列修復 ③胃納翻正）齊了再切回題材線；<b>過熱（升溫×胃納張）＝罕見格</b>，提防風向急轉。風暴中做反轉、風暴後做動能。</div>
-      <div class="rule-item" style="color:var(--tx3)">技術註記：值班統計＝2026-07-31 regime系列考卷（跌觸發2018起／score4面板2022起，窗窄＝盤點層參考非上板開關）；主場確認線＝升溫&gt;1.2／退潮&lt;0.8（圖上虛線），1.0~1.2之間＝過渡；起火點階梯與全球層＝n小觀察層（升破80分位口徑2006起；錨定日＝允許≤3日喘息的episode口徑，與考卷逐事件紀錄可能差數日——例：本波考卷記05-11櫃買先爆、本儀錨04-23，<b>階梯分類相同以分類為準</b>）；徽章列的殺出深度／事件倉信心與下方溫度計卡同源。</div>
+      <div class="rule-item" style="color:var(--tx3)">技術註記：值班統計＝2026-07-31 regime系列考卷（跌觸發2018起／score4面板2022起，窗窄＝盤點層參考非上板開關）；主場確認線＝升溫&gt;1.2／退潮&lt;0.8（圖上虛線），1.0~1.2之間＝過渡；起火點階梯＝n小觀察層（升破80分位口徑2006起；錨定日＝允許≤3日喘息的episode口徑，與收官報告的quiet=21口徑、考卷逐事件紀錄可能差數日到數週，<b>三種口徑分類結論相同以分類為準</b>；櫃買先爆本身3正3負，鑰匙＝SPX錨後20日著火與否6/6分離）；徽章列的殺出深度／事件倉信心與下方溫度計卡同源。完整考證與逐波明細→研究報告/research_regime_weather.html。</div>
     </details>
   </div>
   <div id="weatherBadges" style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0"></div>
@@ -4926,19 +4931,23 @@ function renderWeatherGauge() {
     alignTxt += "｜⚠加權月季差僅" + A.tw.gap + "%,死亡交叉倒數";
   }
   const wv = W.wave || {};
+  // 2026-07-31收官考卷複現版數字(research_regime_weather.html): 櫃買先爆本身3正3負,鑰匙=SPX錨後20日
+  const spxKey = wv.spx_after !== undefined
+    ? (wv.spx_after ? "×SPX錨後著火＝歷史3/3負(中位-8.11%)⚠警戒劇本" : "×SPX錨後安靜＝歷史3/3正(中位+8.70%)偏虛驚劇本")
+    : "";
   const waveTxt = ({
-    otc_first: "櫃買先爆(" + wv.anchor + ")→加權跟進(" + wv.join + ")＝虛驚型:題材籌碼自爆可自癒（歷史加權k60全勝+3.56%）",
-    tw_first: "⚠加權先爆(" + wv.anchor + ")→櫃買跟進(" + wv.join + ")＝真風暴型:宏觀系統性（k60中位-9.12%勝33%）",
-    sync: "兩市同步爆(" + wv.anchor + ")＝常為V底（+9.01%）",
-    otc_only: "櫃買獨爆(" + wv.anchor + ")加權沒跟＝虛驚",
+    otc_first: "櫃買先爆(" + wv.anchor + ")→加權跟進(" + wv.join + ")；本身3正3負非免死金牌,鑰匙=SPX:" + spxKey,
+    tw_first: "⚠加權先爆(" + wv.anchor + ")→櫃買跟進(" + wv.join + ")＝真風暴型:宏觀系統性(歷史n=4全負,中位-18.46%,2007-11/2008-05/2024-07/2025-01)",
+    sync: "兩市同步爆(" + wv.anchor + ")＝常為V底(+5.99%/67%)" + (spxKey ? "；" + spxKey : ""),
+    otc_only: "櫃買獨爆(" + wv.anchor + ")加權沒跟＝局部事件,溫和正",
     tw_only: "⚠加權獨爆(" + wv.anchor + ")",
   })[wv.type] || "無起火（兩市vp10未破80分位）";
   const vpTxt = "當下vp10 加權" + W.vp.tw + "／櫃買" + W.vp.otc + "分位";
   const spxTxt = wv.spx_burn
-    ? (wv.global === "us_first"
-        ? "SPX先爆→外來火晚週期,台灣歷史扛得住（+4.85%/67%）"
-        : "🚨SPX著火＋台股先爆＝全球化最毒型（k60-6.21%勝25%）")
-    : "SPX vp10 " + W.vp.spx + "分位＜80沒著火＝台股獨爆虛驚型（n=39,+2.10%/67%）；警報線=SPX破80分位即改判最毒型";
+    ? "🚨SPX著火中(vp10>80)＝警報線觸發:台股波×SPX著火歷史全負格,劇本改判警戒"
+    : "SPX vp10 " + W.vp.spx + "分位＜80"
+      + (wv.spx_after === false ? "且本波錨後20日安靜＝分離鑰匙正格" : "")
+      + "；⚠警報線=SPX vp10破80分位→劇本改判警戒（6/6分離考證見研究報告）";
   const dep = (mt.warn && mt.warn.depth !== null && mt.warn.depth !== undefined)
     ? "上市" + mt.warn.depth + "%=" + mt.warn.depth_zone +
       (mt.warn.depth_otc !== null && mt.warn.depth_otc !== undefined

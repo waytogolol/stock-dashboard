@@ -201,6 +201,18 @@ def main():
             time.sleep(SLEEP)
     conn.executemany("INSERT OR REPLACE INTO margin_maintenance_official VALUES (?,?)", rows)
     conn.commit()
+    # 最新日頂上(2026-07-31使用者抓包「上市怎麼停在前一日」): FinMind官方數列T+1才出貨,
+    # 例行晚間跑永遠缺當日→缺的日子先用公式版頂上(對帳-0.01pp),隔日FinMind到貨INSERT OR REPLACE自動覆寫
+    if not force_calc:
+        top_last = conn.execute("SELECT MAX(date) FROM margin_maintenance_official").fetchone()[0]
+        for d in [r[0] for r in conn.execute(
+                "SELECT DISTINCT date FROM margin_flow WHERE date>? ORDER BY date", (top_last,))]:
+            v = calc_day(conn, d)
+            if v is not None:
+                conn.execute("INSERT OR REPLACE INTO margin_maintenance_official VALUES (?,?)",
+                             (d, v))
+                conn.commit()
+            time.sleep(SLEEP)
     new_last, n = conn.execute(
         "SELECT MAX(date), COUNT(*) FROM margin_maintenance_official").fetchone()
     print(f"完成({src}): {last} -> {new_last} (+{len(rows)}筆覆寫含重疊, 總{n:,}筆)")
