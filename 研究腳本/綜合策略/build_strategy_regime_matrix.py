@@ -145,6 +145,26 @@ def strat_bottom():
     return pd.DataFrame(rows)
 
 
+def strat_score4(excess=False):
+    """營收動能檢查清單(score4滿分,theme_momentum_v2面板,2022-01起): entry_day進場,ret60/excess60"""
+    p = pd.read_pickle("快取/tmp_theme_momentum_v2_panel.pkl")
+    e = p[(p["score"] == 4)].dropna(subset=["ret60", "entry_day"])
+    r = e["excess60" if excess else "ret60"].astype(float)
+    if r.abs().median() > 1:
+        r = r / 100.0
+    return pd.DataFrame({"date": pd.to_datetime(e["entry_day"]), "ret": r})
+
+
+def strat_rrg(quad, state, fwd, label_unused=None):
+    """題材量價RRG格(heat_flow_hist面板,2018-12起,週頻),fwd=持有週數欄"""
+    h = pd.read_pickle("快取/tmp_heat_flow_hist_panel.pkl")
+    e = h[(h["quad"] == quad) & (h["state"] == state)].dropna(subset=[fwd])
+    r = e[fwd].astype(float)
+    if r.abs().median() > 1:
+        r = r / 100.0
+    return pd.DataFrame({"date": pd.to_datetime(e["wk"]), "ret": r})
+
+
 def cell(r):
     if len(r) == 0:
         return "—"
@@ -160,6 +180,11 @@ def main():
         ("③共振題材(8週)", strat_resonance()),
         ("④跌觸發注意股(t10)", strat_attention_down()),
         ("⑤深跌選股climax(k20)", strat_bottom()),
+        ("⑥營收檢查清單score4滿分(ret60)", strat_score4(False)),
+        ("⑥b 同上·超額(excess60)", strat_score4(True)),
+        ("⑦RRG H2主升·領先×增漲(2週)", strat_rrg("領先", "增漲", "fwd2")),
+        ("⑧RRG H5·落後×增漲(4週)", strat_rrg("落後", "增漲", "fwd4")),
+        ("⑨RRG H6快打·轉強×縮漲(2週)", strat_rrg("轉強", "縮漲", "fwd2")),
     ]
     print("=" * 110)
     print("策略×Regime矩陣 (regime=加權年線位階+斜率; 各策略持有期不同,只比同列跨格)")
