@@ -35,7 +35,7 @@ def main():
     ov["date"] = pd.to_datetime(ov.date)
     px["date"] = pd.to_datetime(px.date)
     closes = {c: g.set_index("date").close for c, g in px.groupby("code")}
-    twii = pd.read_pickle("tmp_twii_long.pkl").dropna()
+    twii = pd.read_pickle("快取/tmp_twii_long.pkl").dropna()
 
     ov = ov[(ov.conv_price > 0) & (ov.stock_price > 0) & (ov.issuance > 0) & ov.outstanding.notna()]
     ov["code"] = ov.cb_id.str[:4]
@@ -74,7 +74,7 @@ def main():
     for y, g in mag.groupby("y"):
         stat(g.ex, str(y))
 
-    df.to_pickle("tmp_cb_magnet_panel.pkl")
+    df.to_pickle("快取/tmp_cb_magnet_panel.pkl")
     print("\n面板存 tmp_cb_magnet_panel.pkl")
 
 

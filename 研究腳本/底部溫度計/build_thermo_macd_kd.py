@@ -145,7 +145,7 @@ def main():
     # ---- ②正交性: 對比既有溫度計恐慌燈(甜蜜格並發>=20,60交易日持有窗) ----
     print("\n== ②正交性檢查: 對比既有恐慌溫度計燈號 ==")
     try:
-        lf = pd.read_pickle("tmp_limit_flags.pkl")
+        lf = pd.read_pickle("快取/tmp_limit_flags.pkl")
         pool = set(lf[~lf.code.str.startswith("00")].code.unique())
         conn = sqlite3.connect("capital_flow.db")
         px = pd.read_sql("SELECT code, date, close, money FROM fm_daily_price WHERE close>0", conn,
@@ -200,8 +200,8 @@ def main():
         r = w.loc[wd]
         print(f"  週{wd.date()}: 週MACD位階={r.macd_pr:.0f} 週KD位階={r.kd_pr:.0f}")
 
-    d.to_pickle("tmp_thermo_macd_kd_daily.pkl")
-    w.to_pickle("tmp_thermo_macd_kd_weekly.pkl")
+    d.to_pickle("快取/tmp_thermo_macd_kd_daily.pkl")
+    w.to_pickle("快取/tmp_thermo_macd_kd_weekly.pkl")
     print("\n面板存 tmp_thermo_macd_kd_daily.pkl / tmp_thermo_macd_kd_weekly.pkl")
 
 

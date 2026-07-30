@@ -15,7 +15,7 @@ import pandas as pd
 import requests
 
 DB = "capital_flow.db"
-CACHE = "tmp_finmind_monthrev_cache.pkl"
+CACHE = "快取/tmp_finmind_monthrev_cache.pkl"
 TOKEN = open("finmind_token.txt").read().strip()
 START = "2019-01-01"
 SLEEP = 6.1
@@ -25,7 +25,7 @@ def universe():
     """範圍=近期成交值>=5000萬(使用者實務門檻:成交值太爛的公司本來就不會列入交易考慮)。
     tmp_tw_top1000.csv由fetch_top200.fetch_taiwan單次抓全市場後過濾amount>=50,000,000產生(732檔)，
     不追求tw_industry_map全集2,297檔。"""
-    top1000 = pd.read_csv("tmp_tw_top1000.csv", dtype=str, encoding="utf-8-sig")
+    top1000 = pd.read_csv("快取/tmp_tw_top1000.csv", dtype=str, encoding="utf-8-sig")
     conn = sqlite3.connect(DB)
     done = set(r[0] for r in conn.execute("SELECT DISTINCT code FROM fm_month_rev"))
     return sorted(set(top1000.code) - done)

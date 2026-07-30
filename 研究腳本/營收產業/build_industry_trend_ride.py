@@ -61,7 +61,7 @@ def main():
     m = m.dropna(subset=["trend_up"])  # 前3個月資料不足的組跳過
     print(f"有效樣本(可判斷趨勢): {len(m)} 筆；trend_up=True: {m.trend_up.sum()} 筆")
 
-    with open("tmp_revenue_price_cache.pkl", "rb") as f:
+    with open("快取/tmp_revenue_price_cache.pkl", "rb") as f:
         cache = pickle.load(f)
 
     m["month_start"] = pd.to_datetime(m.year_month, format="%Y%m")
@@ -90,7 +90,7 @@ def main():
     m[["reaction_ret", "hold_to_end_ret", "conditional_ret", "ok"]] = m.apply(calc_row, axis=1)
     panel = m.dropna(subset=["ok"]).copy()
     print(f"可計算報酬的筆數: {len(panel)}")
-    panel.to_pickle("tmp_industry_trend_ride_panel.pkl")
+    panel.to_pickle("快取/tmp_industry_trend_ride_panel.pkl")
     print("已存 -> tmp_industry_trend_ride_panel.pkl")
 
 

@@ -14,7 +14,7 @@ from datetime import date
 import requests
 
 DB = "capital_flow.db"
-CACHE = "tmp_finmind_cache.pkl"
+CACHE = "快取/tmp_finmind_cache.pkl"
 TOKEN = open("finmind_token.txt").read().strip()
 START = "2019-01-01"
 SLEEP = 6.1
@@ -28,8 +28,8 @@ DATASETS = {
 
 def universe():
     u = set()
-    if os.path.exists("tmp_bear_prices.pkl"):
-        with open("tmp_bear_prices.pkl", "rb") as f:
+    if os.path.exists("快取/tmp_bear_prices.pkl"):
+        with open("快取/tmp_bear_prices.pkl", "rb") as f:
             u |= set(k for k in pickle.load(f) if isinstance(k, str) and k[:1].isdigit())
     import industry_chains as ic
     import supply_chain as sc

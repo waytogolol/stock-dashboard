@@ -38,7 +38,7 @@ def main():
     px["date"] = pd.to_datetime(px.date)
     mg["date"] = pd.to_datetime(mg.date)
     mg_by = {c: g.set_index("date").fin_use for c, g in mg.groupby("code")}
-    twii = pd.read_pickle("tmp_twii_long.pkl").dropna()
+    twii = pd.read_pickle("快取/tmp_twii_long.pkl").dropna()
 
     rows = []
     for code, g in px.groupby("code"):
@@ -111,7 +111,7 @@ def main():
     for y, g in deep2.groupby("y"):
         print(f"  {y}: {stat(g.ret)}")
 
-    df.to_pickle("tmp_panic_gradient_panel.pkl")
+    df.to_pickle("快取/tmp_panic_gradient_panel.pkl")
     print("\n面板存 tmp_panic_gradient_panel.pkl")
 
 

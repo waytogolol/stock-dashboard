@@ -37,8 +37,8 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 DB = "capital_flow.db"
-PANEL_OUT = "tmp_disposition_exit_fade_panel.pkl"
-CANDLE_PANEL = "tmp_disposition_candle_panel.pkl"
+PANEL_OUT = "快取/tmp_disposition_exit_fade_panel.pkl"
+CANDLE_PANEL = "快取/tmp_disposition_candle_panel.pkl"
 RUNUP_TH = {"r6": 0.06, "r8": 0.08, "r10": 0.10}
 GB_VARIANTS = ["a", "b"]
 HEADLINE = ("r8", "a")

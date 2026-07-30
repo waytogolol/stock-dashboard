@@ -97,10 +97,10 @@ def build_lights(tw_close):
     twr = tw_close.pct_change() * 100
     dd250 = (tw_close / tw_close.rolling(250, min_periods=120).max() - 1) * 100
     drop10 = (tw_close / tw_close.shift(10) - 1) * 100
-    p = pd.read_pickle("tmp_panic_gradient_panel.pkl")
+    p = pd.read_pickle("快取/tmp_panic_gradient_panel.pkl")
     ss = p[(p.i1 == "-6~-9") & (p.i2 == ">=20%")]
     sweet = ss.groupby("d0").size()
-    lf = pd.read_pickle("tmp_limit_flags.pkl")
+    lf = pd.read_pickle("快取/tmp_limit_flags.pkl")
     ldc = lf[~lf.code.str.startswith("00")].groupby("date").ld_close.sum()
     trig = {60: [], 10: [], 20: []}
     for d in tw_close.index:
@@ -129,12 +129,12 @@ def build_lights(tw_close):
 
 def build_s3_weekly(tw_close):
     """S3週線報酬序列(port自build_portfolio_report_v2 build_line12,yfinance改index_daily)。"""
-    prices = {k: v for k, v in pickle.load(open("tmp_bear_prices.pkl", "rb")).items()
+    prices = {k: v for k, v in pickle.load(open("快取/tmp_bear_prices.pkl", "rb")).items()
               if v is not None and len(v) > 10}
     panel = pd.DataFrame(prices)
     wret = panel.pct_change(fill_method=None) * 100
     idx = panel.index
-    tr = pd.read_csv("tmp_bear_trades.csv", dtype=str)
+    tr = pd.read_csv("快取/tmp_bear_trades.csv", dtype=str)
     tr = tr[tr.ret8w.str.contains("%", na=False)].copy()
 
     def pat_ok(r):

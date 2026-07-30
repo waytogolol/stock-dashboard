@@ -88,7 +88,7 @@ for code, name in [("2330", "台積電"), ("2351", "順德"), ("8033", "雷虎")
 conn.close()
 summary = f"\n===== 總結: {len(crits)} CRITICAL / {len(warns)} WARN ====="
 report.append(summary)
-with open("tmp_validation_report.txt", "w", encoding="utf-8") as f:
+with open("快取/tmp_validation_report.txt", "w", encoding="utf-8") as f:
     f.write("\n".join(report))
 print(f"done -> tmp_validation_report.txt  (CRIT={len(crits)} WARN={len(warns)})")
 sys.exit(1 if crits else 0)

@@ -14,7 +14,7 @@ SEED = 42
 
 
 def main():
-    df = pd.read_pickle("tmp_limitup_gap_panel.pkl")
+    df = pd.read_pickle("快取/tmp_limitup_gap_panel.pkl")
     tm = df[df.score == 4].groupby(["industry", "sigT"]).agg(
         ex=("ex", "mean"), anylu=("lu", "any")).reset_index()
     a, b = tm[tm.anylu], tm[~tm.anylu]

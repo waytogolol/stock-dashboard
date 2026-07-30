@@ -82,7 +82,7 @@ prompt = f"""你是全球科技與半導體產業供應鏈分析師。
 請依 A ~ H 分段輸出，每段標出錨點名稱。
 """
 
-with open("tmp_gemini_sc_prompt.txt", "w", encoding="utf-8") as f:
+with open("快取/tmp_gemini_sc_prompt.txt", "w", encoding="utf-8") as f:
     f.write(prompt)
 
 # 也生成 supply_chain.py 空框架

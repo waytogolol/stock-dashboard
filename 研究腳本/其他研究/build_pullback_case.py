@@ -23,20 +23,20 @@ import pickle
 import pandas as pd
 
 # ---- 指數 ----
-px = pd.read_pickle("tmp_twii_long.pkl")
+px = pd.read_pickle("快取/tmp_twii_long.pkl")
 px.index = pd.to_datetime(px.index).tz_localize(None)
-if os.path.exists("tmp_otc_daily.pkl"):
-    otc = pd.read_pickle("tmp_otc_daily.pkl")
+if os.path.exists("快取/tmp_otc_daily.pkl"):
+    otc = pd.read_pickle("快取/tmp_otc_daily.pkl")
 else:
     import yfinance as yf
     otc = yf.download("^TWOII", start="2000-06-01", auto_adjust=True, progress=False)["Close"]
     if hasattr(otc, "columns"):
         otc = otc.iloc[:, 0]
-    otc.to_pickle("tmp_otc_daily.pkl")
+    otc.to_pickle("快取/tmp_otc_daily.pkl")
 otc.index = pd.to_datetime(otc.index).tz_localize(None)
 
 # ---- 個股宇宙特徵 ----
-with open("tmp_revenue_price_cache.pkl", "rb") as f:
+with open("快取/tmp_revenue_price_cache.pkl", "rb") as f:
     cache = pickle.load(f)
 closes, turns = {}, {}
 for code, df in cache.items():
@@ -63,7 +63,7 @@ for i, d in enumerate(C.index):
     tot = T.iloc[i].sum()
     conc[d] = T.iloc[i][leaders].sum() / tot if tot else None
 
-mm = pd.read_pickle("tmp_margin_maintenance.pkl")
+mm = pd.read_pickle("快取/tmp_margin_maintenance.pkl")
 
 F = pd.DataFrame({"P": px}).join(otc.rename("OTC"), how="inner")
 F["ratio"] = F.OTC / F.P

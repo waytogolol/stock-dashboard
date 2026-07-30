@@ -44,8 +44,8 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 DB = "capital_flow.db"
-PANEL_IN = "tmp_resonance_chip_panel.pkl"
-PANEL_OUT = "tmp_resonance_tdcc_panel.pkl"
+PANEL_IN = "快取/tmp_resonance_chip_panel.pkl"
+PANEL_OUT = "快取/tmp_resonance_tdcc_panel.pkl"
 LAG_DAYS = 3          # 事件週五-3日曆日=快照cutoff(發布延遲規約=build_disposition_tdcc.py)
 STALE_DAYS = 21       # 快照距cutoff>21天=覆蓋中斷,特徵作廢
 P52_WIN = 52

@@ -23,7 +23,7 @@ import requests
 sys.stdout.reconfigure(encoding="utf-8")
 
 DB = "capital_flow.db"
-DONE_CACHE = "tmp_tdcc_people_cache.pkl"
+DONE_CACHE = "快取/tmp_tdcc_people_cache.pkl"
 TOKEN = open("finmind_token.txt").read().strip()
 SLEEP = 2.6
 MAX_CONSEC_FAIL = 8

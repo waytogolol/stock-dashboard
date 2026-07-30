@@ -16,7 +16,7 @@ SEED = 42
 
 
 def main():
-    df = pd.read_pickle("tmp_attention_event_panel.pkl")
+    df = pd.read_pickle("快取/tmp_attention_event_panel.pkl")
     ep = df[df.episode_first].copy()
 
     # 面板僅存announce_date年份(y),樣本量小(n=478)不足以再切月群,cluster單位退一級用年群

@@ -31,7 +31,7 @@ prompt = f"""你是中國A股市場產業分析師。
 {cn_list}
 """
 
-with open("tmp_gemini_cn_prompt.txt", "w", encoding="utf-8") as f:
+with open("快取/tmp_gemini_cn_prompt.txt", "w", encoding="utf-8") as f:
     f.write(prompt)
 
 print("done -> tmp_gemini_cn_prompt.txt")

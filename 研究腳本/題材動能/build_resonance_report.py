@@ -14,8 +14,8 @@ from research_report_tmpl import build_report
 COST = 0.5
 HOLD = 8
 
-ep = pd.read_pickle("tmp_resonance_theme_episodes.pkl")
-wk_panel = pd.read_pickle("tmp_resonance_weekly_panel.pkl")
+ep = pd.read_pickle("快取/tmp_resonance_theme_episodes.pkl")
+wk_panel = pd.read_pickle("快取/tmp_resonance_weekly_panel.pkl")
 wret = wk_panel.pct_change(fill_method=None) * 100
 idx = wk_panel.index
 

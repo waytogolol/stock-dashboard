@@ -100,8 +100,8 @@ def eq_trace(eq, name, color, weekly=True):
 
 
 def main():
-    res = pickle.load(open("tmp_panic_converge_results.pkl", "rb"))
-    twii = pd.read_pickle("tmp_twii_long.pkl").dropna()
+    res = pickle.load(open("快取/tmp_panic_converge_results.pkl", "rb"))
+    twii = pd.read_pickle("快取/tmp_twii_long.pkl").dropna()
     labels, med, win = dispo_daily_profile()
 
     charts = []
@@ -121,7 +121,7 @@ def main():
                    {"title": "處置V4組合(等權日再平衡=理論上限口徑, log軸)",
                     "yaxis": {"title": "淨值(起點=1)", "type": "log"}}))
     # 圖3: 甜蜜格三載具分開(複利全取 vs 並發上限5 vs TWII;單利Σ見文字)
-    curves = pickle.load(open("tmp_sweetspot_curves.pkl", "rb"))
+    curves = pickle.load(open("快取/tmp_sweetspot_curves.pkl", "rb"))
     eq = res["sweetspot"]["equity"]
     tw = twii[(twii.index >= eq.index.min()) & (twii.index <= eq.index.max())]
     tw = tw / tw.iloc[0]
@@ -132,7 +132,7 @@ def main():
                     "yaxis": {"title": "淨值(起點=1)"}}))
 
     # 圖4: c1/c13/c4/甜蜜格 單利累積曲線(每筆1單位,比訊號品質的公平載具)
-    split = pickle.load(open("tmp_xq_split_curves.pkl", "rb"))
+    split = pickle.load(open("快取/tmp_xq_split_curves.pkl", "rb"))
     traces = []
     for k, name, col in [("c4", "c4 接刀(每筆1.50%)", BLUE), ("sweet", "甜蜜格(每筆1.07%)", "#c3a55a"),
                          ("c13", "c13 連兩黑(每筆0.35%)", "#b393d3"), ("c1", "c1 破5日線(每筆0.32%)", GRAY)]:
@@ -146,7 +146,7 @@ def main():
 
     # 圖5: V4 vs V5 單利累積曲線(2026-07-19 V5補章,使用者要求)
     c4s, n4, c5s, n5 = v4_v5_dated_curves()
-    v5p = pd.read_pickle("tmp_disposition_v5_panel.pkl")
+    v5p = pd.read_pickle("快取/tmp_disposition_v5_panel.pkl")
     v5_all = v5p.v5.dropna()
     b_dn = v5p[v5p.pre_path <= -5].v5.dropna()
     b_md = v5p[(v5p.pre_path > -5) & (v5p.pre_path < 5)].v5.dropna()

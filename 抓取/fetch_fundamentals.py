@@ -20,7 +20,7 @@ import industry_chains
 import supply_chain
 from backfill_history import ticker_variants
 
-CACHE = "tmp_fund_cache.pkl"
+CACHE = "快取/tmp_fund_cache.pkl"
 DB = "capital_flow.db"
 
 

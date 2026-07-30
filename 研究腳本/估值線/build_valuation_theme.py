@@ -158,7 +158,7 @@ def report_cell(name, cell, base, R):
 
 def main():
     pn = build_panel()
-    pn.to_pickle("tmp_valuation_panel.pkl")
+    pn.to_pickle("快取/tmp_valuation_panel.pkl")
     base = pn.dropna(subset=["fwd2m", "fwd2x", "pe_pctl", "yoy"])
     print(f"面板: {len(pn)}題材-月 / 有效考區(位階+營收+前瞻齊備)={len(base)} / "
           f"{base.main_group.nunique()}題材 / {base.m.nunique()}月 ({base.m.min()}~{base.m.max()})")
@@ -208,7 +208,7 @@ def main():
                          "超額": round(float(s.fwd2x.median()), 2)}
                         for y, s in cold.groupby(cold.m.str[:4])]
 
-    with open("tmp_valuation_results.json", "w", encoding="utf-8") as f:
+    with open("快取/tmp_valuation_results.json", "w", encoding="utf-8") as f:
         json.dump(R, f, ensure_ascii=False, indent=1, default=str)
 
     # 簡版報告

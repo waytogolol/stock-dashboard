@@ -171,7 +171,7 @@ def main():
         batches.append(cur)
 
     for i, batch in enumerate(batches, 1):
-        fname = f"tmp_gemini_chain_prompt_batch{i}.txt"
+        fname = f"快取/tmp_gemini_chain_prompt_batch{i}.txt"
         with open(fname, "w", encoding="utf-8") as f:
             f.write(header + "\n".join(batch) + "\n")
         print(f"-> {fname}")

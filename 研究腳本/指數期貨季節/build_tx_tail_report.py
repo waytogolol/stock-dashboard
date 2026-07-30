@@ -23,7 +23,7 @@ td,th{border:1px solid #333;padding:5px 10px;text-align:right} th{text-align:lef
 COST = 0.0045
 WD = "一二三四五"
 
-df = pd.read_pickle("tmp_tx_tail_full.pkl")
+df = pd.read_pickle("快取/tmp_tx_tail_full.pkl")
 blk = df[df.r_main <= -1.3]
 red = df[df.r_main >= 1.3]
 wred = red[red.wd == 2]

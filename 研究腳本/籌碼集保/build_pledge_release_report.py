@@ -19,7 +19,7 @@ td,th{border:1px solid #333;padding:5px 10px;text-align:right} th{text-align:lef
 .good{color:#7ec97e}.bad{color:#e06c5a}.warn{color:#c3a55a}.hl{background:#2e2b22}
 """
 
-P = pickle.load(open("tmp_pledge_panel.pkl", "rb"))
+P = pickle.load(open("快取/tmp_pledge_panel.pkl", "rb"))
 ins, oth, ins_set = P["ins"], P["oth"], P["ins_set"]
 bA, bB = P["baseA"], P["baseB"]
 lo_ci, hi_ci = P["main_boot"]
@@ -133,7 +133,7 @@ html.append(f"<table><tr><th>分層</th><th>n</th><th>10日</th><th>20日</th><t
 
 # 圖5: 放空載具權益曲線(tmp_pledge_short.pkl;使用者裁示=畫純放空個股不畫hedge;日期軸防類別錯位)
 try:
-    curves = pickle.load(open("tmp_pledge_short.pkl", "rb"))
+    curves = pickle.load(open("快取/tmp_pledge_short.pkl", "rb"))
     traces = []
     for (name, color) in [("raw k60(純放空)", BLUE), ("raw k20", YELLOW)]:
         ds, eq = curves[name]

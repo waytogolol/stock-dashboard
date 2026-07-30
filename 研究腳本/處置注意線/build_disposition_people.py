@@ -29,8 +29,8 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 DB = "capital_flow.db"
-PANEL_IN = "tmp_disposition_tdcc_panel.pkl"
-PANEL_OUT = "tmp_disposition_people_panel.pkl"
+PANEL_IN = "快取/tmp_disposition_tdcc_panel.pkl"
+PANEL_OUT = "快取/tmp_disposition_people_panel.pkl"
 LAG_DAYS = 3
 STALE_DAYS = 21
 B_BOOT = 10000

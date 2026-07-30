@@ -127,7 +127,7 @@ def main():
         rows.append(rec)
     ev = pd.DataFrame(rows)
     ev["size_ter"] = pd.qcut(ev.amt20.rank(method="first"), 3, labels=["小", "中", "大"])
-    ev.to_pickle("tmp_conference_pre_panel.pkl")
+    ev.to_pickle("快取/tmp_conference_pre_panel.pkl")
     print(f"可測事件: {len(ev):,} ({ev.date.min().date()}~{ev.date.max().date()}); "
           f"金流三分位切點: {ev.amt20.quantile(1 / 3):.2f}/{ev.amt20.quantile(2 / 3):.2f}億")
     print("⚠限制: 單一regime;H1找特徵/H2驗規則皆多頭市場\n")

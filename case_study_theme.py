@@ -138,7 +138,7 @@ def main():
         lines.append(f"\n台股 vs 美韓 lead-lag 相關（正lag=美韓領先台N週）: {ll}")
         if best:
             lines.append(f"最強相關: lag={best[0]}週 (r={best[1]})")
-    with open("tmp_case_report.txt", "w", encoding="utf-8") as f:
+    with open("快取/tmp_case_report.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     print("done -> tmp_case_report.txt")
 

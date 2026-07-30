@@ -60,7 +60,7 @@ def car_series(days, idx, open_ver=False):
 
 
 def main():
-    p = pd.read_pickle("tmp_panic_gradient_panel.pkl")
+    p = pd.read_pickle("快取/tmp_panic_gradient_panel.pkl")
     ss = p[(p.i1 == "-6~-9") & (p.i2 == ">=20%")]
     tw = load_idx("TAIEX")
     otc = load_idx("TPEx")

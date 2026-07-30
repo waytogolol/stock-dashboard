@@ -18,7 +18,7 @@ sys.path.insert(0, os.getcwd())
 from backfill_history import RateGuard, ticker_variants
 
 DB = "capital_flow.db"
-CACHE = "tmp_capex_cache.pkl"
+CACHE = "快取/tmp_capex_cache.pkl"
 
 
 def universe():
@@ -117,7 +117,7 @@ def main():
     chk.append(f"\n[非正值] {z} 筆(應接近0)")
     conn.close()
     report = "\n".join(chk)
-    with open("tmp_capex_check.txt", "w", encoding="utf-8") as f:
+    with open("快取/tmp_capex_check.txt", "w", encoding="utf-8") as f:
         f.write(report)
     try:
         print(report)

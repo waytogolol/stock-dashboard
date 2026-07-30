@@ -82,7 +82,7 @@ def main():
     win = [h for h in all_hits if h["fwd8x"] and h["fwd8x"] > 1]
     total_f8 = [h for h in all_hits if h["fwd8x"]]
     lines.append(f"\n觸發總數: {len(all_hits)}，+8週上漲比例: {len(win)}/{len(total_f8)}")
-    with open("tmp_scan_report.txt", "w", encoding="utf-8") as f:
+    with open("快取/tmp_scan_report.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     print("done -> tmp_scan_report.txt")
 

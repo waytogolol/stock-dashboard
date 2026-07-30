@@ -364,11 +364,11 @@ def main():
 
     lit3 = warn_state | window_mask(b_days_l, 10) | window_mask(conv_days_l, 20)
     # 五燈嚴格(2019-03起): 加溫度計/跌停廣度
-    p_panel = pd.read_pickle("tmp_panic_gradient_panel.pkl")
+    p_panel = pd.read_pickle("快取/tmp_panic_gradient_panel.pkl")
     ss = p_panel[(p_panel.i1 == "-6~-9") & (p_panel.i2 == ">=20%")]
     sweet_cnt = ss.groupby("d0").size()
     thermo_days = [d for d in sweet_cnt.index[sweet_cnt >= 20] if d in set(tw.index)]
-    lfp = pd.read_pickle("tmp_limit_flags.pkl")
+    lfp = pd.read_pickle("快取/tmp_limit_flags.pkl")
     ldc = lfp[~lfp.code.str.startswith("00")].groupby("date").ld_close.sum()
     ld_days = [d for d in ldc.index[ldc >= 20] if d in set(tw.index)]
     lit5 = lit3 | window_mask(thermo_days, 60) | window_mask(ld_days, 20)

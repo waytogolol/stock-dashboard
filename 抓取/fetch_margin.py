@@ -14,7 +14,7 @@ from datetime import date, timedelta
 import requests
 
 DB = "capital_flow.db"
-CACHE = "tmp_margin_cache.pkl"
+CACHE = "快取/tmp_margin_cache.pkl"
 SLEEP = 3.5
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 START = sys.argv[1] if len(sys.argv) > 1 else "2022-01-01"

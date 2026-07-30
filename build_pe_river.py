@@ -66,7 +66,7 @@ def build_equity(px, per, rev):
     B=個股層月頻換倉組合(expanding位階>=18月無前視;空月=持有基準;等權無成本)。"""
     eq = {}
     try:
-        pn = pd.read_pickle("tmp_valuation_panel.pkl")
+        pn = pd.read_pickle("快取/tmp_valuation_panel.pkl")
         ev = pn[(pn.pe_pctl <= 10) & pn.fwd2m.notna()].sort_values("m")
         eq["theme"] = {"ms": ev.m.tolist(),
                        "abs": [round(v, 1) for v in ev.fwd2m.cumsum()],

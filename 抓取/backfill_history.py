@@ -29,7 +29,7 @@ DB = _os.environ.get("CF_DB", "capital_flow.db")   # 研究沙盒: set CF_DB=res
 EARLIEST_REAL = date(2026, 6, 21)   # 第一筆真實快照，只回補這之前
 CHUNK = 50                          # 每批檔數，小批次避免請求過猛
 BASE_SLEEP = 4                      # 批次間基礎間隔(秒)
-CACHE = "tmp_backfill_cache.pkl" if DB == "capital_flow.db" else f"tmp_backfill_{DB.replace('.db','')}.pkl"
+CACHE = "快取/tmp_backfill_cache.pkl" if DB == "capital_flow.db" else f"快取/tmp_backfill_{DB.replace('.db','')}.pkl"
 
 UNIVERSE_FILES = {
     "台": "tw_top300.csv",
@@ -251,7 +251,7 @@ def main(n_weeks):
         print(f"{snap}: {' '.join(snap_summary)}")
 
     conn.close()
-    with open("tmp_backfill_report.txt", "w", encoding="utf-8") as f:
+    with open("快取/tmp_backfill_report.txt", "w", encoding="utf-8") as f:
         f.write(f"回補完成: {len(snapshots)}週, 共{total_rows}筆排名\n")
         f.write(f"無資料跳過({len(missing)}檔): {', '.join(missing)}\n")
     print(f"完成！共寫入 {total_rows} 筆，報告見 tmp_backfill_report.txt")

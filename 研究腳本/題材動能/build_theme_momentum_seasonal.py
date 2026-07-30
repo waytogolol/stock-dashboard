@@ -10,7 +10,7 @@ import pandas as pd
 
 
 def main():
-    panel = pd.read_pickle("tmp_theme_momentum_v2_panel.pkl").copy()
+    panel = pd.read_pickle("快取/tmp_theme_momentum_v2_panel.pkl").copy()
     panel["m"] = panel.year_month.str[4:6]
 
     tm = panel.groupby(["industry", "year_month"]).agg(

@@ -28,7 +28,7 @@ def main():
     # 當日成交值前150名單(逐日)
     px["rank"] = px.groupby("date").money.rank(ascending=False)
     top150 = set(zip(px.loc[px["rank"] <= 150, "code"], px.loc[px["rank"] <= 150, "date"]))
-    twii = pd.read_pickle("tmp_twii_long.pkl").dropna()
+    twii = pd.read_pickle("快取/tmp_twii_long.pkl").dropna()
 
     ev = []
     for _, e in disp.iterrows():
@@ -109,7 +109,7 @@ def main():
     print(f"  cap-5模擬 先到先選: 複利{c2_:.2f}x 夏普{s2_:.2f} MDD{m2_:.1f}%")
 
     print("\n【C 去重】")
-    sweet = pd.read_pickle("tmp_panic_sweetspot_events.pkl")
+    sweet = pd.read_pickle("快取/tmp_panic_sweetspot_events.pkl")
     sw = sweet[(sweet.dd <= -6) & (sweet.dd > -9) & (sweet.pull >= 20) & (sweet.rr > 1.2) & (sweet.tv > 1)]
     swset = set(zip(sw.code, sw.d0))
     hold_overlap = 0
@@ -119,7 +119,7 @@ def main():
             hold_overlap += 1
     print(f"  V4持有窗內同股觸發甜蜜格: {hold_overlap}/{len(df)} ({hold_overlap / len(df) * 100:.1f}%)")
     print(f"  V4進場日該股在成交值前150(開低承接母體): {df.top150.mean() * 100:.1f}%")
-    df.drop(columns="legs").to_pickle("tmp_dispo_launch_panel.pkl")
+    df.drop(columns="legs").to_pickle("快取/tmp_dispo_launch_panel.pkl")
 
 
 if __name__ == "__main__":

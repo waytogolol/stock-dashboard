@@ -17,12 +17,12 @@ print(f"日股未分類: {len(jp_unmatched)} / {len(jp_csv)}")
 print(f"韓股未分類: {len(kr_unmatched)} / {len(kr_csv)}")
 
 # 寫出日股未分類
-with open("tmp_jp_unmatched_named.txt", "w", encoding="utf-8") as f:
+with open("快取/tmp_jp_unmatched_named.txt", "w", encoding="utf-8") as f:
     for _, r in jp_unmatched.iterrows():
         f.write(f"#{r['rank']}|{r['code']}|{r['name']}\n")
 
 # 寫出韓股未分類
-with open("tmp_kr_unmatched_named.txt", "w", encoding="utf-8") as f:
+with open("快取/tmp_kr_unmatched_named.txt", "w", encoding="utf-8") as f:
     for _, r in kr_unmatched.iterrows():
         f.write(f"#{r['rank']}|{r['code']}|{r['name']}\n")
 
@@ -72,10 +72,10 @@ kr_prompt = f"""你是韓國股市產業分析師。
 {kr_list}
 """
 
-with open("tmp_gemini_jp_prompt.txt", "w", encoding="utf-8") as f:
+with open("快取/tmp_gemini_jp_prompt.txt", "w", encoding="utf-8") as f:
     f.write(jp_prompt)
 
-with open("tmp_gemini_kr_prompt.txt", "w", encoding="utf-8") as f:
+with open("快取/tmp_gemini_kr_prompt.txt", "w", encoding="utf-8") as f:
     f.write(kr_prompt)
 
 print("done -> tmp_gemini_jp_prompt.txt, tmp_gemini_kr_prompt.txt")

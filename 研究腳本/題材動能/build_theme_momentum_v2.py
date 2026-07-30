@@ -31,7 +31,7 @@ def main():
     # 進場候選=該題材×該月,FinMind該月有營收資料的所有成員(無新聞條件)
     members = fm.merge(cls, on="code", how="inner").rename(columns={"ym": "year_month"})
 
-    score = pd.read_pickle("tmp_theme_score.pkl")[["industry", "year_month", "score", "mom_streak3"]]
+    score = pd.read_pickle("快取/tmp_theme_score.pkl")[["industry", "year_month", "score", "mom_streak3"]]
     score = score.dropna(subset=["score"])
     panel = members.merge(score, on=["industry", "year_month"], how="inner")
     # 訊號用的最後營收月=year_month前一個月(shift(1)口徑) → 進場月=year_month,必然晚於資料月
@@ -42,10 +42,10 @@ def main():
     print(f"全宇宙panel: {len(panel)} 筆 (題材-月-成員), {panel.code.nunique()} 檔, "
           f"{panel.groupby(['industry','year_month']).ngroups} 個題材-月")
 
-    with open("tmp_revenue_price_cache.pkl", "rb") as f:
+    with open("快取/tmp_revenue_price_cache.pkl", "rb") as f:
         cache = pickle.load(f)
 
-    twii = pd.read_pickle("tmp_twii_daily.pkl")
+    twii = pd.read_pickle("快取/tmp_twii_daily.pkl")
     twii.columns = twii.columns.get_level_values(0)
     twii = twii.sort_index()
     tw_close = twii.Close
@@ -81,7 +81,7 @@ def main():
     panel = panel.dropna(subset=["ret60"]).copy()
     panel["ret60"] = panel.ret60.astype(float)
     panel["excess60"] = panel.excess60.astype(float)
-    panel.to_pickle("tmp_theme_momentum_v2_panel.pkl")
+    panel.to_pickle("快取/tmp_theme_momentum_v2_panel.pkl")
     print(f"可計算報酬: {len(panel)} 筆")
     panel["y"] = panel.year_month.str[:4]
 

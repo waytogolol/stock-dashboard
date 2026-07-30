@@ -199,13 +199,13 @@ def main():
     else:
         print("  記憶體題材從未觸發>=2檔同週共振(訊號定義可能漏掉這個案例,或案例本身不是靠這條路徑)")
 
-    ev.to_pickle("tmp_resonance_theme_events.pkl")
-    ep.to_pickle("tmp_resonance_theme_episodes.pkl")
+    ev.to_pickle("快取/tmp_resonance_theme_events.pkl")
+    ep.to_pickle("快取/tmp_resonance_theme_episodes.pkl")
     wk_panel = pd.DataFrame(weekly_ret)
-    wk_panel.to_pickle("tmp_resonance_weekly_panel.pkl")
+    wk_panel.to_pickle("快取/tmp_resonance_weekly_panel.pkl")
     print("\n面板存 tmp_resonance_theme_events.pkl(未episode化)/"
-          "tmp_resonance_theme_episodes.pkl(episode化,權益曲線用)/"
-          "tmp_resonance_weekly_panel.pkl(全個股週收盤,權益曲線用)")
+          "快取/tmp_resonance_theme_episodes.pkl(episode化,權益曲線用)/"
+          "快取/tmp_resonance_weekly_panel.pkl(全個股週收盤,權益曲線用)")
 
 
 if __name__ == "__main__":

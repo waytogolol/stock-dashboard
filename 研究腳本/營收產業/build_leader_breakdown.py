@@ -18,7 +18,7 @@ import pickle
 
 import pandas as pd
 
-with open("tmp_revenue_price_cache.pkl", "rb") as f:
+with open("快取/tmp_revenue_price_cache.pkl", "rb") as f:
     cache = pickle.load(f)
 
 closes, turns = {}, {}
@@ -57,7 +57,7 @@ for i, d in enumerate(C.index):
                  "b5": below5.iloc[i][leaders].mean()})
 B = pd.DataFrame(rows).set_index("date")
 
-px = pd.read_pickle("tmp_twii_long.pkl")
+px = pd.read_pickle("快取/tmp_twii_long.pkl")
 px.index = pd.to_datetime(px.index).tz_localize(None)
 B = B.join(px.rename("P"), how="inner")
 B["p_ma20"] = B.P.rolling(20).mean()

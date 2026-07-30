@@ -67,7 +67,7 @@ def main():
             f.iloc[:5, 2:7] = False
         out.append(f)
     flags = pd.concat(out, ignore_index=True)
-    flags.to_pickle("tmp_limit_flags.pkl")
+    flags.to_pickle("快取/tmp_limit_flags.pkl")
     n = flags[["lu_close", "lu_touch", "lu_lock", "ld_close", "ld_touch"]].sum()
     print(f"股-日 {len(flags):,} 筆 / {flags.code.nunique()} 檔 "
           f"({flags.date.min():%Y-%m-%d}~{flags.date.max():%Y-%m-%d})")

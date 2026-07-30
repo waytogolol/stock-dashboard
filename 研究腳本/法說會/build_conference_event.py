@@ -146,7 +146,7 @@ def main():
                 rec["plc10"] = praw - (ew_cls[ej] / ew_cls[ei] - 1) * 100
         rows.append(rec)
     ev = pd.DataFrame(rows)
-    ev.to_pickle("tmp_conference_event_panel.pkl")
+    ev.to_pickle("快取/tmp_conference_event_panel.pkl")
     print(f"法說會事件: conference去重{len(conf):,}場 -> 可測{len(ev):,}場 "
           f"({ev.date.min().date()}~{ev.date.max().date()}); 自辦{ev.own.mean() * 100:.0f}% "
           f"線上{ev.online.mean() * 100:.0f}% 上櫃{(ev.market == 'TWO').mean() * 100:.0f}%")

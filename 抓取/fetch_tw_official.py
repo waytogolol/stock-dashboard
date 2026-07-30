@@ -194,7 +194,7 @@ def main():
     n3 = fetch_valuation(conn, log)
     conn.close()
     log.append(f"\n寫入: 月營收{n1} / 季損益{n2} / 估值{n3}")
-    with open("tmp_tw_official_log.txt", "w", encoding="utf-8") as f:
+    with open("快取/tmp_tw_official_log.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(log))
     print("done -> tmp_tw_official_log.txt")
 

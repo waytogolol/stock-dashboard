@@ -45,7 +45,7 @@ def main():
     cls = pd.read_sql("SELECT code, main_group industry FROM classification WHERE country='台'",
                       conn, dtype={"code": str}).drop_duplicates()
 
-    ref = pd.read_pickle("tmp_theme_score.pkl")
+    ref = pd.read_pickle("快取/tmp_theme_score.pkl")
     themes = sorted(ref.industry.unique())
     print(f"重建score: {len(themes)}個題材(比對基準=tmp_theme_score.pkl)")
 
@@ -81,7 +81,7 @@ def main():
     print(f"與tmp_theme_score.pkl比對: mom_agg一致率{mom_match * 100:.1f}% "
           f"score一致率{sc_match * 100:.1f}% (n={len(chk)})")
 
-    panel = pd.read_pickle("tmp_theme_momentum_v2_panel.pkl").copy()
+    panel = pd.read_pickle("快取/tmp_theme_momentum_v2_panel.pkl").copy()
     panel["y"] = panel.year_month.str[:4]
     merged = panel.merge(full[["industry", "year_month", "score_full"]],
                          on=["industry", "year_month"], how="left")
@@ -123,7 +123,7 @@ def main():
     print(f"\n顯示層參考: 最新月題材營收前3大占比中位{np.median(conc3) * 100:.0f}% / "
           f"前5大占比中位{np.median(conc5) * 100:.0f}%")
 
-    full.to_pickle("tmp_theme_score_rebuilt.pkl")
+    full.to_pickle("快取/tmp_theme_score_rebuilt.pkl")
     print("已存 tmp_theme_score_rebuilt.pkl (正式重建版全體score,含mom/yoy序列)")
 
 

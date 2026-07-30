@@ -176,7 +176,7 @@ def main():
         hit = ep.days_to_disp.notna() & (ep.days_to_disp <= n) & (ep.days_to_disp >= 0)
         print(f"  注意後{lab}升級為處置: {hit.mean() * 100:.1f}% ({hit.sum():,}/{len(ep):,})")
 
-    df.to_pickle("tmp_attention_event_panel.pkl")
+    df.to_pickle("快取/tmp_attention_event_panel.pkl")
     print("\n面板存 tmp_attention_event_panel.pkl (含episode_first旗標與cum_count/direction/triggers分層欄位)")
 
 

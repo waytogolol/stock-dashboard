@@ -260,7 +260,7 @@ def main():
     print(f"代碼對不到fm_daily_price(權證/ETF/TDR等非普通股): {n_no_px:,}筆 (預期,fm_daily_price本就不涵蓋)")
 
     panel = build_panel(disp, stocks)
-    panel.to_pickle("tmp_disposition_candle_panel.pkl")
+    panel.to_pickle("快取/tmp_disposition_candle_panel.pkl")
     print(f"面板建置完成: {len(panel):,}筆日資料 / {panel.event_id.nunique():,}個處置事件對到價格 "
           f"(面板存tmp_disposition_candle_panel.pkl)\n")
 

@@ -30,7 +30,7 @@ def stats(s):
 
 
 def main():
-    panel = pd.read_pickle("tmp_theme_momentum_v2_panel.pkl").copy()
+    panel = pd.read_pickle("快取/tmp_theme_momentum_v2_panel.pkl").copy()
     panel["entry_day"] = pd.to_datetime(panel.entry_day)
     panel["y"] = panel.year_month.str[:4]
 
@@ -89,7 +89,7 @@ def main():
         g0 = panel[~panel[f"news_{wname}"] & (panel.score == 4)].groupby(["industry", "year_month"]).ngroups
         print(f"score=4 題材-月群數: ①有新聞 {g1} / ②無新聞 {g0}")
 
-    panel.to_pickle("tmp_news_heat_panel.pkl")
+    panel.to_pickle("快取/tmp_news_heat_panel.pkl")
     print("\n已存 tmp_news_heat_panel.pkl (panel+旗標)")
 
 

@@ -17,7 +17,7 @@ import sqlite3
 
 import pandas as pd
 
-with open("tmp_revenue_price_cache.pkl", "rb") as f:
+with open("快取/tmp_revenue_price_cache.pkl", "rb") as f:
     cache = pickle.load(f)
 conn = sqlite3.connect("capital_flow.db")
 cls = pd.read_sql("SELECT code, main_group FROM classification WHERE country='台'",

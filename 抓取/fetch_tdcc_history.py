@@ -17,7 +17,7 @@ from datetime import date
 import requests
 
 DB = "capital_flow.db"
-DONE_CACHE = "tmp_tdcc_hist_done.pkl"
+DONE_CACHE = "快取/tmp_tdcc_hist_done.pkl"
 TOKEN = open("finmind_token.txt").read().strip()
 SLEEP = 2.6
 LV1000 = {"more than 1,000,001"}

@@ -17,7 +17,7 @@ sys.path.insert(0, os.getcwd())
 from backfill_history import CHUNK, RateGuard, ticker_variants
 
 DB = "capital_flow.db"
-CACHE = "tmp_price_cache.pkl"
+CACHE = "快取/tmp_price_cache.pkl"
 
 
 def load_cache(end):

@@ -224,7 +224,7 @@ def main():
     pn = build_panel(heat, price, tix)
     pn["state_next"] = pn.groupby("main_group").state_tw.shift(-1)
     pn["state_prev"] = pn.groupby("main_group").state_tw.shift(1)
-    pn.to_pickle("tmp_heat_flow_panel.pkl")
+    pn.to_pickle("快取/tmp_heat_flow_panel.pkl")
     base = pn.dropna(subset=["fwd2"])
     print(f"面板: {len(pn)}題材-週 / {pn.main_group.nunique()}題材 / {pn.snapshot_date.nunique()}週; "
           f"有fwd2={len(base)}")
@@ -358,7 +358,7 @@ def main():
     # --- ⑦共振事件×熱度Δ分層(探索) ---
     R["reso"] = []
     try:
-        ev = pd.read_pickle("tmp_resonance_theme_events.pkl")
+        ev = pd.read_pickle("快取/tmp_resonance_theme_events.pkl")
         ev = ev[ev.episode_first]
         ev["week"] = pd.to_datetime(ev.week)
         snap_ts = pd.to_datetime(pn.snapshot_date.unique())
@@ -383,7 +383,7 @@ def main():
                         "breadth", "rrg_ratio", "rrg_mom"]].round(2).to_dict("records")
     print(f"\n最新一期({R['asof']}) {len(last)}題材地圖已存")
 
-    with open("tmp_heat_flow_results.json", "w", encoding="utf-8") as f:
+    with open("快取/tmp_heat_flow_results.json", "w", encoding="utf-8") as f:
         json.dump(R, f, ensure_ascii=False, indent=1, default=str)
     render_report(pn, R)
     print("\n完成: tmp_heat_flow_panel.pkl / tmp_heat_flow_results.json / 研究報告/research_heat_flow.html")
@@ -438,7 +438,7 @@ def render_report(pn, R):
     # 歷史延伸json(H3開關/H5H6/雙開關×持有期/全格掃描)完整收錄(2026-07-28使用者裁示:
     # 報告=完整記憶「我容易忘」,儀表板只放速讀;跑過build_heat_flow_hist.py才有,否則區塊顯示提示)
     try:
-        with open("tmp_heat_flow_hist_results.json", encoding="utf-8") as f:
+        with open("快取/tmp_heat_flow_hist_results.json", encoding="utf-8") as f:
             H = json.load(f)
     except Exception:
         H = {}

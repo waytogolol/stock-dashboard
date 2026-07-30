@@ -76,13 +76,13 @@ def main():
     b["y"] = b.d0.dt.year
     stat(b[b.y != 2025].co2, "剔除2025年")
     stat(b[b.y != 2020].co2, "剔除2020年")
-    twii = pd.read_pickle("tmp_twii_long.pkl").dropna()
+    twii = pd.read_pickle("快取/tmp_twii_long.pkl").dropna()
     twr = twii.pct_change() * 100
     mkt = b.d0.map(lambda d: twr.asof(d))
     stat(b[mkt > -2].co2, "剔除大盤<-2%日")
     stat(b[mkt > -1].co2, "剔除大盤<-1%日")
 
-    df.to_pickle("tmp_panic_sweetspot_events.pkl")
+    df.to_pickle("快取/tmp_panic_sweetspot_events.pkl")
     print("\n寬鬆超集面板存 tmp_panic_sweetspot_events.pkl")
 
 

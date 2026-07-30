@@ -19,7 +19,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 DB = "capital_flow.db"
 OUT = "研究報告/research_attention_trades.html"
-PANEL = "tmp_attention_full_panel.pkl"
+PANEL = "快取/tmp_attention_full_panel.pkl"
 PRE, HOLD, POST = 15, 10, 10
 
 

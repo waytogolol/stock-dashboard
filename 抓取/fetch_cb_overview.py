@@ -14,7 +14,7 @@ import pandas as pd
 import requests
 
 DB = "capital_flow.db"
-DONE_CACHE = "tmp_cb_overview_done.pkl"
+DONE_CACHE = "快取/tmp_cb_overview_done.pkl"
 TOKEN = open("finmind_token.txt").read().strip()
 SLEEP = 2.6
 COLS = ["cb_id", "date", "ConversionPrice", "NextEffectiveDateOfConversionPrice",
@@ -59,7 +59,7 @@ def main():
     if os.path.exists(DONE_CACHE):
         with open(DONE_CACHE, "rb") as f:
             done = pickle.load(f)
-    cal = pd.read_pickle("tmp_twii_long.pkl").dropna()
+    cal = pd.read_pickle("快取/tmp_twii_long.pkl").dropna()
     days = [d.strftime("%Y-%m-%d") for d in cal.index if d >= pd.Timestamp("2019-01-01")]
     todo = [d for d in days if d not in done]
     print(f"交易日{len(days)}, 已完成{len(done)}, 待抓{len(todo)}"

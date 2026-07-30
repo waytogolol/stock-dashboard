@@ -148,7 +148,7 @@ def main():
             "v3": seg(e_arr, e_arr + 2, open_exit=True) - COST,
         })
     df = pd.DataFrame(rows)
-    df.to_pickle("tmp_disposition_repeat_panel.pkl")
+    df.to_pickle("快取/tmp_disposition_repeat_panel.pkl")
     print(f"\n對到價格的處置事件: {len(df):,} (面板存tmp_disposition_repeat_panel.pkl)")
 
     print("\n== 走法:慣犯窗內事件 vs 非慣犯事件 ==")

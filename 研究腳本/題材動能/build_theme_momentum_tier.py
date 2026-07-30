@@ -18,13 +18,13 @@ import pandas as pd
 
 HOLD_DAYS = 60
 
-with open("tmp_revenue_price_cache.pkl", "rb") as f:
+with open("快取/tmp_revenue_price_cache.pkl", "rb") as f:
     cache = pickle.load(f)
 
-panel = pd.read_pickle("tmp_theme_momentum_v2_panel.pkl")
+panel = pd.read_pickle("快取/tmp_theme_momentum_v2_panel.pkl")
 s4 = panel[panel.score == 4].copy()
 
-twii = pd.read_pickle("tmp_twii_daily.pkl")
+twii = pd.read_pickle("快取/tmp_twii_daily.pkl")
 twii.columns = twii.columns.get_level_values(0)
 twii = twii.sort_index()
 c_twii = twii.Close

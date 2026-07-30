@@ -143,7 +143,7 @@ def main():
                f"溫度計載具(2019起2.28x/櫃買2.84x)見溫度計報告")
 
     # ⑥深跌三分位 + 堆疊
-    p6 = pd.read_pickle("tmp_bottom_xsection_panel.pkl")
+    p6 = pd.read_pickle("快取/tmp_bottom_xsection_panel.pkl")
     p6["b"] = p6.groupby("ep")["dret"].transform(
         lambda s: pd.qcut(s, 3, labels=["深跌", "中", "淺跌"], duplicates="drop"))
     bar1, bar2 = [], []
@@ -159,7 +159,7 @@ def main():
         {"title": "⑥選股端: 溫度計日前150×當日跌幅三分位(T+1開盤,原始中位%)——買被殺最兇的",
          "barmode": "group", "yaxis": {"title": "中位%"}}))
 
-    pa = pd.read_pickle("tmp_asia_sync_stock_panel.pkl")
+    pa = pd.read_pickle("快取/tmp_asia_sync_stock_panel.pkl")
     # p6補hot旗標(同tmp_bottom_x_addon邏輯: 同main_group當日>=5檔在前150)
     conn2 = sqlite3.connect("capital_flow.db")
     gmap = {}

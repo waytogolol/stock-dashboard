@@ -35,8 +35,8 @@ import sqlite3
 import numpy as np
 import pandas as pd
 
-PRICE_CACHE = "tmp_revenue_price_cache.pkl"
-TWII_PKL = "tmp_twii_long.pkl"
+PRICE_CACHE = "快取/tmp_revenue_price_cache.pkl"
+TWII_PKL = "快取/tmp_twii_long.pkl"
 MIN_MEMBERS = 3
 
 
@@ -48,7 +48,7 @@ def build_score_panel():
     cls = pd.read_sql("SELECT code, main_group industry FROM classification WHERE country='台'",
                       conn, dtype={"code": str}).drop_duplicates()
     conn.close()
-    themes = sorted(pd.read_pickle("tmp_theme_score.pkl").industry.unique())
+    themes = sorted(pd.read_pickle("快取/tmp_theme_score.pkl").industry.unique())
     panels, top5map = [], {}
     for ind in themes:
         codes = cls[cls.industry == ind].code.unique()
@@ -170,7 +170,7 @@ def main():
         b = g.apply(lambda r: comp(r.SA, r.SB, r.SC) - comp(r.SA_twii, r.SB_twii, r.SC_twii), axis=1).median()
         print(f"  {y}: ①{a:>7.2f}  ②{b:>7.2f}  (n={len(g)})")
 
-    df.to_pickle("tmp_score4_early_entry_panel.pkl")
+    df.to_pickle("快取/tmp_score4_early_entry_panel.pkl")
     print("\n面板存 tmp_score4_early_entry_panel.pkl")
 
 

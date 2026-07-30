@@ -16,7 +16,7 @@ from datetime import date
 import requests
 
 DB = "capital_flow.db"
-CACHE = "tmp_cb_daily_cache.pkl"
+CACHE = "快取/tmp_cb_daily_cache.pkl"
 TOKEN = open("finmind_token.txt").read().strip()
 START = "2020-04-01"
 SLEEP = 2.6

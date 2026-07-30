@@ -24,8 +24,8 @@ if hasattr(sys.stdout, "reconfigure"):
 
 DB = "capital_flow.db"
 OUT = "研究報告/research_disposition_trades.html"
-TDCC_PANEL = "tmp_disposition_tdcc_panel.pkl"
-COHORT = "tmp_disposition_path_cohort.pkl"
+TDCC_PANEL = "快取/tmp_disposition_tdcc_panel.pkl"
+COHORT = "快取/tmp_disposition_path_cohort.pkl"
 PRE, POST = 15, 10
 COST = 0.45
 ADDON_X = -10.0  # 已驗證攤平headline門檻

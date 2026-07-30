@@ -28,7 +28,7 @@ def main():
     ov["date"] = pd.to_datetime(ov.date)
     px["date"] = pd.to_datetime(px.date)
     closes = {c: g.set_index("date").close for c, g in px.groupby("code")}
-    twii = pd.read_pickle("tmp_twii_long.pkl").dropna()
+    twii = pd.read_pickle("快取/tmp_twii_long.pkl").dropna()
     ov = ov[(ov.conv_price > 0) & (ov.stock_price > 0)]
     ov["code"] = ov.cb_id.str[:4]
     ov["ratio"] = ov.stock_price / ov.conv_price

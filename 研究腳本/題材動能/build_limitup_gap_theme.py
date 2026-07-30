@@ -58,7 +58,7 @@ def main():
     conn.close()
     px["date"] = pd.to_datetime(px.date)
     stocks = {c: prep_stock(g) for c, g in px.groupby("code")}
-    twii = pd.read_pickle("tmp_twii_long.pkl").dropna()
+    twii = pd.read_pickle("快取/tmp_twii_long.pkl").dropna()
     cal = twii.index[twii.index >= "2019-06-01"]
 
     ev = panel[(panel.sigT >= "2020-08-01") & (panel.sigT <= "2026-03-01")]
@@ -136,7 +136,7 @@ def main():
         g = s4t[s4t.nlu == k] if k < 2 else s4t[s4t.nlu >= 2]
         print(f"  劑量{lab}: 中位{g.ex.median():+6.2f} 勝率{(g.ex > 0).mean() * 100:3.0f}% n={len(g)}")
 
-    df.to_pickle("tmp_limitup_gap_panel.pkl")
+    df.to_pickle("快取/tmp_limitup_gap_panel.pkl")
     print("\n面板存 tmp_limitup_gap_panel.pkl")
 
 

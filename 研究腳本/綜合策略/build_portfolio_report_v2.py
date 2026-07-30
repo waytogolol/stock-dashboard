@@ -84,13 +84,13 @@ def _pack_common(w, tdf, ret_col="ret", freq=52):
 def build_line12():
     print("\n" + "=" * 78)
     print("[線①②] 主系統S3 + 籌碼A1 —— 逐字改編 tmp_portfolio_report.py")
-    prices = {k: v for k, v in pickle.load(open("tmp_bear_prices.pkl", "rb")).items()
+    prices = {k: v for k, v in pickle.load(open("快取/tmp_bear_prices.pkl", "rb")).items()
               if v is not None and len(v) > 10}
     panel = pd.DataFrame(prices)
     wret = panel.pct_change(fill_method=None) * 100
     idx = panel.index
 
-    tr = pd.read_csv("tmp_bear_trades.csv", dtype=str)
+    tr = pd.read_csv("快取/tmp_bear_trades.csv", dtype=str)
     tr = tr[tr.ret8w.str.contains("%", na=False)].copy()
     tr["ret"] = tr.ret8w.str.replace("%", "").astype(float) - COST
 
@@ -224,12 +224,12 @@ def build_line3():
     print("[線③] 題材營收動能 score=4+階梯(V2組合縮放) —— 改編 "
           "build_theme_momentum_report.py + build_theme_momentum_tier.py")
     HOLD_DAYS = 60
-    with open("tmp_revenue_price_cache.pkl", "rb") as f:
+    with open("快取/tmp_revenue_price_cache.pkl", "rb") as f:
         cache = pickle.load(f)
-    panel = pd.read_pickle("tmp_theme_momentum_v2_panel.pkl").copy()
+    panel = pd.read_pickle("快取/tmp_theme_momentum_v2_panel.pkl").copy()
     s4 = panel[panel.score == 4].copy()
 
-    twii = pd.read_pickle("tmp_twii_daily.pkl")
+    twii = pd.read_pickle("快取/tmp_twii_daily.pkl")
     twii.columns = twii.columns.get_level_values(0)
     twii = twii.sort_index()
     c_twii = twii.Close
@@ -308,8 +308,8 @@ def build_line3():
 def build_line4():
     print("\n" + "=" * 78)
     print("[線④] 共振S4(OTC水位階梯) —— 改編 build_resonance_report.py")
-    ep = pd.read_pickle("tmp_resonance_theme_episodes.pkl")
-    wk_panel = pd.read_pickle("tmp_resonance_weekly_panel.pkl")
+    ep = pd.read_pickle("快取/tmp_resonance_theme_episodes.pkl")
+    wk_panel = pd.read_pickle("快取/tmp_resonance_weekly_panel.pkl")
     wret = wk_panel.pct_change(fill_method=None) * 100
     idx = wk_panel.index
 
@@ -398,7 +398,7 @@ def build_line5():
     import build_panic_liquidity_converge as plc
 
     stocks, disp = plc.load_px()
-    twii = pd.read_pickle("tmp_twii_long.pkl").dropna()
+    twii = pd.read_pickle("快取/tmp_twii_long.pkl").dropna()
     trades_v4 = plc.disposition_trades(stocks, disp)
     p = plc.portfolio(trades_v4, twii)
 

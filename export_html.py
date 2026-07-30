@@ -827,7 +827,7 @@ def build():
     # 讀build_resonance_theme.py產出的tmp_resonance_theme_events.pkl(需定期重跑刷新,建議併入每週例行)
     # 只標記最近8週內(比照研究裡的HOLD=8週)還在窗內的事件,舊的不顯示避免誤導成「現在」還在共振
     try:
-        _reso_ev = pd.read_pickle("tmp_resonance_theme_events.pkl")
+        _reso_ev = pd.read_pickle("快取/tmp_resonance_theme_events.pkl")
         _reso_ev["week"] = pd.to_datetime(_reso_ev["week"])
         _reso_last = _reso_ev["week"].max()
         _reso_recent = _reso_ev[_reso_ev["week"] >= _reso_last - pd.Timedelta(weeks=8)]
@@ -890,7 +890,7 @@ def build():
     # 題材輪動地圖RRG(2026-07-27上板,使用者裁示;資料源=build_heat_flow.py面板,已入update_all)
     # 研究判決見研究報告/research_heat_flow.html: 圖=現況地圖非預測器;兩條提醒(別追增漲週/領先×增跌=最強格)
     try:
-        _hf = pd.read_pickle("tmp_heat_flow_panel.pkl")
+        _hf = pd.read_pickle("快取/tmp_heat_flow_panel.pkl")
         _hf_last = _hf.snapshot_date.max()
         _hf_tail = sorted(_hf.snapshot_date.unique())[-6:]
         _rrg_themes = []
@@ -1731,7 +1731,7 @@ def build():
         def _depth_zone6(v):
             return ("乾淨格" if v <= -30 else "過渡段" if v <= -20
                     else "死亡谷" if v <= -10 else "淺段")
-        _lf6 = pd.read_pickle("tmp_limit_flags.pkl")
+        _lf6 = pd.read_pickle("快取/tmp_limit_flags.pkl")
         _pool6 = set(_lf6[~_lf6.code.str.startswith("00")].code.unique())
         _px6 = _px6[_px6.code.isin(_pool6)]
 

@@ -34,9 +34,9 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 DB = "capital_flow.db"
-PANEL_IN = "tmp_disposition_tdcc_panel.pkl"      # 已含v4_net/v4_valid/d4w/pre_turnover/post5-20
-PANEL_XCHK = "tmp_disposition_exit_fade_panel.pkl"  # post欄位交叉驗證用
-PANEL_OUT = "tmp_disposition_foreign_panel.pkl"
+PANEL_IN = "快取/tmp_disposition_tdcc_panel.pkl"      # 已含v4_net/v4_valid/d4w/pre_turnover/post5-20
+PANEL_XCHK = "快取/tmp_disposition_exit_fade_panel.pkl"  # post欄位交叉驗證用
+PANEL_OUT = "快取/tmp_disposition_foreign_panel.pkl"
 HI_TH = 80.0          # house慣例高位階
 B_BOOT = 10000
 SEED = 42

@@ -154,7 +154,7 @@ def main():
         lambda s: max((float(x) for x in _re.findall(r"跌幅[達為]?\s*(-?[\d.]+)\s*%", s)), default=np.nan))
     eps["loss_pe"] = eps.pe.isna() | (eps.pe <= 0)  # 虧損/無本益比
     eps["y"] = eps.date.dt.year
-    eps.to_pickle("tmp_attention_full_panel.pkl")  # 含amt20/drop_mag/pe/close_price/theme等全特徵
+    eps.to_pickle("快取/tmp_attention_full_panel.pkl")  # 含amt20/drop_mag/pe/close_price/theme等全特徵
     down = eps[eps.down & eps.t10.notna()].copy()
     other = eps[~eps.down & eps.t10.notna()].copy()
     print(f"episodes: 全體{len(eps):,} 跌觸發可交易{len(down):,} 其餘{len(other):,}")

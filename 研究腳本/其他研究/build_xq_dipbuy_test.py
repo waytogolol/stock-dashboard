@@ -83,7 +83,7 @@ def main():
     px["date"] = pd.to_datetime(px.date)
     inst["date"] = pd.to_datetime(inst.date)
     inst_by = {c: g.set_index("date")[["foreign_net", "trust_net"]] for c, g in inst.groupby("code")}
-    twii = pd.read_pickle("tmp_twii_long.pkl").dropna()
+    twii = pd.read_pickle("快取/tmp_twii_long.pkl").dropna()
 
     rows = []
     conds = ["c1", "c2", "c4", "c7", "c8", "c9", "c10", "c11", "c12", "c13", "c14", "c15"]
@@ -137,7 +137,7 @@ def main():
     stat(df[above].ret, "月線上")
     stat(df[~above].ret, "月線下")
 
-    df.to_pickle("tmp_xq_dipbuy_panel.pkl")
+    df.to_pickle("快取/tmp_xq_dipbuy_panel.pkl")
     print("\n面板存 tmp_xq_dipbuy_panel.pkl")
 
 

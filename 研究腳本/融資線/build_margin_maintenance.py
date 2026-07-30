@@ -24,8 +24,8 @@ import time
 import pandas as pd
 import requests
 
-CACHE_M = "tmp_margin_total.pkl"
-CACHE_P = "tmp_twii_long.pkl"
+CACHE_M = "快取/tmp_margin_total.pkl"
+CACHE_P = "快取/tmp_twii_long.pkl"
 
 
 def fetch_margin_total():
@@ -158,7 +158,7 @@ def main():
     yr = state.groupby(df.index.year).mean() * 100
     print("  鈍化日占比逐年: " + "  ".join(f"{y}:{v:.0f}%" for y, v in yr.items() if v > 0))
 
-    df[["mm", "pos"]].to_pickle("tmp_margin_maintenance.pkl")
+    df[["mm", "pos"]].to_pickle("快取/tmp_margin_maintenance.pkl")
     print("\n已存 tmp_margin_maintenance.pkl (維持率estimate+240日位階)")
 
 

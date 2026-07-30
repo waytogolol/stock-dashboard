@@ -31,7 +31,7 @@ PROMINENT_PCTL = 0.70  # 當月營收排前30% = percentile >= 0.70
 
 def load_price_cache():
     try:
-        with open("tmp_revenue_price_cache.pkl", "rb") as f:
+        with open("快取/tmp_revenue_price_cache.pkl", "rb") as f:
             return pickle.load(f)
     except FileNotFoundError:
         return {}
@@ -52,10 +52,10 @@ def fetch_missing_prices(codes, cache):
                 continue
         if (i + 1) % 50 == 0:
             print(f"  已補抓 {i+1}/{len(missing)}，寫入快取...")
-            with open("tmp_revenue_price_cache.pkl", "wb") as f:
+            with open("快取/tmp_revenue_price_cache.pkl", "wb") as f:
                 pickle.dump(cache, f)
         time.sleep(0.15)
-    with open("tmp_revenue_price_cache.pkl", "wb") as f:
+    with open("快取/tmp_revenue_price_cache.pkl", "wb") as f:
         pickle.dump(cache, f)
     print(f"補抓完成，快取現有 {len(cache)} 檔")
     return cache
@@ -143,7 +143,7 @@ def main():
     panel["entry_date"] = lag.loc[panel.index, "leader_date"].astype(str)
     print(f"最終panel筆數: {len(panel)}")
 
-    panel.to_pickle("tmp_revenue_prominent_panel_dated.pkl")
+    panel.to_pickle("快取/tmp_revenue_prominent_panel_dated.pkl")
     print("已存 -> tmp_revenue_prominent_panel_dated.pkl")
 
 

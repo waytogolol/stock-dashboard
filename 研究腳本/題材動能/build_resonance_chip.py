@@ -42,10 +42,10 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 DB = "capital_flow.db"
-EV_PKL = "tmp_resonance_theme_events.pkl"
-EP_PKL = "tmp_resonance_theme_episodes.pkl"
-WK_PKL = "tmp_resonance_weekly_panel.pkl"
-PANEL_OUT = "tmp_resonance_chip_panel.pkl"
+EV_PKL = "快取/tmp_resonance_theme_events.pkl"
+EP_PKL = "快取/tmp_resonance_theme_episodes.pkl"
+WK_PKL = "快取/tmp_resonance_weekly_panel.pkl"
+PANEL_OUT = "快取/tmp_resonance_chip_panel.pkl"
 HI_TH = 80.0
 B_BOOT = 10000
 SEED = 42

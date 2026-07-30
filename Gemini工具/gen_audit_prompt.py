@@ -55,7 +55,7 @@ def main():
     n_batches = (len(lines) + args.batch_size - 1) // args.batch_size
     for i in range(n_batches):
         chunk = lines[i * args.batch_size:(i + 1) * args.batch_size]
-        fname = f"tmp_gemini_audit_prompt_batch{i+1}.txt"
+        fname = f"快取/tmp_gemini_audit_prompt_batch{i+1}.txt"
         with open(fname, "w", encoding="utf-8") as f:
             f.write(HEADER + "\n".join(chunk) + "\n")
         print(f"-> {fname} ({len(chunk)}筆)")

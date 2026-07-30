@@ -13,7 +13,7 @@ import pandas as pd
 
 sys.path.insert(0, os.getcwd())
 
-INPUT = sys.argv[1] if len(sys.argv) > 1 else "tmp_chain_gemini_result.txt"
+INPUT = sys.argv[1] if len(sys.argv) > 1 else "快取/tmp_chain_gemini_result.txt"
 
 df = pd.read_csv("all_classified.csv", dtype={"代碼": str})
 valid = set(zip(df["國家"], df["代碼"]))
@@ -77,7 +77,7 @@ with open("industry_chains.py", "w", encoding="utf-8") as f:
         f.write(f'    ({chain!r}, {stage!r}, {code!r}, {country!r}, {role!r}),\n')
     f.write(']\n')
 
-with open("tmp_chain_parse_report.txt", "w", encoding="utf-8") as f:
+with open("快取/tmp_chain_parse_report.txt", "w", encoding="utf-8") as f:
     f.write(f"合併後總計: {len(all_rows)} 筆 / {len(chains_order)} 條鏈\n")
     cnt = Counter((r[0], r[1]) for r in all_rows)
     for c in chains_order:

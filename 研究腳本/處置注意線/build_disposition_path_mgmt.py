@@ -40,8 +40,8 @@ if hasattr(sys.stdout, "reconfigure"):
 
 DB = "capital_flow.db"
 COST = 0.45
-PANEL_OUT = "tmp_disposition_path_panel.pkl"
-COHORT_OUT = "tmp_disposition_path_cohort.pkl"
+PANEL_OUT = "快取/tmp_disposition_path_panel.pkl"
+COHORT_OUT = "快取/tmp_disposition_path_cohort.pkl"
 STOP_XS = [5, 8, 10, 15]
 TAKE_XS = [8, 15]
 DEV_XS = [5, 8, 10]
@@ -324,7 +324,7 @@ def main():
         equity_smooth(sub, f"f3_{TAKE_XS[0]}", f"F3停利+{TAKE_XS[0]}%減半")
         equity_smooth(sub, "f5", "F5強勢加碼+3% ")
         equity_smooth(sub, "combo", "組合(探索)     ")
-        sub.drop(columns=["cum", "closes"]).to_pickle(f"tmp_disposition_pathmgmt_{mm}.pkl")
+        sub.drop(columns=["cum", "closes"]).to_pickle(f"快取/tmp_disposition_pathmgmt_{mm}.pkl")
 
     pn.to_pickle(PANEL_OUT)
     print(f"\n路徑面板存{PANEL_OUT}; cohort路徑存{COHORT_OUT}")

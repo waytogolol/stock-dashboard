@@ -105,7 +105,7 @@ def main():
     for y, g in df.groupby("y"):
         stat(g.v3, str(y))
 
-    df.to_pickle("tmp_disposition_panel.pkl")
+    df.to_pickle("快取/tmp_disposition_panel.pkl")
     print("\n面板存 tmp_disposition_panel.pkl")
 
 

@@ -55,7 +55,7 @@ def loto_bootstrap(sub, label):
 
 
 def main():
-    df = pd.read_pickle("tmp_attention_event_panel.pkl")
+    df = pd.read_pickle("快取/tmp_attention_event_panel.pkl")
     ep = df[df.episode_first].copy()
     down = ep[ep.direction == "跌觸發"].dropna(subset=["trade10"]).copy()
     print(f"跌觸發子組總n={len(down)}\n")

@@ -19,7 +19,7 @@ from datetime import date
 import requests
 
 DB = "capital_flow.db"
-DONE_CACHE = "tmp_daily_price_done.pkl"
+DONE_CACHE = "快取/tmp_daily_price_done.pkl"
 TOKEN = open("finmind_token.txt").read().strip()
 START = "2019-01-01"
 SLEEP = 2.6

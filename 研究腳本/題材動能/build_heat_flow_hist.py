@@ -118,7 +118,7 @@ def cell_stats(cell, base, col="fwd2"):
 
 def main():
     pn = build_hist_panel()
-    pn.to_pickle("tmp_heat_flow_hist_panel.pkl")
+    pn.to_pickle("快取/tmp_heat_flow_hist_panel.pkl")
     base = pn.dropna(subset=["fwd2", "quad"])
     print(f"歷史面板: {len(pn)}題材-週 / {pn.main_group.nunique()}題材 / "
           f"{pn.wk.nunique()}週 ({pn.wk.min().date()}~{pn.wk.max().date()})")
@@ -274,7 +274,7 @@ def main():
                       "win": round(float((h3.fwd2 > 0).mean() * 100), 0),
                       "diff": round(float(obs), 2), "ci": [round(float(lo), 2), round(float(hi), 2)]},
            "h3_regime": reg_out, "scan_flagged": scan_out, "dual_switch": dual, "equity": eq}
-    with open("tmp_heat_flow_hist_results.json", "w", encoding="utf-8") as f:
+    with open("快取/tmp_heat_flow_hist_results.json", "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False)
     print("\n完成: tmp_heat_flow_hist_panel.pkl / tmp_heat_flow_hist_results.json")
 

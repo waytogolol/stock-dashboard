@@ -79,7 +79,7 @@ def main():
             rows.append(row)
     mb = pd.DataFrame(rows)
     mb = mb[mb.m >= "2018-01"]
-    mb.to_pickle("tmp_valuation_member_panel.pkl")
+    mb.to_pickle("快取/tmp_valuation_member_panel.pkl")
     print(f"成員面板: {len(mb):,}成員-月 / {mb.main_group.nunique()}題材 / {mb.m.nunique()}月 "
           f"({mb.m.min()}~{mb.m.max()})")
     R = {"n": len(mb)}
@@ -118,7 +118,7 @@ def main():
     R["C1"] = {f"dm{h}": boot_diff(mb[mb.cs_pctl <= 33.3], mb[mb.cs_pctl >= 66.7], f"dm{h}", "C1")
                for h in HS}
 
-    th = pd.read_pickle("tmp_valuation_panel.pkl")
+    th = pd.read_pickle("快取/tmp_valuation_panel.pkl")
     yq2 = th.dropna(subset=["yoy"]).yoy.quantile(2 / 3)
     strong = set(map(tuple, th[th.yoy >= yq2][["main_group", "m"]].values))
     key = mb.main_group + "|" + mb.m
@@ -132,7 +132,7 @@ def main():
     R["C3"] = {f"dm{h}": boot_diff(mb[mb.per > 60], mb[mb.per <= 60], f"dm{h}", "C3")
                for h in HS}
 
-    with open("tmp_valuation_member_results.json", "w", encoding="utf-8") as f:
+    with open("快取/tmp_valuation_member_results.json", "w", encoding="utf-8") as f:
         json.dump(R, f, ensure_ascii=False, indent=1, default=str)
     print("\n完成: tmp_valuation_member_panel.pkl / tmp_valuation_member_results.json")
 

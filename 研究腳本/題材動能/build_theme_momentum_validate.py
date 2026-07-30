@@ -15,7 +15,7 @@ SEED = 42
 
 
 def main():
-    panel = pd.read_pickle("tmp_theme_momentum_v2_panel.pkl").copy()
+    panel = pd.read_pickle("快取/tmp_theme_momentum_v2_panel.pkl").copy()
     panel["y"] = panel.year_month.str[:4]
     s4 = panel[panel.score == 4].copy()
     rest = panel[panel.score < 4].copy()

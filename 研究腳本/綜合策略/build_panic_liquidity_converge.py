@@ -119,7 +119,7 @@ def boot_ci(trades, seed=42):
 
 def main():
     stocks, disp = load_px()
-    twii = pd.read_pickle("tmp_twii_long.pkl").dropna()
+    twii = pd.read_pickle("快取/tmp_twii_long.pkl").dropna()
     out = {}
     for name, trades in [("sweetspot", sweetspot_trades(stocks)),
                          ("dispo_v4", disposition_trades(stocks, disp))]:
@@ -132,7 +132,7 @@ def main():
         print(f"  月群bootstrap中位CI95=[{lo:+.2f},{hi:+.2f}] P(<=0)={pval:.4f}")
         print(f"  組合: 複利{p['compound']:.2f}x 夏普{p['sharpe']:.2f} MDD{p['mdd']:.1f}% "
               f"曝險{p['exposure']:.0f}% 單利Σ{p['simple_sum']:+.0f}%")
-    with open("tmp_panic_converge_results.pkl", "wb") as f:
+    with open("快取/tmp_panic_converge_results.pkl", "wb") as f:
         pickle.dump(out, f)
     print("\n結果存 tmp_panic_converge_results.pkl")
 

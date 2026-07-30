@@ -26,14 +26,14 @@ from research_report_tmpl import build_report
 
 HOLD_DAYS = 60
 
-with open("tmp_revenue_price_cache.pkl", "rb") as f:
+with open("快取/tmp_revenue_price_cache.pkl", "rb") as f:
     cache = pickle.load(f)
 
-panel = pd.read_pickle("tmp_theme_momentum_v2_panel.pkl").copy()
+panel = pd.read_pickle("快取/tmp_theme_momentum_v2_panel.pkl").copy()
 panel["y"] = panel.year_month.str[:4]
 print(f"判決版panel: {len(panel)}筆, score分布:\n{panel.score.value_counts().sort_index().to_string()}")
 
-twii = pd.read_pickle("tmp_twii_daily.pkl")
+twii = pd.read_pickle("快取/tmp_twii_daily.pkl")
 twii.columns = twii.columns.get_level_values(0)
 twii = twii.sort_index()
 c_twii = twii.Close
@@ -136,7 +136,7 @@ for y in sorted(panel.y.unique()):
                f"<td>{b.excess60.median():+.2f}%</td></tr>")
 yr_tbl += "</table>"
 
-nh = pd.read_pickle("tmp_news_heat_panel.pkl")
+nh = pd.read_pickle("快取/tmp_news_heat_panel.pkl")
 nh_tbl = ("<p><b>⑫b新聞熱度判決表(TWII超額中位/勝率)——否定</b></p>"
           "<table><tr><th>組別</th><th>1M窗口</th><th>3M窗口</th></tr>")
 for label, sel in [("①score4×有新聞", lambda c: (nh.score == 4) & nh[c]),

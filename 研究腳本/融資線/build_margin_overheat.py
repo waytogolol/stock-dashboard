@@ -11,12 +11,12 @@ H0已證維持率短線≈指數本身,S1/S2預期≈指數過熱測試(動能�
 """
 import pandas as pd
 
-df = pd.read_pickle("tmp_margin_maintenance.pkl")
-raw = pd.read_pickle("tmp_margin_total.pkl")
+df = pd.read_pickle("快取/tmp_margin_maintenance.pkl")
+raw = pd.read_pickle("快取/tmp_margin_total.pkl")
 m = raw[raw["name"] == "MarginPurchaseMoney"].copy()
 m["date"] = pd.to_datetime(m["date"])
 m = m.set_index("date").sort_index()["TodayBalance"].astype(float)
-px = pd.read_pickle("tmp_twii_long.pkl")
+px = pd.read_pickle("快取/tmp_twii_long.pkl")
 px.index = pd.to_datetime(px.index).tz_localize(None)
 df = df.join(px.rename("P"), how="inner").join(m.rename("M"), how="inner")
 

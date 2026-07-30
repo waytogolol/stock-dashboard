@@ -25,7 +25,7 @@ import pandas as pd
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-PANEL = "tmp_disposition_tdcc_panel.pkl"
+PANEL = "快取/tmp_disposition_tdcc_panel.pkl"
 EARLY_YRS = (2019, 2023)
 LATE_YRS = (2024, 2026)
 B_BOOT = 10000

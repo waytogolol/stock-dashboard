@@ -29,12 +29,12 @@ COST = 0.45
 
 
 def main():
-    flags = pd.read_pickle("tmp_limit_flags.pkl")
+    flags = pd.read_pickle("快取/tmp_limit_flags.pkl")
     conn = sqlite3.connect("capital_flow.db")
     px = pd.read_sql("SELECT code, date, open, high, low, close, volume FROM fm_daily_price", conn)
     conn.close()
     px["date"] = pd.to_datetime(px.date)
-    twii = pd.read_pickle("tmp_twii_long.pkl").dropna()
+    twii = pd.read_pickle("快取/tmp_twii_long.pkl").dropna()
 
     # 題材score映射(訊號月=sigT,成員=classification)
     panel, _ = build_score_panel()
@@ -137,7 +137,7 @@ def main():
     for y, g in df.groupby("y"):
         stat(g.e1, str(y))
 
-    df.to_pickle("tmp_limitup_pullback_panel.pkl")
+    df.to_pickle("快取/tmp_limitup_pullback_panel.pkl")
     print("\n面板存 tmp_limitup_pullback_panel.pkl")
 
 

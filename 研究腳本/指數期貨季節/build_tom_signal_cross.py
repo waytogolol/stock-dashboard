@@ -106,7 +106,7 @@ def fam(df, val, ycol, label, formal=True):
 def main():
     dirs = []
     # F1 處置V4
-    dp = pd.read_pickle("tmp_disposition_path_panel.pkl")
+    dp = pd.read_pickle("快取/tmp_disposition_path_panel.pkl")
     dp["_d"] = pd.to_datetime(dp.entry_date)
     print("=" * 70)
     print("F1 處置V4(第3處置日收盤進場,base=淨報酬%)")
@@ -117,7 +117,7 @@ def main():
             dirs.append((f"V4-{mm}分", d))
 
     # F2 注意股跌觸發(晉級候選那組)
-    at = pd.read_pickle("tmp_attention_event_panel.pkl")
+    at = pd.read_pickle("快取/tmp_attention_event_panel.pkl")
     at = at[at.episode_first & (at.direction == "down")].copy()
     at["_d"] = pd.to_datetime(at.index.get_level_values(0)) if isinstance(at.index, pd.MultiIndex) else None
     if "_d" not in at or at["_d"] is None or at["_d"].isna().all():
@@ -140,7 +140,7 @@ def main():
     print("\n" + "=" * 70)
     print("F3 共振episode(2019+子集重算報酬,成員等權-等權市場,+40交易日)")
     print("=" * 70)
-    rs = pd.read_pickle("tmp_resonance_theme_events.pkl")
+    rs = pd.read_pickle("快取/tmp_resonance_theme_events.pkl")
     rs = rs[rs.episode_first].copy()
     rs["week"] = pd.to_datetime(rs.week)
     rs = rs[rs.week >= "2019-01-01"]
@@ -177,7 +177,7 @@ def main():
     print("\n" + "=" * 70)
     print("F4 規則①-⑤熊市壓測151筆(ret8w,n小僅描述)")
     print("=" * 70)
-    bt = pd.read_csv("tmp_bear_trades.csv")
+    bt = pd.read_csv("快取/tmp_bear_trades.csv")
     bt["_d"] = pd.to_datetime(bt.date)
     bt["y"] = bt["_d"].dt.year
     bt["ret"] = pd.to_numeric(bt.ret8w, errors="coerce")

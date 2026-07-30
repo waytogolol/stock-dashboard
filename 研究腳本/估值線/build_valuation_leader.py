@@ -73,7 +73,7 @@ def cell_report(name, cell, base, R):
 
 
 def main():
-    pn = pd.read_pickle("tmp_valuation_panel.pkl")
+    pn = pd.read_pickle("快取/tmp_valuation_panel.pkl")
     con = sqlite3.connect(DB)
     cl = pd.read_sql("SELECT DISTINCT code, main_group FROM classification WHERE country='台'", con)
     codes = sorted(cl.code.unique())
@@ -103,7 +103,7 @@ def main():
     ld["leader_pctl"] = ld.groupby("main_group").leader_pe.transform(
         lambda s: s.expanding(18).rank(pct=True) * 100)
     pn = pn.merge(ld, on=["main_group", "m"], how="left")
-    pn.to_pickle("tmp_valuation_panel.pkl")
+    pn.to_pickle("快取/tmp_valuation_panel.pkl")
 
     base = pn.dropna(subset=["fwd2m", "fwd2x", "pe_pctl", "yoy"])
     baseL = base.dropna(subset=["leader_pctl"])
@@ -151,7 +151,7 @@ def main():
         cell = h2[rule.fillna(False)]
         cell_report(f"H2驗_{f}{side}{wm:.1f}", cell, h2, R)
 
-    with open("tmp_valuation_leader_results.json", "w", encoding="utf-8") as f:
+    with open("快取/tmp_valuation_leader_results.json", "w", encoding="utf-8") as f:
         json.dump(R, f, ensure_ascii=False, indent=1, default=str)
     print("\n完成: tmp_valuation_leader_results.json (面板已加leader_pe/leader_pctl欄)")
 

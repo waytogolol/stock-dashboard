@@ -118,7 +118,7 @@ def main():
             p60.append(g.ex.iloc[0] - g.ex.iloc[1:].mean())
     print(f"  {stats(p60)}")
 
-    df.to_pickle("tmp_score4_member_select_panel.pkl")
+    df.to_pickle("快取/tmp_score4_member_select_panel.pkl")
     print("\n面板存 tmp_score4_member_select_panel.pkl")
 
 
