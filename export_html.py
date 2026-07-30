@@ -1911,6 +1911,112 @@ def build():
         _sec_fail("大盤溫度計未產生", e)
         data["market_thermo"] = None
 
+    # ---- 天氣儀v1(2026-07-31使用者裁示「收斂開工+RRG式軌跡」;口徑=07-31晨regime系列考卷) ----
+    # X=波動期限結構vol10/vol60(加權日報酬10日std/60日std;>1.2升溫=跌觸發主場+9.86%/76%,<0.8退潮=score4主場+13.81%/76%)
+    # Y=胃納(櫃買/加權比值20日變化%;正=資金敢買中小型題材);vp10=vol10在2006起全樣本百分位,升破80=起火點
+    # 起火點階梯(觀察層n小)=櫃買先爆=虛驚(加權k60全勝+3.56%)/加權先爆=真風暴(-9.12%勝33%)/同步=常V底(+9.01%);
+    # 全球層=SPX同著火且台股先爆=最毒(k60-6.21%勝25%),SPX沒著火=台股獨爆虛驚(n=39,+2.10%/67%)→SPX警報線80分位
+    try:
+        _c9 = sqlite3.connect(DB_PATH)
+        _wx = {m: pd.read_sql("SELECT date, close FROM index_daily WHERE market=? ORDER BY date",
+                              _c9, params=(m,), parse_dates=["date"]).set_index("date").close
+               for m in ("TAIEX", "TPEx", "SPX")}
+        _c9.close()
+        _wv = {}
+        for _m9, _px9 in _wx.items():
+            _r9 = _px9.pct_change() * 100
+            _v10_9 = _r9.rolling(10).std()
+            _wv[_m9] = {"ts": _v10_9 / _r9.rolling(60).std(),
+                        "vp": _v10_9[_v10_9.index >= "2006-01-01"].dropna().rank(pct=True) * 100}
+
+        def _eps9(vp):
+            # vp10>80的連續燃燒段;僅<=3交易日短暫降溫視為同一波(研究口徑=每次升破80各自成事件,
+            # 容忍太寬會把整季高波連成一條,曾誤判2月錨;3日只吸收單日喘息)
+            _hot = list(vp.index[vp.values > 80])
+            if not _hot:
+                return []
+            _p = {d: i for i, d in enumerate(vp.index)}
+            _out, _s9, _prev = [], _hot[0], _hot[0]
+            for _d in _hot[1:]:
+                if _p[_d] - _p[_prev] > 3:
+                    _out.append((_s9, _prev))
+                    _s9 = _d
+                _prev = _d
+            _out.append((_s9, _prev))
+            return _out
+
+        def _cur9(m):
+            # 仍在燃燒中的episode(尾端距最新日<=10交易日)
+            _vp9 = _wv[m]["vp"]
+            _ep9 = _eps9(_vp9)
+            if _ep9 and len(_vp9.index) - 1 - _vp9.index.get_loc(_ep9[-1][1]) <= 10:
+                return _ep9[-1]
+            return None
+
+        _ts_tw9 = _wv["TAIEX"]["ts"]
+        _app9 = (_wx["TPEx"] / _wx["TAIEX"]).dropna()
+        _app9 = (_app9 / _app9.shift(20) - 1) * 100
+        _common9 = _ts_tw9.dropna().index.intersection(_app9.dropna().index)[-30:]
+        _trail9 = [{"d": str(_d.date())[5:], "x": round(float(_ts_tw9[_d]), 2),
+                    "y": round(float(_app9[_d]), 1)} for _d in _common9]
+        _last9 = _common9[-1]
+
+        _align9 = {}
+        for _k9, _m9 in (("tw", "TAIEX"), ("otc", "TPEx")):
+            _px9 = _wx[_m9]
+            _m20, _m60, _m240 = (float(_px9.rolling(_w).mean().iloc[-1]) for _w in (20, 60, 240))
+            _align9[_k9] = {"ok": bool(_m20 > _m60 > _m240),
+                            "gap": round((_m20 / _m60 - 1) * 100, 2)}
+
+        # 本波起火點階梯: 兩市當前燃燒episode,錨=起燃較早市;跟進=另一市第一個起於錨之後的episode
+        _ct9, _co9 = _cur9("TAIEX"), _cur9("TPEx")
+        _wave9 = {"type": None, "anchor": None, "join": None, "global": None,
+                  "spx_burn": bool(_cur9("SPX"))}
+        if _ct9 or _co9:
+            _am9, _anchor9 = (("otc", _co9[0]) if _co9 and (not _ct9 or _co9[0] <= _ct9[0])
+                              else ("tw", _ct9[0]))
+            _other9 = "TAIEX" if _am9 == "otc" else "TPEx"
+            _join9 = min((s for s, e in _eps9(_wv[_other9]["vp"]) if s >= _anchor9), default=None)
+            _wave9["anchor"] = str(_anchor9.date())
+            _wave9["join"] = str(_join9.date()) if _join9 is not None else None
+            if _join9 is None:
+                _wave9["type"] = "otc_only" if _am9 == "otc" else "tw_only"
+            elif abs((_join9 - _anchor9).days) <= 3:
+                _wave9["type"] = "sync"
+            else:
+                _wave9["type"] = "otc_first" if _am9 == "otc" else "tw_first"
+            _sp_cur9 = _cur9("SPX")
+            if _sp_cur9 is None:
+                _wave9["global"] = "tw_alone"
+            elif _sp_cur9[0] < _anchor9:
+                _wave9["global"] = "us_first"
+            else:
+                _wave9["global"] = "tw_spread"
+
+        _ts_now9 = float(_ts_tw9[_last9])
+        _app_now9 = float(_app9[_last9])
+        _quad9 = ("過熱" if _app_now9 >= 0 else "亂世") if _ts_now9 >= 1 else \
+                 ("題材天堂" if _app_now9 >= 0 else "修復觀望")
+        data["weather_gauge"] = {
+            "asof": str(_last9.date()),
+            "trail": _trail9,
+            "ts": round(_ts_now9, 2), "app": round(_app_now9, 1),
+            "vp": {k: round(float(_wv[m]["vp"].iloc[-1]))
+                   for k, m in (("tw", "TAIEX"), ("otc", "TPEx"), ("spx", "SPX"))},
+            "align": _align9,
+            "wave": _wave9,
+            "bells": {"cool": bool(_ts_now9 < 0.8), "fix": _align9["otc"]["ok"],
+                      "app": bool(_app_now9 > 0)},
+        }
+        print(f"天氣儀v1: ts={_ts_now9:.2f} 胃納{_app_now9:+.1f}%={_quad9}象限 "
+              f"vp10 加權{data['weather_gauge']['vp']['tw']}/櫃買{data['weather_gauge']['vp']['otc']}"
+              f"/SPX{data['weather_gauge']['vp']['spx']} "
+              f"排列 加權{'多' if _align9['tw']['ok'] else '壞'}櫃買{'多' if _align9['otc']['ok'] else '壞'} "
+              f"起火點={_wave9['type']}(錨{_wave9['anchor']}) 全球={_wave9['global']}")
+    except Exception as e:
+        _sec_fail("天氣儀v1未產生", e)
+        data["weather_gauge"] = None
+
     # ---- 內部人解質警戒(2026-07-20使用者裁示上板,進場訊號第7檢視;判決=build_pledge_release.py:
     #      主測x60超額-6.90%/36%,配對差-3.93pp CI上緣<0=✅;放空載具❌(均值+0.01%右尾屠殺)=僅減碼審查;
     #      設質/存量/低檔補提皆無資訊=方向專一四度確認) ----
@@ -3255,6 +3361,21 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div class="rule-item"><b>怎麼用</b>：燈亮那天照該燈卡片上的持有期買進抱著（每張卡片都寫了抱幾天、歷史賺多少、勝率多少）；<b>多個燈同一天亮＝多個獨立證據都說是底，可信度疊加</b>（例：2025-04-08兩燈同亮→之後60日+23%）。「事件倉信心」（前身曝險v0）＝五燈加權的信心分數（0~100%）：100%=本次恐慌事件的<b>常規事件倉</b>可打滿，0%=空手觀望（權重：溫度計0.6/亞跌B 0.4/其餘各0.3，加總封頂，研究稿非下單指令）。⚠它管的是「事件倉」不是總帳戶——<b>總帳戶水位請看殺出深度</b>：死亡谷帶=殺一半最毒別急著滿手，乾淨帶(≤-25%)+縮量止跌訊號才是拉滿格（2026-07-31 P5×深度交叉考卷；歷史上溫度計在死亡谷帶3戰3勝、唯一敗筆2022-06-22反而在乾淨帶＝深度管不住極端恐慌日，事件倉照燈操作即可）。</div>
     <div class="rule-item"><b>⚠什麼時候會失靈</b>：①<b>慢熊中段的恐慌不是底</b>——已經陰跌好幾個月後才出現的恐慌日，接了會繼續跌（2022-06是五燈系統唯一的失敗案例）；②<b>跌停家數暴增的「第一腿」不是底</b>（2020-01-30跌停286家，之後60日還跌6.3%，要等第二次）；③<b>美股也在跌的全球危機日別接</b>，等下一個恐慌極點；④8-10月的亞跌B訊號只吃短線（亞洲季節性逆風）。</div>
     <div class="rule-item" style="color:var(--tx3)">技術註記：「甜蜜格」＝個股層恐慌接刀條件（近40日曾漲20%×已回檔≥20%×當日跌6~9%×成交值>1億）；「並發數」＝今天全市場同時符合的檔數，越多＝被砍得越兇越全面。樣本池1,379檔研究尺；跌停＝前收×0.9進位近似；崩盤日並發數需要當日價格，先跑 python update_all.py 再看。詳細研究過程與逐事件紀錄→研究報告/research_thermometer.html。</div>
+  </div>
+  <div class="rule-card">
+    <div class="rule-title">🌦️ 天氣儀v1——兩軸看天氣：波動在升溫還是退潮、中小型胃納在張還是縮</div>
+    <div id="weatherHeadline" class="rule-item" style="font-weight:700"></div>
+    <details style="margin-top:4px">
+      <summary style="cursor:pointer;color:var(--tx2)">展開說明／口徑</summary>
+      <div class="rule-item" style="margin-top:6px"><b>這在幹嘛（一句話）</b>：把「現在是什麼天氣」壓成兩個數字畫在一張圖上。<b>X軸＝波動期限結構</b>（加權10日波動÷60日波動）：&gt;1＝風暴進行中（升溫）、&lt;1＝風暴退場（退潮）；<b>Y軸＝胃納</b>（櫃買/加權比值20日變化%）：正＝資金敢買中小型題材、負＝縮回權值避險。點的30日軌跡＝天氣往哪邊變。</div>
+      <div class="rule-item"><b>怎麼用（值班表）</b>：兩派策略是接力棒——<b>亂世（升溫×胃納縮）＝事件策略值班</b>（跌觸發+9.86%/勝76%、甜蜜格/處置照燈操作），營收題材逆風別硬做；<b>題材天堂（退潮×胃納張）＝營收動能score4值班</b>（+13.81%/勝76%）；<b>修復觀望＝等三重發車鈴</b>（①波動退潮&lt;0.8 ②櫃買排列修復 ③胃納翻正）齊了再切回題材線；<b>過熱（升溫×胃納張）＝罕見格</b>，提防風向急轉。風暴中做反轉、風暴後做動能。</div>
+      <div class="rule-item" style="color:var(--tx3)">技術註記：值班統計＝2026-07-31 regime系列考卷（跌觸發2018起／score4面板2022起，窗窄＝盤點層參考非上板開關）；主場確認線＝升溫&gt;1.2／退潮&lt;0.8（圖上虛線），1.0~1.2之間＝過渡；起火點階梯與全球層＝n小觀察層（升破80分位口徑2006起；錨定日＝允許≤3日喘息的episode口徑，與考卷逐事件紀錄可能差數日——例：本波考卷記05-11櫃買先爆、本儀錨04-23，<b>階梯分類相同以分類為準</b>）；徽章列的殺出深度／事件倉信心與下方溫度計卡同源。</div>
+    </details>
+  </div>
+  <div id="weatherBadges" style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0"></div>
+  <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:stretch">
+    <div id="weatherMap" style="flex:1 1 460px;min-width:320px;height:440px"></div>
+    <div id="weatherDuty" style="flex:1 1 300px;min-width:280px"></div>
   </div>
   <div id="thermoHeadline" style="font-size:1.05em;font-weight:700;margin:4px 0 10px;padding:10px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--sf)"></div>
   <div class="hint" id="thermoAsof" style="font-weight:600"></div>
@@ -4672,6 +4793,8 @@ function switchSigView(v) {
     document.getElementById("sigView" + k + "Btn").classList.toggle("active", on);
     document.getElementById("sig" + k + "View").style.display = on ? "" : "none";
   });
+  // 天氣儀在隱藏分頁初繪時寬度會抓錯,切進來時重繪一次(Plotly.newPlot幂等)
+  if (v === "thermo") renderWeatherGauge();
 }
 
 // ── 法說會筆記(2026-07-19上板) ────────────────────────────────────
@@ -4765,7 +4888,137 @@ function renderWarRoom() {
     "口徑與歷史數據見下方「大盤態勢」與研究報告/research_heat_flow.html。</div>";
 }
 
+// ── 天氣儀v1(2026-07-31上板): RRG式軌跡+四象限值班表+徽章列;資料=DATA.weather_gauge ──
+function renderWeatherGauge() {
+  const el = document.getElementById("weatherMap");
+  if (!el) return;
+  const W = DATA.weather_gauge;
+  if (!W || !W.trail || !W.trail.length) {
+    el.innerHTML = "<div class=\"hint\">尚無資料(維運: python update_all.py 後重跑 export_html.py)</div>";
+    return;
+  }
+  const mt = DATA.market_thermo || {};
+  const x = W.ts, y = W.app;
+  const quad = x >= 1 ? (y >= 0 ? "過熱" : "亂世") : (y >= 0 ? "題材天堂" : "修復觀望");
+  const qcol = {"亂世": "#e74c3c", "題材天堂": "#2ecc71", "修復觀望": "#5dade2", "過熱": "#f39c12"};
+  const confirm = quad === "亂世" ? (x > 1.2 ? "已過主場確認線1.2" : "過渡帶,未過確認線1.2") :
+                  quad === "題材天堂" ? (x < 0.8 ? "已過主場確認線0.8" : "過渡帶,未過確認線0.8") : "";
+  const duty = {"亂世": "事件策略值班（跌觸發/甜蜜格/處置照燈操作），營收題材逆風別硬做",
+                "題材天堂": "營收動能score4值班，事件策略退場",
+                "修復觀望": "觀望，等三重發車鈴齊響再切回題材線",
+                "過熱": "罕見格，無值班策略，提防風向急轉"}[quad];
+  const hl = document.getElementById("weatherHeadline");
+  if (hl) {
+    hl.innerHTML = "當下（" + W.asof + "）：波動 <b>" + x.toFixed(2) + "</b>（" + (x >= 1 ? "升溫" : "退潮") +
+      (confirm ? "，" + confirm : "") + "）× 胃納 <b>" + (y > 0 ? "+" : "") + y.toFixed(1) +
+      "%</b>（櫃買相對加權" + (y >= 0 ? "轉強" : "轉弱") + "）＝ <span style=\"color:" + qcol[quad] + "\">" +
+      quad + "象限</span> → " + duty;
+  }
+  // ── 徽章列 ──
+  const A = W.align || {};
+  const twOk = A.tw && A.tw.ok, otcOk = A.otc && A.otc.ok;
+  let alignTxt;
+  if (twOk && otcOk) alignTxt = "雙多＝多頭正常格";
+  else if (twOk) alignTxt = "權值獨多（score4最弱格+4.53%,題材別硬做）";
+  else if (otcOk) alignTxt = "櫃買獨多＝題材天堂格（score4十三戰全勝+13.18%,n薄）";
+  else alignTxt = "雙弱＝事件策略最肥格";
+  if (A.tw && A.tw.gap !== undefined && A.tw.gap > 0 && A.tw.gap < 1) {
+    alignTxt += "｜⚠加權月季差僅" + A.tw.gap + "%,死亡交叉倒數";
+  }
+  const wv = W.wave || {};
+  const waveTxt = ({
+    otc_first: "櫃買先爆(" + wv.anchor + ")→加權跟進(" + wv.join + ")＝虛驚型:題材籌碼自爆可自癒（歷史加權k60全勝+3.56%）",
+    tw_first: "⚠加權先爆(" + wv.anchor + ")→櫃買跟進(" + wv.join + ")＝真風暴型:宏觀系統性（k60中位-9.12%勝33%）",
+    sync: "兩市同步爆(" + wv.anchor + ")＝常為V底（+9.01%）",
+    otc_only: "櫃買獨爆(" + wv.anchor + ")加權沒跟＝虛驚",
+    tw_only: "⚠加權獨爆(" + wv.anchor + ")",
+  })[wv.type] || "無起火（兩市vp10未破80分位）";
+  const vpTxt = "當下vp10 加權" + W.vp.tw + "／櫃買" + W.vp.otc + "分位";
+  const spxTxt = wv.spx_burn
+    ? (wv.global === "us_first"
+        ? "SPX先爆→外來火晚週期,台灣歷史扛得住（+4.85%/67%）"
+        : "🚨SPX著火＋台股先爆＝全球化最毒型（k60-6.21%勝25%）")
+    : "SPX vp10 " + W.vp.spx + "分位＜80沒著火＝台股獨爆虛驚型（n=39,+2.10%/67%）；警報線=SPX破80分位即改判最毒型";
+  const dep = (mt.warn && mt.warn.depth !== null && mt.warn.depth !== undefined)
+    ? "上市" + mt.warn.depth + "%=" + mt.warn.depth_zone +
+      (mt.warn.depth_otc !== null && mt.warn.depth_otc !== undefined
+        ? "｜上櫃" + mt.warn.depth_otc + "%=" + mt.warn.depth_zone_otc : "") + "（乾淨帶≤-25才拉滿格）"
+    : "—";
+  const conf = (mt.exposure !== undefined && mt.exposure !== null)
+    ? (mt.exposure * 100).toFixed(0) + "%（" + mt.n_lit + "/5燈,詳下方溫度計卡）" : "—";
+  const badge = function(icon, label, val) {
+    return "<span style=\"border:1px solid var(--bd);border-radius:14px;padding:3px 10px;background:var(--sf);font-size:12px\">" +
+      icon + " <b>" + label + "</b>：" + val + "</span>";
+  };
+  document.getElementById("weatherBadges").innerHTML =
+    badge("📐", "兩市排列(月>季>年)", alignTxt) +
+    badge("🔥", "起火點階梯", waveTxt + "；" + vpTxt) +
+    badge("🛰️", "SPX警報線", spxTxt) +
+    badge("💧", "殺出深度", dep) +
+    badge("🎯", "事件倉信心", conf);
+  // ── 四象限值班表(左=退潮/右=升溫,上=胃納張/下=胃納縮) ──
+  const bells = W.bells || {};
+  const bellLine = [["①波動退潮<0.8", bells.cool], ["②櫃買排列修復", bells.fix], ["③胃納翻正", bells.app]]
+    .map(function(b) {
+      return b[1] ? "<span style=\"color:#2ecc71\">✓" + b[0] + "</span>"
+                  : "<span style=\"color:var(--tx3)\">✗" + b[0] + "</span>";
+    }).join("<br>");
+  const cell = function(name, body) {
+    const active = quad === name;
+    return "<div style=\"border:1px solid " + (active ? qcol[name] : "var(--bd)") +
+      ";border-radius:8px;padding:8px;background:var(--sf)" +
+      (active ? ";box-shadow:inset 0 0 0 1px " + qcol[name] : "") + "\">" +
+      "<b style=\"color:" + qcol[name] + "\">" + name + (active ? " ◀現在" : "") + "</b>" +
+      "<div style=\"font-size:12px;margin-top:4px;color:var(--tx2)\">" + body + "</div></div>";
+  };
+  document.getElementById("weatherDuty").innerHTML =
+    "<div style=\"display:grid;grid-template-columns:1fr 1fr;gap:8px\">" +
+    cell("題材天堂", "退潮×胃納張<br><b>score4營收動能值班</b><br>+13.81%/勝76%(退潮<0.8)") +
+    cell("過熱", "升溫×胃納張<br>罕見格,提防急轉<br>不加倉不追價") +
+    cell("修復觀望", "退潮×胃納縮<br>等三重發車鈴:<br>" + bellLine) +
+    cell("亂世", "升溫×胃納縮<br><b>跌觸發+9.86%/勝76%</b><br>甜蜜格/處置照燈,題材逆風") +
+    "</div><div class=\"hint\" style=\"margin-top:6px\">口訣：風暴中做反轉（事件策略）、風暴後做動能（題材線）。左欄=退潮、右欄=升溫；上排=胃納張、下排=胃納縮。</div>";
+  // ── RRG式軌跡圖 ──
+  const t = W.trail;
+  const denom = Math.max(1, t.length - 1);
+  const layout = {
+    paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+    font: {color: "#c8d4e4", size: 11}, height: 440,
+    margin: {t: 24, l: 52, r: 16, b: 44},
+    xaxis: {title: "波動期限結構 vol10/vol60（→升溫）", gridcolor: "#1d2836", zeroline: false},
+    yaxis: {title: "胃納：櫃買/加權20日變化%（↑轉強）", gridcolor: "#1d2836", zeroline: false},
+    shapes: [
+      {type: "line", x0: 1, x1: 1, yref: "paper", y0: 0, y1: 1, line: {color: "#3a4a5f", width: 1}},
+      {type: "line", y0: 0, y1: 0, xref: "paper", x0: 0, x1: 1, line: {color: "#3a4a5f", width: 1}},
+      {type: "line", x0: 0.8, x1: 0.8, yref: "paper", y0: 0, y1: 1, line: {color: "#2ecc71", width: 1, dash: "dot"}},
+      {type: "line", x0: 1.2, x1: 1.2, yref: "paper", y0: 0, y1: 1, line: {color: "#e74c3c", width: 1, dash: "dot"}}],
+    annotations: [
+      {xref: "paper", yref: "paper", x: 0.01, y: 0.99, text: "題材天堂", showarrow: false, font: {size: 14, color: "#2ecc71"}},
+      {xref: "paper", yref: "paper", x: 0.99, y: 0.99, text: "過熱", showarrow: false, font: {size: 14, color: "#f39c12"}},
+      {xref: "paper", yref: "paper", x: 0.01, y: 0.01, text: "修復觀望", showarrow: false, font: {size: 14, color: "#5dade2"}},
+      {xref: "paper", yref: "paper", x: 0.99, y: 0.01, text: "亂世", showarrow: false, font: {size: 14, color: "#e74c3c"}}]
+  };
+  const traces = [
+    {x: t.map(function(p) { return p.x; }), y: t.map(function(p) { return p.y; }), mode: "lines",
+     line: {color: "#3a4a5f", width: 1.5}, hoverinfo: "skip", showlegend: false},
+    {x: t.map(function(p) { return p.x; }), y: t.map(function(p) { return p.y; }), mode: "markers",
+     marker: {size: t.map(function(p, i) { return 4 + 5 * i / denom; }),
+              color: t.map(function(p, i) { return i; }),
+              colorscale: [[0, "#33415a"], [1, "#7fb3d5"]], showscale: false,
+              line: {color: "#0c1118", width: 1}},
+     customdata: t.map(function(p) { return p.d; }),
+     hovertemplate: "%{customdata}<br>波動 %{x:.2f}｜胃納 %{y:.1f}%<extra></extra>", showlegend: false},
+    {x: [t[t.length - 1].x], y: [t[t.length - 1].y], mode: "markers+text",
+     text: ["今 " + W.asof.slice(5)], textposition: "top center",
+     textfont: {size: 11, color: "#ffd97a"},
+     marker: {size: 14, symbol: "star", color: qcol[quad], line: {color: "#ffd97a", width: 1.5}},
+     hovertemplate: W.asof + "<br>波動 " + x + "｜胃納 " + y + "%<extra></extra>", showlegend: false}
+  ];
+  Plotly.newPlot(el, traces, layout, {displayModeBar: false, responsive: true});
+}
+
 function renderThermoTab() {
+  renderWeatherGauge();
   const mt = DATA.market_thermo;
   if (!mt) return;
   const cardsEl = document.getElementById("thermoCards");
