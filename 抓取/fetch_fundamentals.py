@@ -1,3 +1,4 @@
+import sys as _sys, os as _os; _sys.path.insert(1, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # root on path
 # -*- coding: utf-8 -*-
 """抓產業鏈/供應鏈成員的基本面(毛利率/營收YoY)存入DB fundamentals表
 來源: yfinance .info (grossMargins / revenueGrowth)

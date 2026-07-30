@@ -1,3 +1,4 @@
+import sys as _sys, os as _os; _sys.path.insert(1, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))  # root on path
 # -*- coding: utf-8 -*-
 """共振研究權益曲線報告 -> 研究報告/research_resonance.html
 沿用tmp_portfolio_report.py的策略棧模板慣例:episode進場後持HOLD週,同週多筆episode等權疊加成單一週報酬序列,

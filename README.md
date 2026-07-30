@@ -1,10 +1,26 @@
 # 股市資金流向追蹤 — 使用說明
 
-## 每週更新資料(建議頻率：約一週一次)
+## 資料夾架構(2026-07-30整理定案)
 ```
-python weekly_refresh.py
+股市AI/
+├─ update_all.py 等維運入口 + 例行管線腳本 + 共用模組 + 資料檔   ← 根目錄只留「活的系統」
+├─ 抓取/          全部fetch_*.py(38支)+backfill_history.py     ← 未來新資料源放這
+├─ 研究腳本/      已收官的研究考卷,按主題線分12個子資料夾:
+│    處置注意線/ 題材動能/ 底部溫度計/ 融資線/ CB可轉債/ 法說會/
+│    指數期貨季節/ 營收產業/ 估值線/ 綜合策略/ 籌碼集保/ 其他研究/  ← 未來新考卷在對應主題出生
+├─ 研究報告/      research_*.html 研究報告成品(build_report_index.py產目錄)
+├─ 暫存/          一次性產物垃圾場(快取/紀錄/一次性腳本),gitignored
+├─ 封存/          研究筆記按日期歸檔 + 舊腳本
+└─ 本地版/ 冷備/ db_backup/ XQ檔案匯入/ …
 ```
-會自動：重新抓取台/日/韓/陸/美五市場成交金額排行 → 套用既有分類規則 → 抓最新匯率 → 寫入新的snapshot到 `capital_flow.db` → 重新產出 `dashboard.html`。
+**鐵律**:任何腳本都**從根目錄執行**(如 `python 抓取/fetch_xxx.py`、`python 研究腳本/處置注意線/build_xxx.py`),因為資料庫/快取全用相對路徑。跨資料夾import靠檔頭sys.path墊片(標記`# root on path`),update_all子程序另帶PYTHONPATH=根目錄雙保險。
+
+## 每日/每週更新資料(主入口)
+```
+python update_all.py          # 日常一鍵集體更新(自動偵測要不要跑週線組)
+python update_all.py --check  # 只做新鮮度紅綠燈驗收
+```
+舊的 `weekly_refresh.py` 已被 update_all.py 取代,留著僅供單獨重跑五市場排行分類流程。
 
 執行完會印出「新進榜但還沒分類」的公司清單(如果有的話)，可以手動補進對應的 `classify_tw.py` / `classify_jp.py` / `classify_kr.py` / `classify_cn.py` 的 `MAP` 字典裡。
 

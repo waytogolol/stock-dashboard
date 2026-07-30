@@ -32,26 +32,26 @@ PY = sys.executable
 # ---------- 步驟定義 ----------
 # (名稱, 指令argv, 組別)  組別: daily=每次都跑 / weekly=週線組 / build=最後重產dashboard
 STEPS = [
-    ("個股日價",        [PY, "fetch_daily_price.py", "--update"], "daily"),
-    ("處置股",          [PY, "fetch_disposition.py"],             "daily"),
-    ("注意股",          [PY, "fetch_attention.py"],               "daily"),
-    ("台股指數",        [PY, "fetch_index_daily.py"],             "daily"),
-    ("全球指數",        [PY, "fetch_global_index.py"],            "daily"),
-    ("三大法人",        [PY, "fetch_t86.py"],                     "daily"),
-    ("融資券",          [PY, "fetch_margin.py"],                  "daily"),
-    ("集保大戶",        [PY, "fetch_tdcc.py"],                    "daily"),
-    ("融資維持率",      [PY, "fetch_margin_maintenance.py"],      "daily"),
-    ("融資總餘額",      [PY, "fetch_margin_total.py"],            "daily"),
+    ("個股日價",        [PY, "抓取/fetch_daily_price.py", "--update"], "daily"),
+    ("處置股",          [PY, "抓取/fetch_disposition.py"],             "daily"),
+    ("注意股",          [PY, "抓取/fetch_attention.py"],               "daily"),
+    ("台股指數",        [PY, "抓取/fetch_index_daily.py"],             "daily"),
+    ("全球指數",        [PY, "抓取/fetch_global_index.py"],            "daily"),
+    ("三大法人",        [PY, "抓取/fetch_t86.py"],                     "daily"),
+    ("融資券",          [PY, "抓取/fetch_margin.py"],                  "daily"),
+    ("集保大戶",        [PY, "抓取/fetch_tdcc.py"],                    "daily"),
+    ("融資維持率",      [PY, "抓取/fetch_margin_maintenance.py"],      "daily"),
+    ("融資總餘額",      [PY, "抓取/fetch_margin_total.py"],            "daily"),
     ("五市場排行",      "TOP200",                                  "weekly"),  # 特殊:見run_top200
     ("rankings快照",    "BUILD_DB",                                "weekly"),  # 特殊:今天日期
-    ("週收盤價",        [PY, "fetch_prices.py"],                  "weekly"),
-    ("內部人解質",      [PY, "fetch_pledge.py"],                  "weekly"),
-    ("台股法說會",      [PY, "fetch_conference_yahoo.py"],        "weekly"),
-    ("TX5分K",          [PY, "fetch_tx_5min.py"],                 "weekly"),
-    ("月營收缺漏",      [PY, "fetch_month_rev_gap.py"],           "weekly"),
-    ("PER估值",         [PY, "fetch_per.py"],                     "weekly"),
-    ("股本表",          [PY, "fetch_capital.py"],                 "weekly"),
-    ("上櫃融資彙總",    [PY, "fetch_margin_total_otc.py"],        "daily"),
+    ("週收盤價",        [PY, "抓取/fetch_prices.py"],                  "weekly"),
+    ("內部人解質",      [PY, "抓取/fetch_pledge.py"],                  "weekly"),
+    ("台股法說會",      [PY, "抓取/fetch_conference_yahoo.py"],        "weekly"),
+    ("TX5分K",          [PY, "抓取/fetch_tx_5min.py"],                 "weekly"),
+    ("月營收缺漏",      [PY, "抓取/fetch_month_rev_gap.py"],           "weekly"),
+    ("PER估值",         [PY, "抓取/fetch_per.py"],                     "weekly"),
+    ("股本表",          [PY, "抓取/fetch_capital.py"],                 "weekly"),
+    ("上櫃融資彙總",    [PY, "抓取/fetch_margin_total_otc.py"],        "daily"),
     ("財報日曆",        [PY, "check_earnings.py"],                "build"),
     ("題材共振",        [PY, "build_resonance_theme.py"],         "build"),
     ("題材量價RRG",     [PY, "build_heat_flow.py"],               "build"),
@@ -95,7 +95,7 @@ FROZEN = [
 
 def run_step(name, argv):
     t0 = time.time()
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONPATH": ROOT}
     try:
         p = subprocess.run(argv, capture_output=True, text=True,
                            encoding="utf-8", errors="replace", env=env, timeout=3600)
@@ -115,6 +115,7 @@ def run_step(name, argv):
 
 def run_top200():
     """五市場排行→CSV。台股要指定日期:從今天往回找最近有資料的交易日(假日/未收盤自動退一天)。"""
+    sys.path.insert(0, os.path.join(ROOT, "抓取"))
     import fetch_top200 as m
     jobs = [
         ("US", lambda: m.fetch_us(m.TOP_N["us"]),     f"us_top{m.TOP_N['us']}.csv"),

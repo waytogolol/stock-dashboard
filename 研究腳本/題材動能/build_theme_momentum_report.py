@@ -1,3 +1,4 @@
+import sys as _sys, os as _os; _sys.path.insert(1, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))  # root on path
 # -*- coding: utf-8 -*-
 """正式報告:「題材月營收動能」判決版(2026-07-14,取代凌晨的待驗證版)。
 資料=修復後全宇宙panel(tmp_theme_momentum_v2_panel.pkl,由build_theme_momentum_v2.py產生,

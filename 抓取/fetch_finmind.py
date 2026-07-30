@@ -1,3 +1,4 @@
+import sys as _sys, os as _os; _sys.path.insert(1, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # root on path
 # -*- coding: utf-8 -*-
 """FinMind 台股基本面歷史庫 -> capital_flow.db (fm_income / fm_cashflow / fm_month_rev)
 範圍: 研究相關台股(歷次觸發成員+產業鏈+供應鏈台股) 2019-01起

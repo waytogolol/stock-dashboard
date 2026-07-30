@@ -1,3 +1,4 @@
+import sys as _sys, os as _os; _sys.path.insert(1, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # root on path
 # -*- coding: utf-8 -*-
 """抓微題材台股成員的季度毛利率歷史 -> DB margin_history 表
 來源: yfinance quarterly_income_stmt(近4-5季) + MOPS官方最新季(tw_quarterly_fin，同季覆蓋yf)

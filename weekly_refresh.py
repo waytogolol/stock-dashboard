@@ -9,6 +9,8 @@ from datetime import date, timedelta
 import pandas as pd
 import requests
 
+import os as _os
+sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "抓取"))
 from fetch_top200 import UA, fetch_china, fetch_japan, fetch_korea, fetch_taiwan, fetch_us, TOP_N
 
 

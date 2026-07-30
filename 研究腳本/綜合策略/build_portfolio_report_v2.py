@@ -1,3 +1,4 @@
+import sys as _sys, os as _os; _sys.path.insert(1, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))  # root on path
 # -*- coding: utf-8 -*-
 """策略棧總覽回測 v2(2026-07-22,取代舊版tmp_portfolio_report.py/2026-07-12版)
 -> 研究報告/research_portfolio_overview.html

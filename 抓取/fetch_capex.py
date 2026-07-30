@@ -1,3 +1,4 @@
+import sys as _sys, os as _os; _sys.path.insert(1, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))  # root on path
 # -*- coding: utf-8 -*-
 """抓產業鏈成員+錨點客戶的季度資本支出 -> DB capex_history 表
 來源: yfinance quarterly_cashflow「Capital Expenditure」(約5季，原幣別)
