@@ -77,6 +77,23 @@ STACK = {m: stack_series(m) for m in ("TAIEX", "TPEx")}
 SLOPE_BULL = (M.REG == "多頭").astype(int)      # 斜率版多頭 on/off
 
 
+def load_money():
+    con = sqlite3.connect(DB)
+    mn = {m: pd.read_sql("SELECT date, money FROM index_daily WHERE market=? AND money>0 ORDER BY date",
+                         con, params=(m,), parse_dates=["date"]).set_index("date").money
+          for m in ("TAIEX", "TPEx")}
+    con.close()
+    return mn
+
+
+# 量能版胃納(2026-07-31使用者挑戰「胃納是不是該用成交量」後加開對測):
+# 櫃買成交值占比%(20日均)之20日變化pp;占比=經典散戶投機溫度計,與價格版對測誰配當Y軸
+MNY = load_money()
+SHARE = (MNY["TPEx"] / (MNY["TPEx"] + MNY["TAIEX"])).dropna() * 100
+SHARE20 = SHARE.rolling(20).mean()
+APP_V = (SHARE20 - SHARE20.shift(20)).dropna()
+
+
 def at(series, dates):
     """事件日→序列值(ffill到最近交易日)"""
     d = pd.to_datetime(pd.Series(dates))
@@ -275,6 +292,67 @@ def r5():
     return rows, occ, lab_days.iloc[-1]
 
 
+# ══ R3b 胃納口徑考卷(價格版vs量能版+波動聯合檢定) ═══════════
+def r3b():
+    common = APP.dropna().index.intersection(APP_V.index)
+    corr = float(pd.concat([APP[common], APP_V[common]], axis=1).corr().iloc[0, 1])
+    s4 = EV["⑥score4營收清單(ret60)"]
+    att = EV["④跌觸發注意股(t10)"]
+    head = {}
+    for label, ser in (("價格版", APP), ("量能版", APP_V)):
+        a, b = at(ser, s4["date"]), at(ser, att["date"])
+        head[label] = {"s4_on": cell(s4.loc[(a > 0).values, "ret"]),
+                       "s4_off": cell(s4.loc[(a <= 0).values, "ret"]),
+                       "att_on": cell(att.loc[(b > 0).values, "ret"]),
+                       "att_off": cell(att.loc[(b <= 0).values, "ret"])}
+    # 波動聯合檢定(使用者:「胃納要跟波動一起看才有意義」→檢定=胃納在各波動段內是否仍有分離力)
+    joint = {}
+    for sname, e in (("score4(ret60)", s4), ("跌觸發(t10)", att)):
+        ts = at(VOL["TAIEX"]["ts"], e["date"])
+        ap = at(APP, e["date"])
+        for vs, vmask in (("升溫ts>1.2", (ts > 1.2)), ("退潮ts<0.8", (ts < 0.8))):
+            for as_, amask in (("胃納張>0", (ap > 0)), ("胃納縮≤0", (ap <= 0))):
+                joint[f"{sname}|{vs}×{as_}"] = cell(e.loc[(vmask & amask).values, "ret"])
+    yr_p = APP.groupby(APP.index.year).mean().round(1)
+    yr_v = APP_V.groupby(APP_V.index.year).mean().round(2)
+    now = {"P": round(float(APP.dropna().iloc[-1]), 1), "V": round(float(APP_V.iloc[-1]), 2),
+           "share": round(float(SHARE20.dropna().iloc[-1]), 1)}
+    return corr, head, joint, yr_p, yr_v, now
+
+
+# ══ R8 單利權益曲線(天氣開關的目視驗收) ══════════════════
+def lin_curve(e, mask=None):
+    ev = e if mask is None else e.loc[mask.values]
+    ev = ev.sort_values("date")
+    g = ev.groupby("date")["ret"].sum() * 100     # 同日多筆各1單位加總
+    cum = g.cumsum()
+    return {"d": [str(d.date()) for d in cum.index], "v": [round(float(x), 1) for x in cum.values],
+            "n": int(len(ev)), "sum": round(float(ev["ret"].sum() * 100))}
+
+
+def r8():
+    att = EV["④跌觸發注意股(t10)"]
+    s4 = EV["⑥score4營收清單(ret60)"]
+    ts_a = at(VOL["TAIEX"]["ts"], att["date"])
+    ts_s = at(VOL["TAIEX"]["ts"], s4["date"])
+    cv = {"att_all": lin_curve(att),
+          "att_hot": lin_curve(att, ts_a > 1.2),
+          "att_cool": lin_curve(att, ts_a < 0.8),
+          "s4_all": lin_curve(s4),
+          "s4_cool": lin_curve(s4, ts_s < 0.8),
+          "s4_hot": lin_curve(s4, ts_s > 1.2)}
+    relay = pd.concat([att.loc[(ts_a > 1.2).values], s4.loc[(ts_s < 0.8).values]])
+    cv["relay"] = lin_curve(relay)
+    # 象限版接力棒(依R3b聯合檢定=值班表忠實版,⚠事後從聯合表選格=描述性非預註冊):
+    # 跌觸發只做亂世格(升溫×胃納縮)/score4只做胃納張(risk-on)
+    ap_a, ap_s = at(APP, att["date"]), at(APP, s4["date"])
+    relay_q = pd.concat([att.loc[((ts_a > 1.2) & (ap_a <= 0)).values],
+                         s4.loc[(ap_s > 0).values]])
+    cv["relay_q"] = lin_curve(relay_q)
+    cv["both_all"] = lin_curve(pd.concat([att, s4]))
+    return cv
+
+
 # ══ R6 起火點階梯 ═══════════════════════════════════════
 # 口徑(2026-07-31收官定案,見報告敏感度表): 起火=vp10>80且前quiet=21交易日全程<=80(安靜期,
 # 風暴中的再燃不算新火——不設安靜期會把2~5月連續高波算成十幾次事件,稀釋到全是市場平均);
@@ -407,10 +485,23 @@ def main():
     r1_rows, r1_occ, r1_cur, r1_neg = r1()
     r2_out, r2_pairs, r2_lead, r2_cur, r2_gap = r2()
     r3_rows, r3_dist, r3_nest, r3_s4 = r3()
+    ap_corr, ap_head, ap_joint, ap_yrp, ap_yrv, ap_now = r3b()
     r4_rows, r4_robust = r4()
     r5_rows, r5_occ, r5_cur = r5()
     w_two, n_ev2, w_glob, n_evg, runs = r6()
     cur = r7()
+    curves = r8()
+
+    print("=" * 90)
+    print(f"胃納口徑對測: corr(價格版,量能版)={ap_corr:+.2f} 當下 P={ap_now['P']}% V={ap_now['V']}pp 占比20日均={ap_now['share']}%")
+    for label in ("價格版", "量能版"):
+        h = ap_head[label]
+        print(f"  {label}: score4 on {h['s4_on']['txt']} / off {h['s4_off']['txt']}"
+              f" | 跌觸發 on {h['att_on']['txt']} / off {h['att_off']['txt']}")
+    print("聯合檢定(波動段內胃納是否仍分離):")
+    for k, v in ap_joint.items():
+        print(f"  {k}: {v['txt']}")
+    print("單利曲線Σpp:", {k: (v['sum'], v['n']) for k, v in curves.items()})
 
     # console對帳
     print("=" * 90)
@@ -440,7 +531,8 @@ def main():
     sens = sensitivity()
     html = build_html(r1_rows, r1_occ, r1_cur, r1_neg, r2_out, r2_pairs, r2_lead, r2_cur, r2_gap,
                       r3_rows, r3_dist, r3_nest, r3_s4, r4_rows, r4_robust,
-                      r5_rows, r5_occ, r5_cur, w_two, n_ev2, w_glob, n_evg, runs, cur, sens)
+                      r5_rows, r5_occ, r5_cur, w_two, n_ev2, w_glob, n_evg, runs, cur, sens,
+                      (ap_corr, ap_head, ap_joint, ap_yrp, ap_yrv, ap_now), curves)
     open(OUT, "w", encoding="utf-8").write(html)
     print(f"已產出 {OUT}")
 
@@ -463,7 +555,9 @@ def wave_table(waves, label1, label2):
 
 def build_html(r1_rows, r1_occ, r1_cur, r1_neg, r2_out, r2_pairs, r2_lead, r2_cur, r2_gap,
                r3_rows, r3_dist, r3_nest, r3_s4, r4_rows, r4_robust,
-               r5_rows, r5_occ, r5_cur, w_two, n_ev2, w_glob, n_evg, runs, cur, sens):
+               r5_rows, r5_occ, r5_cur, w_two, n_ev2, w_glob, n_evg, runs, cur, sens,
+               appetite, curves):
+    ap_corr, ap_head, ap_joint, ap_yrp, ap_yrv, ap_now = appetite
     css = """
 body{background:#1a1a19;color:#fff;font-family:"Noto Sans TC",sans-serif;margin:24px;max-width:1150px}
 h1{font-size:20px} h2{font-size:15px;color:#c3c2b7;margin-top:30px;border-bottom:1px solid #333;padding-bottom:4px}
@@ -493,6 +587,21 @@ td,th{border:1px solid #333;padding:4px 9px;text-align:right} th{text-align:left
                       for w, d in r4_robust.items())
     r5_html = table_html(r5_rows, ["雙多", "權值獨多", "櫃買獨多", "雙弱"])
     occ5 = "、".join(f"{k} {v}%" for k, v in r5_occ.items())
+
+    # R3b 胃納口徑對測
+    aph = "".join(f"<tr><th>{lb}</th><td>{h['s4_on']['txt']}</td><td>{h['s4_off']['txt']}</td>"
+                  f"<td>{(h['s4_on']['med'] - h['s4_off']['med']):+.2f}pp</td>"
+                  f"<td>{h['att_on']['txt']}</td><td>{h['att_off']['txt']}</td>"
+                  f"<td>{(h['att_on']['med'] - h['att_off']['med']):+.2f}pp</td></tr>"
+                  for lb, h in ap_head.items())
+    apj = "".join(f"<tr><th>{k}</th><td>{v['txt']}</td></tr>" for k, v in ap_joint.items())
+    yrs = sorted(set(ap_yrp.index) | set(ap_yrv.index))
+    apy = ("<tr><th>年</th>" + "".join(f"<th>{y}</th>" for y in yrs) + "</tr>"
+           + "<tr><th>價格版年均%</th>" + "".join(f"<td>{ap_yrp.get(y, float('nan')):+.1f}</td>" for y in yrs) + "</tr>"
+           + "<tr><th>量能版年均pp</th>" + "".join(f"<td>{ap_yrv.get(y, float('nan')):+.2f}</td>" for y in yrs) + "</tr>")
+
+    # R8 單利曲線標籤
+    cvlab = {k: f"Σ{v['sum']:+,}pp n={v['n']}" for k, v in curves.items()}
 
     lad2 = "".join(f"<tr><th>{c}</th><td>{lstat(w_two, c, 'k20')['txt']}</td><td>{lstat(w_two, c)['txt']}</td>"
                    f"<td>{lstat(w_two, c, 'k60o')['txt']}</td></tr>"
@@ -537,6 +646,8 @@ td,th{border:1px solid #333;padding:4px 9px;text-align:right} th{text-align:left
         "stack": ser(STACK["TAIEX"].astype(float), "2000-01-01"),
         "slope": ser(SLOPE_BULL.astype(float), "2000-01-01"),
         "anchors": [str(w["anchor"].date()) for w in w_two if w["anchor"] >= pd.Timestamp("2025-07-01")],
+        "appv": ser(APP_V, "2018-01-01"),
+        "cv": {k: {"d": v["d"], "v": v["v"], "lab": cvlab[k]} for k, v in curves.items()},
     }
     bg = {"paper_bgcolor": "#1a1a19", "plot_bgcolor": "#22221f",
           "font": {"color": "#ddd", "size": 12}, "margin": {"t": 30, "l": 50, "r": 20, "b": 40}}
@@ -571,6 +682,11 @@ V4處置空頭最肥=逆循環;<b>多頭期九策略無一突出</b>;H5多頭反
 配置引擎建議採排列版</td></tr>
 <tr><td>R3 波動位階雙軸</td><td class="good">✅獨立第二軸</td><td>高波日trend三分天下({dist_html});
 亂世派=跌觸發高波才有肉、治世派=score4低波/risk-on才肥</td></tr>
+<tr><td>R3b 胃納口徑對測(07-31追加)</td><td class="good">✅價格版勝出+象限力學驗證</td><td>價格版score4分離+6.72pp
+vs 量能版+3.93pp(corr=0.53,量能版=交叉驗證副口徑);<b>聯合檢定=升溫段內胃納把score4切成+23.91%/87% vs
++0.04%/50%=「胃納要跟波動一起看」成立</b>;跌觸發的家=亂世格+10.83%/78%;過熱格新發現=score4急拉段+23.91%/87%(n=46觀察)</td></tr>
+<tr><td>R8 單利權益曲線(07-31追加)</td><td class="good">✅天氣開關目視兌現</td><td>跌觸發Σ+4,537pp與考卷一字不差;
+升溫段52%事件吃61%的肉;score4開關=胃納張非ts;象限版接力棒=值班表忠實版(描述性)</td></tr>
 <tr><td>R4 期限結構接力棒</td><td class="good">✅兩派主場互斥</td><td>跌觸發升溫段突出而退潮歸零;
 score4退潮段最肥;單窗口位階(10/20/60)結論穩健</td></tr>
 <tr><td>R5 兩市排列2×2</td><td class="warn">🟡n薄觀察層</td><td>櫃買獨多=題材天堂格、雙弱=事件策略最肥、
@@ -633,6 +749,35 @@ score4退潮段最肥;單窗口位階(10/20/60)結論穩健</td></tr>
 <div class="note">兩派分工成形:<b>亂世派</b>(跌觸發)=高波才有肉,低波近零;<b>治世派</b>(score4)=低波+risk-on才肥。
 共振介於中間(雙軸中性)。</div>
 
+<h2>R3b 胃納口徑考卷——價格版 vs 量能版(2026-07-31使用者挑戰後加開)</h2>
+<div class="note"><b>問題:</b>「胃納=資金風險偏好」這個解讀怎麼驗證?會不會該用成交量?<br>
+<b>兩個候選口徑:</b>①<b>價格版</b>(現行天氣儀Y軸)=櫃買/加權<b>指數比值</b>20日變化%——量的是中小型「漲得比權值好不好」;
+②<b>量能版</b>=櫃買成交值占兩市比%(20日均)的20日變化pp——量的是資金「人在哪裡」。兩版相關係數={ap_corr:+.2f}。<br>
+<b>驗證標準(力學派):</b>解讀對不對,看它能不能<b>分離策略報酬</b>——軸有分離力=軸有意義,語意是附贈的。</div>
+<h3>正面對決:同一個訊號各切on/off,誰的分離差距(on−off)大</h3>
+<table><tr><th>口徑</th><th>score4×胃納張</th><th>score4×胃納縮</th><th>差距</th>
+<th>跌觸發×胃納張</th><th>跌觸發×胃納縮</th><th>差距</th></tr>{aph}</table>
+<h3>波動聯合檢定(使用者:「胃納要跟波動一起看才有意義」——檢定=在同一波動段內,胃納還有沒有加分離力)</h3>
+<table>{apj}</table>
+<h3>年度敘事對照(語意檢查:年均值與已知行情敘事是否相符)</h3>
+<div class="scroll" style="max-width:100%;overflow-x:auto">{apy}</div>
+<div class="note">讀法:2021中小型狂潮年應為正、2022熊市與2024權值AI年應為負——兩版都該通過這個「常識對帳」,
+通過才有資格談「風險偏好」語意。當下讀數:價格版{ap_now['P']:+.1f}%/量能版{ap_now['V']:+.2f}pp
+(櫃買占比20日均{ap_now['share']}%)。</div>
+<div id="c5" style="height:300px"></div>
+<h3>R3b判決</h3>
+<div class="note">
+①<b>價格版勝出,Y軸維持現行口徑</b>:score4分離差價格版+6.72pp vs 量能版+3.93pp(跌觸發兩版同向,
+量能版略深但整體價格版全面);corr=+0.53=兩構念相關但不相同,<b>量能版降為交叉驗證副口徑</b>
+(兩版方向一致=「風險偏好」構念穩健,不是單一口徑的巧合);<br>
+②<b>「胃納要跟波動一起看」成立(聯合檢定)</b>:升溫段內胃納把score4切成+23.91%/87% vs +0.04%/50%
+(差23.9pp!)、退潮段內+32.08%/85% vs +7.95%/72%——<b>單軸的分離力遠不如聯合,這就是四象限設計的力學依據</b>;<br>
+③跌觸發的家=<b>亂世格(升溫×胃納縮)+10.83%/78%(n=227)</b>,修復觀望格(退潮×縮)連跌觸發都負(-3.05%/38%)
+=值班表逐格兌現;<br>
+④<b>新發現=「過熱」格(升溫×胃納張)score4 +23.91%/87%(n=46)</b>:升溫不只出現在崩盤,也出現在
+V底右側急拉段——過熱格改讀「急拉段」:score4意外肥但波動仍高、含急轉風險(n小觀察層,象限命名維持)。
+</div>
+
 <h2>R4 波動期限結構ts=vol10/vol60——兩派的接力棒</h2>
 <div class="note">ts&gt;1=短期波動高於長期=風暴升溫中;ts&lt;1=退潮。主場確認線:升溫&gt;1.2/退潮&lt;0.8(天氣儀X軸虛線)。</div>
 {r4_html}
@@ -691,6 +836,26 @@ SPX的資訊改由上面兩市層×SPX旗標承載(6/6分離,口徑固定可維�
 <div class="scroll">{wave_table(w_glob, '台股', '美股')}</div>
 <div id="c1" style="height:360px"></div>
 
+<h2>R8 單利權益曲線——天氣開關的目視驗收(每筆1單位Σpp,不複利)</h2>
+<div class="note">口徑=各事件報酬×100後按日累加(同日多筆各1單位),<b>單利非複利</b>(事件重疊無法複利,
+比照跌觸發考卷Σpp慣例);跌觸發持有10日/score4持有60日,<b>兩策略Σpp不能互比</b>,只看「同策略開關前後」。
+接力棒=升溫段(ts&gt;1.2)只做跌觸發+退潮段(ts&lt;0.8)只做score4的合併。</div>
+<div id="c6" style="height:340px"></div>
+<div id="c7" style="height:340px"></div>
+<div id="c8" style="height:340px"></div>
+<div class="note">讀法(Σpp/事件數):
+①跌觸發:全開{curves['att_all']['sum']:+,}pp/{curves['att_all']['n']}筆
+(<b>Σ+4,537pp與跌觸發考卷紀錄一字不差=管線自驗</b>),升溫段{curves['att_hot']['sum']:+,}pp/{curves['att_hot']['n']}筆
+={curves['att_hot']['n']/curves['att_all']['n']*100:.0f}%的事件吃走{curves['att_hot']['sum']/curves['att_all']['sum']*100:.0f}%的肉,
+退潮段近乎躺平——風暴中做反轉;<br>
+②score4:全開{curves['s4_all']['sum']:+,}pp/{curves['s4_all']['n']}筆,退潮段最肥但中性段仍有肉=
+<b>ts單軸對score4切不乾淨,score4真正的開關是胃納張(risk-on),見R3b聯合檢定</b>;<br>
+③接力棒:ts版{curves['relay']['sum']:+,}pp/{curves['relay']['n']}筆 vs
+象限版{curves['relay_q']['sum']:+,}pp/{curves['relay_q']['n']}筆 vs 全開{curves['both_all']['sum']:+,}pp/{curves['both_all']['n']}筆
+——象限版(值班表忠實版)以{curves['relay_q']['n']/curves['both_all']['n']*100:.0f}%的事件數留住
+{curves['relay_q']['sum']/curves['both_all']['sum']*100:.0f}%的Σ;⚠象限版=事後從聯合表選格,描述性非預註冊。<br>
+單利曲線斜率=事件密度非資金曲線;兩策略持有期不同(10日vs60日),Σ不能互比。</div>
+
 <h2>R7 當下讀數速查(與天氣儀v1對照)</h2>
 <table>{cur_html}</table>
 <div class="note">與dashboard天氣儀v1同源同口徑;天氣儀每日更新,本表=收官日快照。</div>
@@ -726,6 +891,21 @@ Plotly.newPlot('c2', [{{x:D.ts.d,y:D.ts.v,name:'ts=vol10/vol60'}}],
  shapes:[[1,'#888'],[1.2,'#e06c5a'],[0.8,'#7ec97e']].map(s=>({{type:'line',y0:s[0],y1:s[0],xref:'paper',x0:0,x1:1,line:{{color:s[1],dash:'dash',width:1}}}}))}},BG));
 Plotly.newPlot('c3', [{{x:D.app.d,y:D.app.v,name:'胃納',fill:'tozeroy'}}],
  Object.assign({{title:'胃納=櫃買/加權比值20日變化%(2018起):正=敢買中小型'}} ,BG));
+Plotly.newPlot('c5', [
+ {{x:D.app.d,y:D.app.v,name:'價格版(%)',line:{{width:1.5}}}},
+ {{x:D.appv.d,y:D.appv.v,name:'量能版(pp)',yaxis:'y2',line:{{width:1.5,dash:'dot'}}}},
+], Object.assign({{title:'胃納兩口徑對照(2018起):價格版=左軸% / 量能版=右軸pp',
+ yaxis2:{{overlaying:'y',side:'right',showgrid:false}}}},BG));
+const CVL = (k,nm,st)=>({{x:D.cv[k].d,y:D.cv[k].v,name:nm+'｜'+D.cv[k].lab,line:st||{{}}}});
+Plotly.newPlot('c6', [CVL('att_all','跌觸發全事件'),CVL('att_hot','×升溫ts>1.2',{{width:2.5,color:'#e06c5a'}}),
+ CVL('att_cool','×退潮ts<0.8',{{dash:'dot',color:'#5dade2'}})],
+ Object.assign({{title:'跌觸發(t10)單利累積pp:升溫段吃肉,退潮段躺平'}},BG));
+Plotly.newPlot('c7', [CVL('s4_all','score4全事件'),CVL('s4_cool','×退潮ts<0.8',{{width:2.5,color:'#7ec97e'}}),
+ CVL('s4_hot','×升溫ts>1.2',{{dash:'dot',color:'#c3a55a'}})],
+ Object.assign({{title:'score4(ret60)單利累積pp:退潮段吃肉'}},BG));
+Plotly.newPlot('c8', [CVL('both_all','兩策略全開'),CVL('relay','ts版接力棒(升溫跌觸發+退潮score4)',{{dash:'dot',color:'#c3a55a'}}),
+ CVL('relay_q','象限版接力棒(亂世跌觸發+risk-on score4)',{{width:2.5,color:'#ffd97a'}})],
+ Object.assign({{title:'接力棒 vs 全開(⚠持有期混合,概念示意;象限版=值班表忠實版)'}},BG));
 Plotly.newPlot('c4', [
  {{x:D.px.d,y:D.px.v,name:'加權(log)',yaxis:'y',line:{{color:'#8ab4f8',width:1}}}},
  {{x:D.stack.d,y:D.stack.v.map(v=>v?1.06:null),name:'排列版多頭',yaxis:'y2',mode:'markers',marker:{{size:3,color:'#7ec97e'}}}},

@@ -4982,10 +4982,10 @@ function renderWeatherGauge() {
   };
   document.getElementById("weatherDuty").innerHTML =
     "<div style=\"display:grid;grid-template-columns:1fr 1fr;gap:8px\">" +
-    cell("題材天堂", "退潮×胃納張<br><b>score4營收動能值班</b><br>+13.81%/勝76%(退潮<0.8)") +
-    cell("過熱", "升溫×胃納張<br>罕見格,提防急轉<br>不加倉不追價") +
+    cell("題材天堂", "退潮×胃納張<br><b>score4營收動能值班</b><br>退潮×張歷史+32.1%/勝85%") +
+    cell("過熱", "升溫×胃納張=急拉段<br>score4意外肥+23.9%/87%(n=46)<br>但波動高提防急轉(觀察層)") +
     cell("修復觀望", "退潮×胃納縮<br>等三重發車鈴:<br>" + bellLine) +
-    cell("亂世", "升溫×胃納縮<br><b>跌觸發+9.86%/勝76%</b><br>甜蜜格/處置照燈,題材逆風") +
+    cell("亂世", "升溫×胃納縮<br><b>跌觸發+10.83%/勝78%(亂世格n=227)</b><br>甜蜜格/處置照燈,題材逆風") +
     "</div><div class=\"hint\" style=\"margin-top:6px\">口訣：風暴中做反轉（事件策略）、風暴後做動能（題材線）。左欄=退潮、右欄=升溫；上排=胃納張、下排=胃納縮。</div>";
   // ── RRG式軌跡圖 ──
   const t = W.trail;
