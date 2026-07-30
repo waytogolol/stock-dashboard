@@ -1835,25 +1835,44 @@ def build():
             _hist_ep.append({"d": str(_ep_start.date()),
                               "note": f"本次,峰值{_ep_peak}件" + ("(史上第二高)" if _ep_peak >= 50 else "")})
 
+        # 指數層歷史回測提醒(動態算,不寫死): 7次canonical episode的加權k20/k60
+        _hs_k = {20: [], 60: []}
+        for _e in _hist_ep:
+            if _e["note"].startswith("本次"):
+                continue
+            _edt = pd.Timestamp(_e["d"])
+            if _edt in _pos6:
+                _ei = _pos6[_edt]
+                for _k in (20, 60):
+                    if _ei + _k < len(_twc):
+                        _hs_k[_k].append(float(_twc.iloc[_ei + _k] / _twc.iloc[_ei] - 1) * 100)
+        _hist_line = "・".join(
+            f"k{_k}中位{pd.Series(_v).median():+.1f}%/勝率{(pd.Series(_v) > 0).mean()*100:.0f}%(n={len(_v)})"
+            for _k, _v in _hs_k.items() if _v)
+
         _light_names = {"thermo": "恐慌溫度計", "b": "亞跌B", "conv": "雙收斂",
                          "ld": "跌停廣度", "warn": "融資警戒帶"}
         _lit_on = [k for k in ("thermo", "b", "conv", "ld", "warn") if _lit[k]]
         if _lit["thermo"]:
             _co_lit = [_light_names[k] for k in _lit_on if k not in ("thermo",)]
-            _headline = (f"🔴 {sum(_lit.values())}/5燈亮・曝險{_expo6:.2f} — "
+            _headline = (f"🔴 {sum(_lit.values())}/5燈亮・事件倉信心{_expo6*100:.0f}% — "
                          f"恐慌溫度計本輪episode {str(_ep_start.date()) if _ep_start else '?'}觸發"
                          f"(峰值{_ep_peak}件{'/史上第二高' if _ep_peak >= 50 else ''}),"
                          f"持有窗剩{_remain6(_thd6, 60)}個交易日"
                          + ("；同步在窗:" + "、".join(_co_lit) if _co_lit else "")
                          + "。歷史同類事件7戰6勝(僅2022-06-22慢熊中段失手)。")
         elif sum(_lit.values()) > 0:
-            _headline = (f"🟡 {sum(_lit.values())}/5燈亮・曝險{_expo6:.2f} — "
+            _headline = (f"🟡 {sum(_lit.values())}/5燈亮・事件倉信心{_expo6*100:.0f}% — "
                          f"{'、'.join(_light_names[k] for k in _lit_on)}在窗,恐慌溫度計本身未觸發")
         else:
-            _headline = "🟢 無燈號・曝險0.00 — 市場處於平淡期,無極端讀數"
+            _headline = "🟢 無燈號・事件倉信心0% — 市場處於平淡期,無極端讀數"
+        if _depth6.get("tw") is not None:
+            _headline += (f"｜總水位節奏器:殺出深度{_depth6['tw']}%={_depth_zone6(_depth6['tw'])}"
+                          "(事件倉聽燈號、總帳戶水位聽深度,乾淨帶+縮量止跌才是拉滿格)")
 
         data["market_thermo"] = {
             "asof": str(_last6.date()),
+            "hist_line": _hist_line,
             "series": [{"d": str(d.date())[5:], "sweet": _sweet[d], "ld": _ldcnt[d]}
                        for d in _tw_dates[-10:]],
             "thermo": {"today": _sweet[_last6], "lit": _lit["thermo"],
@@ -3230,7 +3249,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div class="rule-card">
     <div class="rule-title">🌡️ 大盤溫度計——偵測「大盤恐慌殺到底」的五個買點燈</div>
     <div class="rule-item"><b>這在幹嘛（一句話）</b>：五個燈各自偵測一種「市場被嚇壞、一堆人被迫賣股票」的極端日。關鍵機制：因為斷頭、停損、風控砍倉而賣（人被迫賣，不是公司變壞）＝賣完就沒賣壓了，歷史上之後多半反彈——所以<b>燈亮＝進場窗開啟，是買點提示不是逃命警報</b>。</div>
-    <div class="rule-item"><b>怎麼用</b>：燈亮那天照該燈卡片上的持有期買進抱著（每張卡片都寫了抱幾天、歷史賺多少、勝率多少）；<b>多個燈同一天亮＝多個獨立證據都說是底，可信度疊加</b>（例：2025-04-08兩燈同亮→之後60日+23%）。「曝險讀數」＝五燈加權的總信心分數（0~1）：1.0=可打滿常規倉位，0=空手觀望（權重：溫度計0.6/亞跌B 0.4/其餘各0.3，加總封頂1.0，研究稿非下單指令）。</div>
+    <div class="rule-item"><b>怎麼用</b>：燈亮那天照該燈卡片上的持有期買進抱著（每張卡片都寫了抱幾天、歷史賺多少、勝率多少）；<b>多個燈同一天亮＝多個獨立證據都說是底，可信度疊加</b>（例：2025-04-08兩燈同亮→之後60日+23%）。「事件倉信心」（前身曝險v0）＝五燈加權的信心分數（0~100%）：100%=本次恐慌事件的<b>常規事件倉</b>可打滿，0%=空手觀望（權重：溫度計0.6/亞跌B 0.4/其餘各0.3，加總封頂，研究稿非下單指令）。⚠它管的是「事件倉」不是總帳戶——<b>總帳戶水位請看殺出深度</b>：死亡谷帶=殺一半最毒別急著滿手，乾淨帶(≤-25%)+縮量止跌訊號才是拉滿格（2026-07-31 P5×深度交叉考卷；歷史上溫度計在死亡谷帶3戰3勝、唯一敗筆2022-06-22反而在乾淨帶＝深度管不住極端恐慌日，事件倉照燈操作即可）。</div>
     <div class="rule-item"><b>⚠什麼時候會失靈</b>：①<b>慢熊中段的恐慌不是底</b>——已經陰跌好幾個月後才出現的恐慌日，接了會繼續跌（2022-06是五燈系統唯一的失敗案例）；②<b>跌停家數暴增的「第一腿」不是底</b>（2020-01-30跌停286家，之後60日還跌6.3%，要等第二次）；③<b>美股也在跌的全球危機日別接</b>，等下一個恐慌極點；④8-10月的亞跌B訊號只吃短線（亞洲季節性逆風）。</div>
     <div class="rule-item" style="color:var(--tx3)">技術註記：「甜蜜格」＝個股層恐慌接刀條件（近40日曾漲20%×已回檔≥20%×當日跌6~9%×成交值>1億）；「並發數」＝今天全市場同時符合的檔數，越多＝被砍得越兇越全面。樣本池1,379檔研究尺；跌停＝前收×0.9進位近似；崩盤日並發數需要當日價格，先跑 python update_all.py 再看。詳細研究過程與逐事件紀錄→研究報告/research_thermometer.html。</div>
   </div>
@@ -4737,7 +4756,7 @@ function renderWarRoom() {
     "・大盤均線判定用價格至 " + (rg.px_asof || "?") + "・題材熱度快照 " + (rg.asof || "?") +
     "・跌觸發清單資料至 " + ((DATA.attwatch || {}).asof || "?") +
     "——若上面日期落後超過一週,先跑 python update_all.py 再看本板。</div>" +
-    "<div style=\"color:var(--tx3);font-size:11px;margin-top:4px\">技術附註：溫度計" + (lit === null ? "?" : lit) + "/5燈・曝險" +
+    "<div style=\"color:var(--tx3);font-size:11px;margin-top:4px\">技術附註：溫度計" + (lit === null ? "?" : lit) + "/5燈・事件倉信心" +
     (expo === null ? "?" : expo) + "・季線" + (rg.above60 ? "上" : "下") + "・月線" + (rg.above20 ? "上" : "下") +
     "・TOM" + (inTom ? "窗內" : "窗外") + "(25日~次月5日,僅執行時點參考)・題材打法=H3/H5/H6觀察層候選(未上板規則,詳🧭地圖說明);" +
     "口徑與歷史數據見下方「大盤態勢」與研究報告/research_heat_flow.html。</div>";
@@ -4799,8 +4818,9 @@ function renderThermoTab() {
     hlEl.style.color = mt.thermo.lit ? "var(--red)" : (mt.n_lit > 0 ? "#c98a1c" : "var(--tx3)");
   }
   document.getElementById("thermoAsof").textContent =
-    "資料至 " + mt.asof + "｜" + mt.n_lit + " 燈亮｜水位階梯v0曝險讀數 " + mt.exposure.toFixed(2) +
-    "（研究稿，非下單指令）";
+    "資料至 " + mt.asof + "｜" + mt.n_lit + " 燈亮｜事件倉信心 " + (mt.exposure * 100).toFixed(0) +
+    "%（前身曝險v0，研究稿非下單指令）" +
+    (mt.hist_line ? "｜指數層歷史回測: " + mt.hist_line : "");
   const sRows = (mt.series || []).map(function(r) {
     return {"日期": r.d, "甜蜜格並發": r.sweet >= 20 ? "<b style=\"color:var(--red)\">" + r.sweet + "</b>" : r.sweet,
             "跌停家數": r.ld >= 20 ? "<b style=\"color:var(--red)\">" + r.ld + "</b>" : r.ld};
@@ -4826,7 +4846,7 @@ function renderThermoTab() {
         return "<span style=\"margin-right:12px;color:" + col + (m[1] ? ";font-weight:700" : "") + "\">" +
           (m[1] ? "●" : "○") + m[0] + (m[2] !== "" ? " " + m[2] : "") + "</span>";
       }).join("") +
-      "<span style=\"color:var(--tx3)\">｜曝險v0 " + mt.exposure.toFixed(2) + "｜" + mt.asof + "</span></a>";
+      "<span style=\"color:var(--tx3)\">｜事件倉信心 " + (mt.exposure * 100).toFixed(0) + "%｜" + mt.asof + "</span></a>";
     strip.style.display = "";
     const btn = document.getElementById("sigViewThermoBtn");
     if (btn && mt.n_lit) btn.innerHTML = "🌡️大盤溫度計 🔔" + mt.n_lit;
