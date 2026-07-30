@@ -353,6 +353,50 @@ def r8():
     return cv
 
 
+# ══ R9 指數層擇時權益曲線(2026-07-31使用者指定:標的=加權指數,看天氣/均線訊號擇時後的曲線) ══
+def r9():
+    px = IDX["TAIEX"]
+    px = px[px.index >= "2006-01-01"]        # 統一起點=全訊號皆有值(胃納需櫃買2005起+緩衝)
+    ret = px.pct_change().fillna(0)
+    ap = APP.reindex(px.index)
+    ts = VOL["TAIEX"]["ts"].reindex(px.index)
+    stack = STACK["TAIEX"].reindex(px.index).fillna(0).astype(bool)
+    slope = SLOPE_BULL.reindex(px.index).fillna(0).astype(bool)
+    sigs = {
+        "買進持有": pd.Series(True, index=px.index),
+        "排列版開關(月>季>年才持有)": stack,
+        "斜率版開關(價>年線∧斜率>0才持有)": slope,
+        "胃納張才持有(胃納>0)": (ap > 0),
+        "排列∧胃納張": (stack & (ap > 0)),
+    }
+    out = {}
+    for name, sig in sigs.items():
+        pos = sig.shift(1).fillna(False).astype(float)   # 收盤判訊號,隔日生效=零前視
+        sr = ret * pos
+        eq = (1 + sr).cumprod()
+        yrs = (eq.index[-1] - eq.index[0]).days / 365.25
+        ann = (float(eq.iloc[-1]) ** (1 / yrs) - 1) * 100
+        vol_ann = float(sr.std()) * np.sqrt(252) * 100
+        out[name] = {
+            "eq": eq.iloc[::5],                          # 週抽樣畫圖
+            "mult": round(float(eq.iloc[-1]), 2), "ann": round(ann, 1),
+            "mdd": round(float((eq / eq.cummax() - 1).min() * 100), 1),
+            "expo": round(float(pos.mean()) * 100), "sw": int((pos.diff().abs() > 0).sum()),
+            "sharpe": round(ann / vol_ann, 2) if vol_ann else 0}
+    # 象限×指數日報酬(訊號同樣shift(1))
+    quad = pd.Series(np.where(ts >= 1, np.where(ap >= 0, "急拉段", "亂世"),
+                              np.where(ap >= 0, "題材天堂", "修復觀望")), index=px.index).shift(1)
+    qstat = {}
+    for q in ("題材天堂", "急拉段", "修復觀望", "亂世"):
+        r = ret[(quad == q).values]
+        if len(r):
+            qstat[q] = {"days": int(len(r)), "occ": round(len(r) / len(ret) * 100),
+                        "ann": round(float(r.mean()) * 252 * 100, 1),
+                        "vol": round(float(r.std()) * np.sqrt(252) * 100, 1),
+                        "win": round(float((r > 0).mean()) * 100)}
+    return out, qstat
+
+
 # ══ R6 起火點階梯 ═══════════════════════════════════════
 # 口徑(2026-07-31收官定案,見報告敏感度表): 起火=vp10>80且前quiet=21交易日全程<=80(安靜期,
 # 風暴中的再燃不算新火——不設安靜期會把2~5月連續高波算成十幾次事件,稀釋到全是市場平均);
@@ -491,8 +535,13 @@ def main():
     w_two, n_ev2, w_glob, n_evg, runs = r6()
     cur = r7()
     curves = r8()
+    r9_out, r9_q = r9()
 
     print("=" * 90)
+    print("指數擇時(2006起,隔日生效):")
+    for name, o in r9_out.items():
+        print(f"  {name}: {o['mult']}x 年化{o['ann']}% MDD{o['mdd']}% 曝險{o['expo']}% 切換{o['sw']}次 粗夏普{o['sharpe']}")
+    print("象限×指數日報酬(年化):", {k: f"{v['ann']}%/佔{v['occ']}%" for k, v in r9_q.items()})
     print(f"胃納口徑對測: corr(價格版,量能版)={ap_corr:+.2f} 當下 P={ap_now['P']}% V={ap_now['V']}pp 占比20日均={ap_now['share']}%")
     for label in ("價格版", "量能版"):
         h = ap_head[label]
@@ -532,7 +581,7 @@ def main():
     html = build_html(r1_rows, r1_occ, r1_cur, r1_neg, r2_out, r2_pairs, r2_lead, r2_cur, r2_gap,
                       r3_rows, r3_dist, r3_nest, r3_s4, r4_rows, r4_robust,
                       r5_rows, r5_occ, r5_cur, w_two, n_ev2, w_glob, n_evg, runs, cur, sens,
-                      (ap_corr, ap_head, ap_joint, ap_yrp, ap_yrv, ap_now), curves)
+                      (ap_corr, ap_head, ap_joint, ap_yrp, ap_yrv, ap_now), curves, r9_out, r9_q)
     open(OUT, "w", encoding="utf-8").write(html)
     print(f"已產出 {OUT}")
 
@@ -556,7 +605,7 @@ def wave_table(waves, label1, label2):
 def build_html(r1_rows, r1_occ, r1_cur, r1_neg, r2_out, r2_pairs, r2_lead, r2_cur, r2_gap,
                r3_rows, r3_dist, r3_nest, r3_s4, r4_rows, r4_robust,
                r5_rows, r5_occ, r5_cur, w_two, n_ev2, w_glob, n_evg, runs, cur, sens,
-               appetite, curves):
+               appetite, curves, r9_out, r9_q):
     ap_corr, ap_head, ap_joint, ap_yrp, ap_yrv, ap_now = appetite
     css = """
 body{background:#1a1a19;color:#fff;font-family:"Noto Sans TC",sans-serif;margin:24px;max-width:1150px}
@@ -602,6 +651,13 @@ td,th{border:1px solid #333;padding:4px 9px;text-align:right} th{text-align:left
 
     # R8 單利曲線標籤
     cvlab = {k: f"Σ{v['sum']:+,}pp n={v['n']}" for k, v in curves.items()}
+    # R9 指數擇時
+    r9h = "".join(f"<tr><th>{n}</th><td>{o['mult']}x</td><td>{o['ann']:+.1f}%</td><td>{o['mdd']}%</td>"
+                  f"<td>{o['expo']}%</td><td>{o['sw']}</td><td>{o['sharpe']}</td></tr>"
+                  for n, o in r9_out.items())
+    r9qh = "".join(f"<tr><th>{q}</th><td>{v['occ']}%</td>"
+                   f"<td class=\"{'good' if v['ann'] > 0 else 'bad'}\">{v['ann']:+.1f}%</td>"
+                   f"<td>{v['vol']}%</td><td>{v['win']}%</td></tr>" for q, v in r9_q.items())
 
     lad2 = "".join(f"<tr><th>{c}</th><td>{lstat(w_two, c, 'k20')['txt']}</td><td>{lstat(w_two, c)['txt']}</td>"
                    f"<td>{lstat(w_two, c, 'k60o')['txt']}</td></tr>"
@@ -648,6 +704,8 @@ td,th{border:1px solid #333;padding:4px 9px;text-align:right} th{text-align:left
         "anchors": [str(w["anchor"].date()) for w in w_two if w["anchor"] >= pd.Timestamp("2025-07-01")],
         "appv": ser(APP_V, "2018-01-01"),
         "cv": {k: {"d": v["d"], "v": v["v"], "lab": cvlab[k]} for k, v in curves.items()},
+        "idx": {n: {"d": [str(d.date()) for d in o["eq"].index],
+                    "v": [round(float(x), 3) for x in o["eq"].values]} for n, o in r9_out.items()},
     }
     bg = {"paper_bgcolor": "#1a1a19", "plot_bgcolor": "#22221f",
           "font": {"color": "#ddd", "size": 12}, "margin": {"t": 30, "l": 50, "r": 20, "b": 40}}
@@ -687,6 +745,9 @@ vs 量能版+3.93pp(corr=0.53,量能版=交叉驗證副口徑);<b>聯合檢定=�
 +0.04%/50%=「胃納要跟波動一起看」成立</b>;跌觸發的家=亂世格+10.83%/78%;過熱格新發現=score4急拉段+23.91%/87%(n=46觀察)</td></tr>
 <tr><td>R8 單利權益曲線(07-31追加)</td><td class="good">✅天氣開關目視兌現</td><td>跌觸發Σ+4,537pp與考卷一字不差;
 升溫段52%事件吃61%的肉;score4開關=胃納張非ts;象限版接力棒=值班表忠實版(描述性)</td></tr>
+<tr><td>R9 指數擇時權益曲線(07-31使用者指定)</td><td class="warn">🟡均線=風控工具/胃納≠擇時器</td><td>斜率版開關
+夏普0.57/MDD-22.7%(買進持有0.49/-58.3%)=買MDD不買報酬;胃納擇時大盤0.36=爛+象限對指數無梯度
+=<b>天氣儀是策略選擇器不是大盤擇時器</b>,三軸各司其職</td></tr>
 <tr><td>R4 期限結構接力棒</td><td class="good">✅兩派主場互斥</td><td>跌觸發升溫段突出而退潮歸零;
 score4退潮段最肥;單窗口位階(10/20/60)結論穩健</td></tr>
 <tr><td>R5 兩市排列2×2</td><td class="warn">🟡n薄觀察層</td><td>櫃買獨多=題材天堂格、雙弱=事件策略最肥、
@@ -856,6 +917,25 @@ SPX的資訊改由上面兩市層×SPX旗標承載(6/6分離,口徑固定可維�
 {curves['relay_q']['sum']/curves['both_all']['sum']*100:.0f}%的Σ;⚠象限版=事後從聯合表選格,描述性非預註冊。<br>
 單利曲線斜率=事件密度非資金曲線;兩策略持有期不同(10日vs60日),Σ不能互比。</div>
 
+<h2>R9 指數層擇時權益曲線——標的=加權指數,天氣/均線訊號直接擇時(2026-07-31使用者指定加開)</h2>
+<div class="note">口徑:2006起(全訊號皆有值的統一起點),收盤判訊號<b>隔日生效=零前視</b>,空手=現金(不計利息),
+無交易成本(指數不可直接交易,期貨可近似;切換次數見表,排列版26年不到百次=成本敏感度低)。
+<b>問題意識:天氣/均線訊號拿來擇時大盤本身,能不能贏買進持有?</b></div>
+<table><tr><th>版本</th><th>倍數(2006起)</th><th>年化</th><th>MDD</th><th>曝險</th><th>切換次數</th><th>粗夏普</th></tr>{r9h}</table>
+<h3>四象限×指數日報酬(象限訊號同樣隔日生效)</h3>
+<table><tr><th>象限</th><th>日數占比</th><th>年化報酬</th><th>年化波動</th><th>日勝率</th></tr>{r9qh}</table>
+<div id="c9" style="height:420px"></div>
+<div class="note" id="r9verdict"><b>判讀(跑完定稿):</b><br>
+①<b>均線開關買的是MDD不是報酬</b>:兩版倍數都輸買進持有(6.18x),但MDD從-58.3%砍到-29.4%(排列)/-22.7%(斜率),
+粗夏普持平~微升——趨勢濾網的經典結論,擇時是風險控制工具非報酬增強器;<br>
+②<b>指數擇時這件事上斜率版反而略優</b>(夏普0.57/MDD-22.7% vs 排列版0.50/-29.4%):R2說排列版「切換少、變天早」
+是指<b>當策略天氣標籤</b>用(少假翻轉),但直接開關大盤時,斜率版多留12pp曝險反而效率高——兩個工作用兩副眼鏡,不矛盾;<br>
+③<b>胃納拿去擇時大盤=爛</b>(0.36,MDD-40.9%,切換450次),象限×指數日報酬也無梯度
+(修復觀望年化反而最高13.7%——「修復」兩字本來就是漲回來的日子)=<b>鐵證:天氣儀是「策略選擇器」不是「大盤擇時器」</b>,
+胃納的資訊全在「該做題材還是做事件」(R3b分離23.9pp),不在大盤方向——天氣定值班、趨勢管方向、深度管總水位,三軸各司其職;<br>
+⚠此節=描述性回測(規則來自本卷研究,非預註冊;無成本無滑價;空手期現金零報酬),定位=研究曲線非交易系統;
+個股/事件策略(R8)才是體系的主戰場,指數擇時是天氣儀的體檢表。</div>
+
 <h2>R7 當下讀數速查(與天氣儀v1對照)</h2>
 <table>{cur_html}</table>
 <div class="note">與dashboard天氣儀v1同源同口徑;天氣儀每日更新,本表=收官日快照。</div>
@@ -906,6 +986,9 @@ Plotly.newPlot('c7', [CVL('s4_all','score4全事件'),CVL('s4_cool','×退潮ts<
 Plotly.newPlot('c8', [CVL('both_all','兩策略全開'),CVL('relay','ts版接力棒(升溫跌觸發+退潮score4)',{{dash:'dot',color:'#c3a55a'}}),
  CVL('relay_q','象限版接力棒(亂世跌觸發+risk-on score4)',{{width:2.5,color:'#ffd97a'}})],
  Object.assign({{title:'接力棒 vs 全開(⚠持有期混合,概念示意;象限版=值班表忠實版)'}},BG));
+Plotly.newPlot('c9', Object.keys(D.idx).map((n,i)=>({{x:D.idx[n].d,y:D.idx[n].v,name:n,
+ line:{{width:i===0?1.2:1.8,dash:i===0?'dot':'solid'}}}})),
+ Object.assign({{title:'指數層擇時權益曲線(加權,2006起,起點1,log,訊號隔日生效,無成本)',yaxis:{{type:'log'}}}},BG));
 Plotly.newPlot('c4', [
  {{x:D.px.d,y:D.px.v,name:'加權(log)',yaxis:'y',line:{{color:'#8ab4f8',width:1}}}},
  {{x:D.stack.d,y:D.stack.v.map(v=>v?1.06:null),name:'排列版多頭',yaxis:'y2',mode:'markers',marker:{{size:3,color:'#7ec97e'}}}},

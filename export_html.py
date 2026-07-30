@@ -3268,6 +3268,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div class="rule-item">回測(2022-2026，828筆/115題材-月/27題材)：<b>次月15號進場、持有60個交易日</b>。單筆中位+7.4%/勝率67%/TWII超額中位+2.55%(唯一超額為正的分層)。<b>倉位用法(V2形態)</b>：訊號照進——大盤破線時觸發的批次反而是最強反彈(回測擋掉它們MDD惡化到-39%)——但<b>整體部位×大盤態勢係數</b>(月線上100%/月線下60%/季線下30%)：縮放版夏普2.07/MDD-21.6% vs 滿倉1.90/-29.8%。</div>
     <div class="rule-item" style="color:var(--tx3)">警語：<b>regime依賴</b>——超額集中在題材行情年(2025年獨立顯著、2024年偏負)，屬「行情放大器」非全天候訊號；獨立樣本僅115個題材-月(LOTO+cluster bootstrap通過但n有限)；宇宙=FinMind覆蓋∩題材分類約283檔。成員欄列<b>前5大營收</b>(占題材營收中位97%，top-N等價測試佐證)——回測買法是題材全成員等權，前5大是聚焦顯示。📈=跳「題材動能與共振」頁看該題材營收圖。</div>
   </div>
+  <div class="hint" id="revmomWeather" style="font-weight:600"></div>
   <div class="hint" id="revmomTier" style="font-weight:600"></div>
   <h3 class="sec-title">最新訊號（<span id="revmomSigMonth"></span>）</h3>
   <div class="scroll-box"><table id="revmomNowTable"></table></div>
@@ -3282,6 +3283,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div class="rule-item">訊號：官方公告「因<b>累積跌幅</b>列注意股」（跌觸發）＝買訊——<b>次日開盤買、持10個交易日</b>（回測t10中位+5.62%/勝率66%/n=477，LOTO 8/8+bootstrap雙過；持有網格顯示20日更肥+13.59%/70%，持有期待裁）。<b>候選規則卡（三刀格,live驗證中）</b>：排除款4 ∧ 公告跌幅≥34% ∧ 前20日均成交值≥0.3億 ∧ 有本益比 → 回測+18.16%/79%(n=91,約11件/年)；金流≥1億版+20.04%/88%。劑量單調（跌越深越肥,Q4深39-59%→+12.67%/78%）＝「被洗越慘反彈越肥」定理第三度重現。</div>
     <div class="rule-item" style="color:var(--tx3)">⚠警語：⭘規則卡由跌觸發→劑量→金流三刀互動切出＝候選級證據；<b>2026年全組-2.50%/28%＝八年首個負年份</b>，本清單即為live驗證場，先觀察後投錢。已知虧損主源＝事後真升級處置的那群（-2.31%/45%）但事前切不開——下表計時器可當風險參考（越接近處置門檻越危險）。資料源fetch_attention.py，<b>每日跑才即時</b>（目前隨集體例行）。詳研究報告/research_attention.html。</div>
   </div>
+  <div class="hint" id="attwatchWeather" style="font-weight:600"></div>
   <div class="hint" id="attwatchAsof" style="font-weight:600"></div>
   <div class="scroll-box"><table id="attWatchTable"></table></div>
   <h3 class="sec-title" style="margin-top:16px">⏳ 處置倒數計時器 v2（2026-07-29升版：出關基數重算＋款門檻距離掃描）</h3>
@@ -4875,12 +4877,27 @@ function renderWarRoom() {
   }
   dos.push("<b>個股事件單照常</b>：處置股買點(V4第3日/V5倒數第3日尾盤買,抱到出關日開盤賣)、跌觸發規則卡" + (okN ? "（今天有✓" + okN + "檔）" : "") + "，照各自的日曆走、不受這面板影響。");
   donts.push("<b>看到紅旗就減碼</b>：🎯交集頁的「內部人解質警戒」「⚠款1+6漲警」是全體系最準的賣出提醒，別凹。");
+  // 天氣儀一行判定(2026-07-31上板,數字=R3b聯合檢定,詳research_regime_weather.html)
+  const W = DATA.weather_gauge;
+  let wxLine = "";
+  if (W && W.ts !== undefined) {
+    const wq = W.ts >= 1 ? (W.app >= 0 ? "急拉段" : "亂世") : (W.app >= 0 ? "題材天堂" : "修復觀望");
+    const wm = {
+      "亂世": "<b>事件策略主場</b>（跌觸發此格歷史+10.8%/勝78%）、營收動能score4逆風（死格+0.0%/勝50%）",
+      "題材天堂": "<b>營收動能score4主場</b>（此格歷史+32.1%/勝85%）、事件策略退場",
+      "修復觀望": "兩派都弱（跌觸發此格歷史-3.1%/勝38%）＝觀望等三重發車鈴",
+      "急拉段": "score4意外肥（+23.9%/勝87%,n小）但波動高提防急轉",
+    }[wq];
+    wxLine = "<div style=\"margin-top:4px\">🌦️ <b>天氣儀</b>：" + wq + "象限（波動" + W.ts + "×胃納" +
+      (W.app > 0 ? "+" : "") + W.app + "%）＝" + wm +
+      "。<a href=\"javascript:void(0)\" onclick=\"showTab(7);switchSigView('thermo')\" style=\"color:inherit\">詳天氣儀→</a></div>";
+  }
   // (2026-07-29「今日點名」曾短暫上板,同日使用者裁示撤除=各頁籤自己看就好,勿重加)
   el.innerHTML =
     "<div style=\"font-size:15px;font-weight:700;margin-bottom:6px\">🎛️ 大盤戰情板——現在是什麼盤、該做什麼</div>" +
     "<div style=\"font-size:14px\"><span style=\"color:" + mktColor + ";font-weight:700\">" + mktDesc + "</span>" +
     (panic ? "<span style=\"color:#e74c3c;font-weight:700\">（🌡️恐慌溫度計" + lit + "/5燈亮）</span>" : "") + "</div>" +
-    "<div style=\"margin-top:4px\">" + verdict + "</div>" +
+    "<div style=\"margin-top:4px\">" + verdict + "</div>" + wxLine +
     "<div style=\"margin-top:8px\">" + dos.map(function(s) { return "✅ " + s; }).join("<br>") + "</div>" +
     "<div style=\"margin-top:6px\">" + donts.map(function(s) { return "🚫 " + s; }).join("<br>") + "</div>" +
     "<div style=\"color:var(--tx3);font-size:11px;margin-top:8px\">⏱ 參考時間：儀表板產檔 " + (DATA.built_at || "?") +
@@ -4987,6 +5004,25 @@ function renderWeatherGauge() {
     cell("修復觀望", "退潮×胃納縮<br>等三重發車鈴:<br>" + bellLine) +
     cell("亂世", "升溫×胃納縮<br><b>跌觸發+10.83%/勝78%(亂世格n=227)</b><br>甜蜜格/處置照燈,題材逆風") +
     "</div><div class=\"hint\" style=\"margin-top:6px\">口訣：風暴中做反轉（事件策略）、風暴後做動能（題材線）。左欄=退潮、右欄=升溫；上排=胃納張、下排=胃納縮。</div>";
+  // ── 策略頁天氣掛件(2026-07-31使用者裁示上板:個別策略頁顯示自家天氣順逆,數字=R3b聯合檢定) ──
+  const wxLink = "（<a href=\"javascript:void(0)\" onclick=\"showTab(7);switchSigView('thermo')\" style=\"color:inherit\">天氣儀→</a>）";
+  const s4El = document.getElementById("revmomWeather");
+  if (s4El) {
+    const s4Wx = y > 0
+      ? (x < 1 ? "<span style=\"color:#2ecc71\">✅天氣順風：題材天堂格(退潮×胃納張)＝score4主場,歷史+32.1%/勝85%</span>"
+               : "<span style=\"color:#2ecc71\">✅胃納張(急拉段)＝score4歷史+23.9%/勝87%</span><span style=\"color:var(--tx3)\">(n=46,波動高提防急轉)</span>")
+      : "<span style=\"color:#c98a1c\">⚠天氣逆風：胃納縮(" + y.toFixed(1) + "%)＝score4死格</span>（升溫×縮歷史+0.0%/勝50%、退潮×縮+8.0%/72%）——訊號照記錄，新倉等胃納翻正";
+    s4El.innerHTML = "🌦️ " + s4Wx + wxLink;
+  }
+  const attEl = document.getElementById("attwatchWeather");
+  if (attEl) {
+    const attWx = (x > 1.2 && y <= 0)
+      ? "<span style=\"color:#2ecc71\">✅天氣主場：亂世格(升溫×胃納縮)＝跌觸發歷史+10.83%/勝78%(n=227)</span>"
+      : (x < 0.8 && y <= 0)
+        ? "<span style=\"color:var(--red)\">⚠天氣死格：修復觀望(退潮×胃納縮)＝跌觸發歷史-3.05%/勝38%——此格別接</span>"
+        : "天氣中性帶（跌觸發主場＝亂世格升溫×胃納縮，當下波動" + x.toFixed(2) + "×胃納" + y.toFixed(1) + "%）";
+    attEl.innerHTML = "🌦️ " + attWx + wxLink;
+  }
   // ── RRG式軌跡圖 ──
   const t = W.trail;
   const denom = Math.max(1, t.length - 1);
