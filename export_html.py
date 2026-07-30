@@ -1860,7 +1860,10 @@ def build():
                          f"(峰值{_ep_peak}件{'/史上第二高' if _ep_peak >= 50 else ''}),"
                          f"持有窗剩{_remain6(_thd6, 60)}個交易日"
                          + ("；同步在窗:" + "、".join(_co_lit) if _co_lit else "")
-                         + "。歷史同類事件7戰6勝(僅2022-06-22慢熊中段失手)。")
+                         + "。歷史同類事件"
+                         + (f"k20勝率{(pd.Series(_hs_k[20]) > 0).mean()*100:.0f}%"
+                            f"(中位{pd.Series(_hs_k[20]).median():+.1f}%)、" if _hs_k[20] else "")
+                         + "k60七戰六勝(僅2022-06-22慢熊中段失手)。")
         elif sum(_lit.values()) > 0:
             _headline = (f"🟡 {sum(_lit.values())}/5燈亮・事件倉信心{_expo6*100:.0f}% — "
                          f"{'、'.join(_light_names[k] for k in _lit_on)}在窗,恐慌溫度計本身未觸發")
