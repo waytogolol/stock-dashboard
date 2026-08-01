@@ -1913,7 +1913,7 @@ def build():
 
     # ---- 天氣儀v1(2026-07-31使用者裁示「收斂開工+RRG式軌跡」;口徑=07-31晨regime系列考卷) ----
     # X=波動期限結構vol10/vol60(加權日報酬10日std/60日std;>1.2升溫=跌觸發主場+9.86%/76%,<0.8退潮=score4主場+13.81%/76%)
-    # Y=胃納(櫃買/加權比值20日變化%;正=資金敢買中小型題材);vp10=vol10在2006起全樣本百分位,升破80=起火點
+    # Y=蹺蹺板(櫃買/加權比值20日變化%;正=資金敢買中小型題材);vp10=vol10在2006起全樣本百分位,升破80=起火點
     # 起火點階梯(觀察層n小)=櫃買先爆=虛驚(加權k60全勝+3.56%)/加權先爆=真風暴(-9.12%勝33%)/同步=常V底(+9.01%);
     # 全球層=SPX同著火且台股先爆=最毒(k60-6.21%勝25%),SPX沒著火=台股獨爆虛驚(n=39,+2.10%/67%)→SPX警報線80分位
     try:
@@ -2000,20 +2000,29 @@ def build():
 
         _ts_now9 = float(_ts_tw9[_last9])
         _app_now9 = float(_app9[_last9])
-        _quad9 = ("過熱" if _app_now9 >= 0 else "亂世") if _ts_now9 >= 1 else \
-                 ("題材天堂" if _app_now9 >= 0 else "修復觀望")
+        # 象限三帶切點(2026-07-31統一版,修正舊版ts>=1二元切法bug——中性帶(0.8~1.2)過去被強制併入
+        # 升溫或退潮任一側,與R1/R4考卷驗證的三帶口徑(build_regime_weather_report.py)不一致,稀釋兩側
+        # 格子的真實效果)。中性帶不強制歸邊,獨立標記為「過渡」。
+        # ⚠象限切點需與build_regime_weather_report.py保持一致,如需修改兩處都要改。
+        _VOL_HOT9, _VOL_COOL9 = 1.2, 0.8
+        _band9 = ("升溫" if _ts_now9 > _VOL_HOT9 else
+                  "退潮" if _ts_now9 < _VOL_COOL9 else "中性")
+        _quad9 = ("過渡" if _band9 == "中性" else
+                  (("過熱" if _app_now9 >= 0 else "亂世") if _band9 == "升溫" else
+                   ("題材天堂" if _app_now9 >= 0 else "修復觀望")))
         data["weather_gauge"] = {
             "asof": str(_last9.date()),
             "trail": _trail9,
             "ts": round(_ts_now9, 2), "app": round(_app_now9, 1),
+            "band": _band9, "quad": _quad9,
             "vp": {k: round(float(_wv[m]["vp"].iloc[-1]))
                    for k, m in (("tw", "TAIEX"), ("otc", "TPEx"), ("spx", "SPX"))},
             "align": _align9,
             "wave": _wave9,
-            "bells": {"cool": bool(_ts_now9 < 0.8), "fix": _align9["otc"]["ok"],
+            "bells": {"cool": bool(_ts_now9 < _VOL_COOL9), "fix": _align9["otc"]["ok"],
                       "app": bool(_app_now9 > 0)},
         }
-        print(f"天氣儀v1: ts={_ts_now9:.2f} 胃納{_app_now9:+.1f}%={_quad9}象限 "
+        print(f"天氣儀v1: ts={_ts_now9:.2f}({_band9}) 蹺蹺板{_app_now9:+.1f}%={_quad9}象限 "
               f"vp10 加權{data['weather_gauge']['vp']['tw']}/櫃買{data['weather_gauge']['vp']['otc']}"
               f"/SPX{data['weather_gauge']['vp']['spx']} "
               f"排列 加權{'多' if _align9['tw']['ok'] else '壞'}櫃買{'多' if _align9['otc']['ok'] else '壞'} "
@@ -3370,13 +3379,13 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div class="rule-item" style="color:var(--tx3)">技術註記：「甜蜜格」＝個股層恐慌接刀條件（近40日曾漲20%×已回檔≥20%×當日跌6~9%×成交值>1億）；「並發數」＝今天全市場同時符合的檔數，越多＝被砍得越兇越全面。樣本池1,379檔研究尺；跌停＝前收×0.9進位近似；崩盤日並發數需要當日價格，先跑 python update_all.py 再看。詳細研究過程與逐事件紀錄→研究報告/research_thermometer.html。</div>
   </div>
   <div class="rule-card">
-    <div class="rule-title">🌦️ 天氣儀v1——兩軸看天氣：波動在升溫還是退潮、中小型胃納在張還是縮</div>
+    <div class="rule-title">🌦️ 天氣儀v1——兩軸看天氣：波動在升溫還是退潮、中小型大小盤蹺蹺板在強在弱</div>
     <div id="weatherHeadline" class="rule-item" style="font-weight:700"></div>
     <details style="margin-top:4px">
       <summary style="cursor:pointer;color:var(--tx2)">展開說明／口徑</summary>
-      <div class="rule-item" style="margin-top:6px"><b>這在幹嘛（一句話）</b>：把「現在是什麼天氣」壓成兩個數字畫在一張圖上。<b>X軸＝波動期限結構</b>（加權10日波動÷60日波動）：&gt;1＝風暴進行中（升溫）、&lt;1＝風暴退場（退潮）；<b>Y軸＝胃納</b>（櫃買/加權<b>指數比值</b>20日變化%）：正＝資金敢買中小型題材、負＝縮回權值避險。⚠胃納是「價格相對強弱」<b>不是成交量</b>——與P5縮量止跌的「量縮」完全無關（那是進場扳機，這是天氣座標）。點的30日軌跡＝天氣往哪邊變。</div>
-      <div class="rule-item"><b>怎麼用（值班表）</b>：兩派策略是接力棒——<b>亂世（升溫×胃納縮）＝事件策略值班</b>（跌觸發+9.86%/勝76%、甜蜜格/處置照燈操作），營收題材逆風別硬做；<b>題材天堂（退潮×胃納張）＝營收動能score4值班</b>（+13.81%/勝76%）；<b>修復觀望＝等三重發車鈴</b>（①波動退潮&lt;0.8 ②櫃買排列修復 ③胃納翻正）齊了再切回題材線；<b>過熱（升溫×胃納張）＝罕見格</b>，提防風向急轉。風暴中做反轉、風暴後做動能。</div>
-      <div class="rule-item" style="color:var(--tx3)">技術註記：值班統計＝2026-07-31 regime系列考卷（跌觸發2018起／score4面板2022起，窗窄＝盤點層參考非上板開關）；主場確認線＝升溫&gt;1.2／退潮&lt;0.8（圖上虛線），1.0~1.2之間＝過渡；起火點階梯＝n小觀察層（升破80分位口徑2006起；錨定日＝允許≤3日喘息的episode口徑，與收官報告的quiet=21口徑、考卷逐事件紀錄可能差數日到數週，<b>三種口徑分類結論相同以分類為準</b>；櫃買先爆本身3正3負，鑰匙＝SPX錨後20日著火與否6/6分離）；徽章列的殺出深度／事件倉信心與下方溫度計卡同源。完整考證與逐波明細→研究報告/research_regime_weather.html。</div>
+      <div class="rule-item" style="margin-top:6px"><b>這在幹嘛（一句話）</b>：把「現在是什麼天氣」壓成兩個數字畫在一張圖上。<b>X軸＝波動期限結構</b>（加權10日波動÷60日波動）：&gt;1.2＝風暴進行中（升溫）、&lt;0.8＝風暴退場（退潮）、0.8~1.2之間＝中性過渡帶（不強制歸邊，見下方判定）；<b>Y軸＝大小盤蹺蹺板</b>（櫃買/加權<b>指數比值</b>20日變化%）：正＝資金敢買中小型題材（小盤強）、負＝縮回權值避險（大盤強）。⚠蹺蹺板是「價格相對強弱」<b>不是成交量</b>——與P5縮量止跌的「量縮」完全無關（那是進場扳機，這是天氣座標）。點的30日軌跡＝天氣往哪邊變。</div>
+      <div class="rule-item"><b>怎麼用（值班表）</b>：兩派策略是接力棒——<b>亂世（升溫×大盤強）＝事件策略值班</b>（跌觸發+9.86%/勝76%、甜蜜格/處置照燈操作），營收題材逆風別硬做；<b>題材天堂（退潮×小盤強）＝營收動能score4值班</b>（+13.81%/勝76%）；<b>修復觀望＝等三重發車鈴</b>（①波動退潮&lt;0.8 ②櫃買排列修復 ③蹺蹺板翻正）齊了再切回題材線；<b>過熱（升溫×小盤強）＝罕見格</b>，提防風向急轉；<b>過渡（波動0.8~1.2中性帶）</b>＝不屬於上述四格任一角，兩派策略同時降權觀望，等波動明確轉向再依當時象限值班（不武斷就近併入升溫或退潮）。風暴中做反轉、風暴後做動能。</div>
+      <div class="rule-item" style="color:var(--tx3)">技術註記：值班統計＝2026-07-31 regime系列考卷（跌觸發2018起／score4面板2022起，窗窄＝盤點層參考非上板開關）；三帶切點＝升溫&gt;1.2／退潮&lt;0.8（圖上虛線＝主場確認線），<b>0.8~1.2之間＝過渡帶</b>（此切點與R1/R4考卷驗證版一致，需與build_regime_weather_report.py同步，如改動兩處都要改）；起火點階梯＝n小觀察層（升破80分位口徑2006起；錨定日＝允許≤3日喘息的episode口徑，與收官報告的quiet=21口徑、考卷逐事件紀錄可能差數日到數週，<b>三種口徑分類結論相同以分類為準</b>；櫃買先爆本身3正3負，鑰匙＝SPX錨後20日著火與否6/6分離）；徽章列的殺出深度／事件倉信心與下方溫度計卡同源。完整考證與逐波明細→研究報告/research_regime_weather.html。</div>
     </details>
   </div>
   <div id="weatherBadges" style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0"></div>
@@ -4878,17 +4887,20 @@ function renderWarRoom() {
   dos.push("<b>個股事件單照常</b>：處置股買點(V4第3日/V5倒數第3日尾盤買,抱到出關日開盤賣)、跌觸發規則卡" + (okN ? "（今天有✓" + okN + "檔）" : "") + "，照各自的日曆走、不受這面板影響。");
   donts.push("<b>看到紅旗就減碼</b>：🎯交集頁的「內部人解質警戒」「⚠款1+6漲警」是全體系最準的賣出提醒，別凹。");
   // 天氣儀一行判定(2026-07-31上板,數字=R3b聯合檢定,詳research_regime_weather.html)
+  // 象限直接讀Python端算好的W.quad(三帶版,見export_html.py天氣儀v1區塊),前端不重算以免與後端漂移;
+  // ⚠象限切點需與build_regime_weather_report.py保持一致,如需修改兩處都要改
   const W = DATA.weather_gauge;
   let wxLine = "";
   if (W && W.ts !== undefined) {
-    const wq = W.ts >= 1 ? (W.app >= 0 ? "急拉段" : "亂世") : (W.app >= 0 ? "題材天堂" : "修復觀望");
+    const wq = W.quad === "過熱" ? "急拉段" : W.quad;  // 本板沿用「急拉段」為過熱象限的口語別稱
     const wm = {
       "亂世": "<b>事件策略主場</b>（跌觸發此格歷史+10.8%/勝78%）、營收動能score4逆風（死格+0.0%/勝50%）",
       "題材天堂": "<b>營收動能score4主場</b>（此格歷史+32.1%/勝85%）、事件策略退場",
       "修復觀望": "兩派都弱（跌觸發此格歷史-3.1%/勝38%）＝觀望等三重發車鈴",
       "急拉段": "score4意外肥（+23.9%/勝87%,n小）但波動高提防急轉",
+      "過渡": "波動在中性帶(0.8~1.2倍)、趨勢方向未明＝兩派策略同時降權觀望，不強行併入升溫或退潮任一邊",
     }[wq];
-    wxLine = "<div style=\"margin-top:4px\">🌦️ <b>天氣儀</b>：" + wq + "象限（波動" + W.ts + "×胃納" +
+    wxLine = "<div style=\"margin-top:4px\">🌦️ <b>天氣儀</b>：" + wq + "象限（波動" + W.ts + "×蹺蹺板" +
       (W.app > 0 ? "+" : "") + W.app + "%）＝" + wm +
       "。<a href=\"javascript:void(0)\" onclick=\"showTab(7);switchSigView('thermo')\" style=\"color:inherit\">詳天氣儀→</a></div>";
   }
@@ -4921,18 +4933,21 @@ function renderWeatherGauge() {
   }
   const mt = DATA.market_thermo || {};
   const x = W.ts, y = W.app;
-  const quad = x >= 1 ? (y >= 0 ? "過熱" : "亂世") : (y >= 0 ? "題材天堂" : "修復觀望");
-  const qcol = {"亂世": "#e74c3c", "題材天堂": "#2ecc71", "修復觀望": "#5dade2", "過熱": "#f39c12"};
-  const confirm = quad === "亂世" ? (x > 1.2 ? "已過主場確認線1.2" : "過渡帶,未過確認線1.2") :
-                  quad === "題材天堂" ? (x < 0.8 ? "已過主場確認線0.8" : "過渡帶,未過確認線0.8") : "";
+  // 三帶切點(2026-07-31統一版): 升溫>1.2/退潮<0.8/中性(過渡帶)不強制併入任一邊。
+  // 象限直接讀Python端算好的W.quad/W.band(export_html.py天氣儀v1區塊),前端不重算以免與後端漂移;
+  // ⚠象限切點需與build_regime_weather_report.py保持一致,如需修改兩處都要改
+  const VOL_HOT = 1.2, VOL_COOL = 0.8;
+  const quad = W.quad, band = W.band;
+  const qcol = {"亂世": "#e74c3c", "題材天堂": "#2ecc71", "修復觀望": "#5dade2", "過熱": "#f39c12", "過渡": "#9b7fd4"};
   const duty = {"亂世": "事件策略值班（跌觸發/甜蜜格/處置照燈操作），營收題材逆風別硬做",
                 "題材天堂": "營收動能score4值班，事件策略退場",
                 "修復觀望": "觀望，等三重發車鈴齊響再切回題材線",
-                "過熱": "罕見格，無值班策略，提防風向急轉"}[quad];
+                "過熱": "罕見格，無值班策略，提防風向急轉",
+                "過渡": "波動在中性帶(0.8~1.2倍)、趨勢方向未明——不強行併入升溫或退潮任一邊，亂世/題材天堂兩派策略同時降權觀望，等ts脫離中性帶再依當時象限值班"}[quad];
   const hl = document.getElementById("weatherHeadline");
   if (hl) {
-    hl.innerHTML = "當下（" + W.asof + "）：波動 <b>" + x.toFixed(2) + "</b>（" + (x >= 1 ? "升溫" : "退潮") +
-      (confirm ? "，" + confirm : "") + "）× 胃納 <b>" + (y > 0 ? "+" : "") + y.toFixed(1) +
+    hl.innerHTML = "當下（" + W.asof + "）：波動 <b>" + x.toFixed(2) + "</b>（" + band +
+      (band === "中性" ? "，過渡帶0.8~1.2之間" : "") + "）× 蹺蹺板 <b>" + (y > 0 ? "+" : "") + y.toFixed(1) +
       "%</b>（櫃買相對加權" + (y >= 0 ? "轉強" : "轉弱") + "）＝ <span style=\"color:" + qcol[quad] + "\">" +
       quad + "象限</span> → " + duty;
   }
@@ -4982,9 +4997,9 @@ function renderWeatherGauge() {
     badge("🛰️", "SPX警報線", spxTxt) +
     badge("💧", "殺出深度", dep) +
     badge("🎯", "事件倉信心", conf);
-  // ── 四象限值班表(左=退潮/右=升溫,上=胃納張/下=胃納縮) ──
+  // ── 四象限值班表(左=退潮/右=升溫,上=小盤強/下=大盤強) ──
   const bells = W.bells || {};
-  const bellLine = [["①波動退潮<0.8", bells.cool], ["②櫃買排列修復", bells.fix], ["③胃納翻正", bells.app]]
+  const bellLine = [["①波動退潮<0.8", bells.cool], ["②櫃買排列修復", bells.fix], ["③蹺蹺板翻正", bells.app]]
     .map(function(b) {
       return b[1] ? "<span style=\"color:#2ecc71\">✓" + b[0] + "</span>"
                   : "<span style=\"color:var(--tx3)\">✗" + b[0] + "</span>";
@@ -4997,30 +5012,40 @@ function renderWeatherGauge() {
       "<b style=\"color:" + qcol[name] + "\">" + name + (active ? " ◀現在" : "") + "</b>" +
       "<div style=\"font-size:12px;margin-top:4px;color:var(--tx2)\">" + body + "</div></div>";
   };
-  document.getElementById("weatherDuty").innerHTML =
+  // 過渡帶(中性)不強制歸邊,不是四象限之一角,獨立以提示banner呈現(見export_html.py Python端註解)
+  const transNote = quad === "過渡"
+    ? "<div style=\"margin-bottom:8px;padding:6px 8px;border:1px dashed " + qcol["過渡"] +
+      ";border-radius:6px;color:var(--tx2);font-size:12px\">⚠ 目前波動 " + x.toFixed(2) +
+      " 落在中性過渡帶(0.8~1.2倍)，不屬於下列四象限任一格——兩派策略同時降權觀望，等波動明確轉向(突破1.2或跌破0.8)再依象限值班。</div>"
+    : "";
+  document.getElementById("weatherDuty").innerHTML = transNote +
     "<div style=\"display:grid;grid-template-columns:1fr 1fr;gap:8px\">" +
-    cell("題材天堂", "退潮×胃納張<br><b>score4營收動能值班</b><br>退潮×張歷史+32.1%/勝85%") +
-    cell("過熱", "升溫×胃納張=急拉段<br>score4意外肥+23.9%/87%(n=46)<br>但波動高提防急轉(觀察層)") +
-    cell("修復觀望", "退潮×胃納縮<br>等三重發車鈴:<br>" + bellLine) +
-    cell("亂世", "升溫×胃納縮<br><b>跌觸發+10.83%/勝78%(亂世格n=227)</b><br>甜蜜格/處置照燈,題材逆風") +
-    "</div><div class=\"hint\" style=\"margin-top:6px\">口訣：風暴中做反轉（事件策略）、風暴後做動能（題材線）。左欄=退潮、右欄=升溫；上排=胃納張、下排=胃納縮。</div>";
+    cell("題材天堂", "退潮×小盤強<br><b>score4營收動能值班</b><br>退潮×小盤強歷史+32.1%/勝85%") +
+    cell("過熱", "升溫×小盤強=急拉段<br>score4意外肥+23.9%/87%(n=46)<br>但波動高提防急轉(觀察層)") +
+    cell("修復觀望", "退潮×大盤強<br>等三重發車鈴:<br>" + bellLine) +
+    cell("亂世", "升溫×大盤強<br><b>跌觸發+10.83%/勝78%(亂世格n=227)</b><br>甜蜜格/處置照燈,題材逆風") +
+    "</div><div class=\"hint\" style=\"margin-top:6px\">口訣：風暴中做反轉（事件策略）、風暴後做動能（題材線）。左欄=退潮、右欄=升溫；上排=小盤強、下排=大盤強；波動0.8~1.2為中性過渡帶,不屬任一格。</div>";
   // ── 策略頁天氣掛件(2026-07-31使用者裁示上板:個別策略頁顯示自家天氣順逆,數字=R3b聯合檢定) ──
   const wxLink = "（<a href=\"javascript:void(0)\" onclick=\"showTab(7);switchSigView('thermo')\" style=\"color:inherit\">天氣儀→</a>）";
   const s4El = document.getElementById("revmomWeather");
   if (s4El) {
-    const s4Wx = y > 0
-      ? (x < 1 ? "<span style=\"color:#2ecc71\">✅天氣順風：題材天堂格(退潮×胃納張)＝score4主場,歷史+32.1%/勝85%</span>"
-               : "<span style=\"color:#2ecc71\">✅胃納張(急拉段)＝score4歷史+23.9%/勝87%</span><span style=\"color:var(--tx3)\">(n=46,波動高提防急轉)</span>")
-      : "<span style=\"color:#c98a1c\">⚠天氣逆風：胃納縮(" + y.toFixed(1) + "%)＝score4死格</span>（升溫×縮歷史+0.0%/勝50%、退潮×縮+8.0%/72%）——訊號照記錄，新倉等胃納翻正";
+    // 三帶版:直接用quad判斷,不再用x<1二元切;quad==="過渡"時(中性帶)無對應歷史格,中性觀望不硬套
+    const s4Wx = quad === "題材天堂"
+      ? "<span style=\"color:#2ecc71\">✅天氣順風：題材天堂格(退潮×小盤強)＝score4主場,歷史+32.1%/勝85%</span>"
+      : quad === "過熱"
+        ? "<span style=\"color:#2ecc71\">✅小盤強(急拉段)＝score4歷史+23.9%/勝87%</span><span style=\"color:var(--tx3)\">(n=46,波動高提防急轉)</span>"
+        : (y > 0
+            ? "<span style=\"color:var(--tx3)\">🟡波動中性帶(0.8~1.2倍)，小盤強但象限未定＝score4無對應歷史格,中性觀望</span>"
+            : "<span style=\"color:#c98a1c\">⚠天氣逆風：大盤強(" + y.toFixed(1) + "%)＝score4死格</span>（升溫×大盤強歷史+0.0%/勝50%、退潮×大盤強+8.0%/72%）——訊號照記錄，新倉等蹺蹺板翻正");
     s4El.innerHTML = "🌦️ " + s4Wx + wxLink;
   }
   const attEl = document.getElementById("attwatchWeather");
   if (attEl) {
-    const attWx = (x > 1.2 && y <= 0)
-      ? "<span style=\"color:#2ecc71\">✅天氣主場：亂世格(升溫×胃納縮)＝跌觸發歷史+10.83%/勝78%(n=227)</span>"
-      : (x < 0.8 && y <= 0)
-        ? "<span style=\"color:var(--red)\">⚠天氣死格：修復觀望(退潮×胃納縮)＝跌觸發歷史-3.05%/勝38%——此格別接</span>"
-        : "天氣中性帶（跌觸發主場＝亂世格升溫×胃納縮，當下波動" + x.toFixed(2) + "×胃納" + y.toFixed(1) + "%）";
+    const attWx = quad === "亂世"
+      ? "<span style=\"color:#2ecc71\">✅天氣主場：亂世格(升溫×大盤強)＝跌觸發歷史+10.83%/勝78%(n=227)</span>"
+      : quad === "修復觀望"
+        ? "<span style=\"color:var(--red)\">⚠天氣死格：修復觀望(退潮×大盤強)＝跌觸發歷史-3.05%/勝38%——此格別接</span>"
+        : "天氣中性／非亂世格（跌觸發主場＝亂世格升溫×大盤強，當下波動" + x.toFixed(2) + "×蹺蹺板" + y.toFixed(1) + "%，象限=" + quad + "）";
     attEl.innerHTML = "🌦️ " + attWx + wxLink;
   }
   // ── RRG式軌跡圖 ──
@@ -5031,17 +5056,21 @@ function renderWeatherGauge() {
     font: {color: "#c8d4e4", size: 11}, height: 440,
     margin: {t: 24, l: 52, r: 16, b: 44},
     xaxis: {title: "波動期限結構 vol10/vol60（→升溫）", gridcolor: "#1d2836", zeroline: false},
-    yaxis: {title: "胃納：櫃買/加權20日變化%（↑轉強）", gridcolor: "#1d2836", zeroline: false},
+    yaxis: {title: "蹺蹺板：櫃買/加權20日變化%（↑偏小盤）", gridcolor: "#1d2836", zeroline: false},
     shapes: [
-      {type: "line", x0: 1, x1: 1, yref: "paper", y0: 0, y1: 1, line: {color: "#3a4a5f", width: 1}},
+      // 中性過渡帶(VOL_COOL~VOL_HOT)淡紫底色,取代舊版x=1單一參考線(三帶版不再視x=1為象限分界)
+      {type: "rect", x0: VOL_COOL, x1: VOL_HOT, yref: "paper", y0: 0, y1: 1,
+       fillcolor: "rgba(155,127,212,0.08)", line: {width: 0}},
       {type: "line", y0: 0, y1: 0, xref: "paper", x0: 0, x1: 1, line: {color: "#3a4a5f", width: 1}},
-      {type: "line", x0: 0.8, x1: 0.8, yref: "paper", y0: 0, y1: 1, line: {color: "#2ecc71", width: 1, dash: "dot"}},
-      {type: "line", x0: 1.2, x1: 1.2, yref: "paper", y0: 0, y1: 1, line: {color: "#e74c3c", width: 1, dash: "dot"}}],
+      {type: "line", x0: VOL_COOL, x1: VOL_COOL, yref: "paper", y0: 0, y1: 1, line: {color: "#2ecc71", width: 1, dash: "dot"}},
+      {type: "line", x0: VOL_HOT, x1: VOL_HOT, yref: "paper", y0: 0, y1: 1, line: {color: "#e74c3c", width: 1, dash: "dot"}}],
     annotations: [
       {xref: "paper", yref: "paper", x: 0.01, y: 0.99, text: "題材天堂", showarrow: false, font: {size: 14, color: "#2ecc71"}},
       {xref: "paper", yref: "paper", x: 0.99, y: 0.99, text: "過熱", showarrow: false, font: {size: 14, color: "#f39c12"}},
       {xref: "paper", yref: "paper", x: 0.01, y: 0.01, text: "修復觀望", showarrow: false, font: {size: 14, color: "#5dade2"}},
-      {xref: "paper", yref: "paper", x: 0.99, y: 0.01, text: "亂世", showarrow: false, font: {size: 14, color: "#e74c3c"}}]
+      {xref: "paper", yref: "paper", x: 0.99, y: 0.01, text: "亂世", showarrow: false, font: {size: 14, color: "#e74c3c"}},
+      {x: (VOL_COOL + VOL_HOT) / 2, y: 1, yref: "paper", yanchor: "top", xanchor: "center",
+       text: "過渡", showarrow: false, font: {size: 11, color: "#9b7fd4"}}]
   };
   const traces = [
     {x: t.map(function(p) { return p.x; }), y: t.map(function(p) { return p.y; }), mode: "lines",
@@ -5052,12 +5081,12 @@ function renderWeatherGauge() {
               colorscale: [[0, "#33415a"], [1, "#7fb3d5"]], showscale: false,
               line: {color: "#0c1118", width: 1}},
      customdata: t.map(function(p) { return p.d; }),
-     hovertemplate: "%{customdata}<br>波動 %{x:.2f}｜胃納 %{y:.1f}%<extra></extra>", showlegend: false},
+     hovertemplate: "%{customdata}<br>波動 %{x:.2f}｜蹺蹺板 %{y:.1f}%<extra></extra>", showlegend: false},
     {x: [t[t.length - 1].x], y: [t[t.length - 1].y], mode: "markers+text",
      text: ["今 " + W.asof.slice(5)], textposition: "top center",
      textfont: {size: 11, color: "#ffd97a"},
      marker: {size: 14, symbol: "star", color: qcol[quad], line: {color: "#ffd97a", width: 1.5}},
-     hovertemplate: W.asof + "<br>波動 " + x + "｜胃納 " + y + "%<extra></extra>", showlegend: false}
+     hovertemplate: W.asof + "<br>波動 " + x + "｜蹺蹺板 " + y + "%<extra></extra>", showlegend: false}
   ];
   Plotly.newPlot(el, traces, layout, {displayModeBar: false, responsive: true});
 }

@@ -7,7 +7,7 @@ commit訊息與記憶,無研究HTML;天氣儀v1(dashboard)已用其結論但速�
 收錄七題(R1~R7)+紀錄項:
   R1 斜率版regime三分(年線位階×斜率)×九策略矩陣 —— 重跑build_strategy_regime_matrix載入器
   R2 排列版(月>季>年)vs斜率版 —— 切換次數/變天時點對比(矩陣考卷07-31晨追加的複現)
-  R3 雙軸發現 —— 波動位階(vp10>=80=高波)是趨勢之外的獨立第二軸;九策略×高低波+score4×胃納
+  R3 雙軸發現 —— 波動位階(vp10>=80=高波)是趨勢之外的獨立第二軸;九策略×高低波+score4×蹺蹺板
   R4 波動期限結構ts=vol10/vol60接力棒 —— 九策略×三帶(升溫>1.2/中性/退潮<0.8)+跌觸發單窗口穩健性
   R5 兩市排列2×2 —— 權值獨多/櫃買獨多/雙多/雙弱四格×代表策略
   R6 風暴起火點階梯 —— 兩市層(vp10升破80,±15日配對,2006起)+全球層(SPX×加權,2000起)
@@ -16,7 +16,7 @@ commit訊息與記憶,無研究HTML;天氣儀v1(dashboard)已用其結論但速�
   紀錄項: 多週期日週月排列共振指數層判不加值(行內考卷紀錄,未重跑)
 
 口徑統一: vp10=加權(或該市)日報酬10日std在2006起全樣本的百分位;高波=vp10>=80;
-ts=vol10/vol60;胃納=櫃買/加權指數比值20日變化%(⚠價格相對強弱,非成交量,與P5量縮無關);
+ts=vol10/vol60;蹺蹺板=櫃買/加權指數比值20日變化%(⚠價格相對強弱,非成交量,與P5量縮無關);
 排列=MA20>MA60>MA240。策略事件全部重用各考卷正式快取,不重新發明規則。
 定位: 盤點層/觀察層(絕對報酬未扣大盤、事件自相關未bootstrap、RRG樣本2018-12起/score4樣本2022起窗窄)。
 
@@ -64,7 +64,11 @@ def vol_series(m):
 
 VOL = {m: vol_series(m) for m in ("TAIEX", "TPEx", "SPX")}
 APP = (IDX["TPEx"] / IDX["TAIEX"]).dropna()
-APP = (APP / APP.shift(20) - 1) * 100          # 胃納
+APP = (APP / APP.shift(20) - 1) * 100          # 蹺蹺板
+
+# 象限三帶切點(2026-07-31統一版,R1/R4驗證): 升溫>VOL_HOT/退潮<VOL_COOL/中性=過渡帶(不強制併入任一邊)。
+# ⚠象限切點需與export_html.py保持一致,如需修改兩處都要改。
+VOL_HOT, VOL_COOL = 1.2, 0.8
 
 
 def stack_series(m):
@@ -86,7 +90,7 @@ def load_money():
     return mn
 
 
-# 量能版胃納(2026-07-31使用者挑戰「胃納是不是該用成交量」後加開對測):
+# 量能版蹺蹺板(2026-07-31使用者挑戰「蹺蹺板是不是該用成交量」後加開對測):
 # 櫃買成交值占比%(20日均)之20日變化pp;占比=經典散戶投機溫度計,與價格版對測誰配當Y軸
 MNY = load_money()
 SHARE = (MNY["TPEx"] / (MNY["TPEx"] + MNY["TAIEX"])).dropna() * 100
@@ -228,7 +232,7 @@ def r2():
     return out, pairs, lead, cur, gap
 
 
-# ══ R3 雙軸: 高低波×九策略 + score4×胃納 + 高波日trend分佈 ══
+# ══ R3 雙軸: 高低波×九策略 + score4×蹺蹺板 + 高波日trend分佈 ══
 def r3():
     vp = VOL["TAIEX"]["vp"]
 
@@ -247,11 +251,11 @@ def r3():
         for vv in ("高波", "低波"):
             m = (rg == r_).values & ((v >= 80) if vv == "高波" else (v < 80)).values
             nest[f"{r_}×{vv}"] = cell(e.loc[m, "ret"])
-    # score4×胃納(risk-on/off)
+    # score4×蹺蹺板(risk-on/off)
     s4 = EV["⑥score4營收清單(ret60)"]
     ap = at(APP, s4["date"])
-    s4x = {"risk-on(胃納>0)": cell(s4.loc[(ap > 0).values, "ret"]),
-           "risk-off(胃納≤0)": cell(s4.loc[(ap <= 0).values, "ret"])}
+    s4x = {"risk-on(小盤強)": cell(s4.loc[(ap > 0).values, "ret"]),
+           "risk-off(大盤強)": cell(s4.loc[(ap <= 0).values, "ret"])}
     return rows, dist, nest, s4x
 
 
@@ -292,7 +296,7 @@ def r5():
     return rows, occ, lab_days.iloc[-1]
 
 
-# ══ R3b 胃納口徑考卷(價格版vs量能版+波動聯合檢定) ═══════════
+# ══ R3b 蹺蹺板口徑考卷(價格版vs量能版+波動聯合檢定) ═══════════
 def r3b():
     common = APP.dropna().index.intersection(APP_V.index)
     corr = float(pd.concat([APP[common], APP_V[common]], axis=1).corr().iloc[0, 1])
@@ -305,13 +309,13 @@ def r3b():
                        "s4_off": cell(s4.loc[(a <= 0).values, "ret"]),
                        "att_on": cell(att.loc[(b > 0).values, "ret"]),
                        "att_off": cell(att.loc[(b <= 0).values, "ret"])}
-    # 波動聯合檢定(使用者:「胃納要跟波動一起看才有意義」→檢定=胃納在各波動段內是否仍有分離力)
+    # 波動聯合檢定(使用者:「蹺蹺板要跟波動一起看才有意義」→檢定=蹺蹺板在各波動段內是否仍有分離力)
     joint = {}
     for sname, e in (("score4(ret60)", s4), ("跌觸發(t10)", att)):
         ts = at(VOL["TAIEX"]["ts"], e["date"])
         ap = at(APP, e["date"])
         for vs, vmask in (("升溫ts>1.2", (ts > 1.2)), ("退潮ts<0.8", (ts < 0.8))):
-            for as_, amask in (("胃納張>0", (ap > 0)), ("胃納縮≤0", (ap <= 0))):
+            for as_, amask in (("小盤強>0", (ap > 0)), ("大盤強≤0", (ap <= 0))):
                 joint[f"{sname}|{vs}×{as_}"] = cell(e.loc[(vmask & amask).values, "ret"])
     yr_p = APP.groupby(APP.index.year).mean().round(1)
     yr_v = APP_V.groupby(APP_V.index.year).mean().round(2)
@@ -344,7 +348,7 @@ def r8():
     relay = pd.concat([att.loc[(ts_a > 1.2).values], s4.loc[(ts_s < 0.8).values]])
     cv["relay"] = lin_curve(relay)
     # 象限版接力棒(依R3b聯合檢定=值班表忠實版,⚠事後從聯合表選格=描述性非預註冊):
-    # 跌觸發只做亂世格(升溫×胃納縮)/score4只做胃納張(risk-on)
+    # 跌觸發只做亂世格(升溫×大盤強)/score4只做小盤強(risk-on)
     ap_a, ap_s = at(APP, att["date"]), at(APP, s4["date"])
     relay_q = pd.concat([att.loc[((ts_a > 1.2) & (ap_a <= 0)).values],
                          s4.loc[(ap_s > 0).values]])
@@ -356,7 +360,7 @@ def r8():
 # ══ R9 指數層擇時權益曲線(2026-07-31使用者指定:標的=加權指數,看天氣/均線訊號擇時後的曲線) ══
 def r9():
     px = IDX["TAIEX"]
-    px = px[px.index >= "2006-01-01"]        # 統一起點=全訊號皆有值(胃納需櫃買2005起+緩衝)
+    px = px[px.index >= "2006-01-01"]        # 統一起點=全訊號皆有值(蹺蹺板需櫃買2005起+緩衝)
     ret = px.pct_change().fillna(0)
     ap = APP.reindex(px.index)
     ts = VOL["TAIEX"]["ts"].reindex(px.index)
@@ -366,8 +370,8 @@ def r9():
         "買進持有": pd.Series(True, index=px.index),
         "排列版開關(月>季>年才持有)": stack,
         "斜率版開關(價>年線∧斜率>0才持有)": slope,
-        "胃納張才持有(胃納>0)": (ap > 0),
-        "排列∧胃納張": (stack & (ap > 0)),
+        "小盤強才持有(蹺蹺板>0)": (ap > 0),
+        "排列∧小盤強": (stack & (ap > 0)),
     }
     out = {}
     for name, sig in sigs.items():
@@ -383,11 +387,17 @@ def r9():
             "mdd": round(float((eq / eq.cummax() - 1).min() * 100), 1),
             "expo": round(float(pos.mean()) * 100), "sw": int((pos.diff().abs() > 0).sum()),
             "sharpe": round(ann / vol_ann, 2) if vol_ann else 0}
-    # 象限×指數日報酬(訊號同樣shift(1))
-    quad = pd.Series(np.where(ts >= 1, np.where(ap >= 0, "急拉段", "亂世"),
-                              np.where(ap >= 0, "題材天堂", "修復觀望")), index=px.index).shift(1)
+    # 象限×指數日報酬(訊號同樣shift(1));三帶版(2026-07-31統一,修正舊版ts>=1二元切法bug——
+    # 舊版把中性帶(VOL_COOL~VOL_HOT)的日子強制併入升溫或退潮側,與R1/R4驗證的三帶口徑不一致,
+    # 會稀釋兩側格子的真實效果;中性帶不強制歸邊,獨立算一個「過渡」桶。
+    # ⚠象限切點需與export_html.py保持一致,如需修改兩處都要改。
+    hot9, cool9 = ts > VOL_HOT, ts < VOL_COOL
+    quad = pd.Series(np.select(
+        [hot9 & (ap >= 0), hot9 & (ap < 0), cool9 & (ap >= 0), cool9 & (ap < 0)],
+        ["急拉段", "亂世", "題材天堂", "修復觀望"], default="過渡(中性帶)"
+    ), index=px.index).shift(1)
     qstat = {}
-    for q in ("題材天堂", "急拉段", "修復觀望", "亂世"):
+    for q in ("題材天堂", "急拉段", "修復觀望", "亂世", "過渡(中性帶)"):
         r = ret[(quad == q).values]
         if len(r):
             qstat[q] = {"days": int(len(r)), "occ": round(len(r) / len(ret) * 100),
@@ -520,7 +530,7 @@ def r7():
             "排列": f"加權{'多' if STACK['TAIEX'].iloc[-1] else '壞'}/櫃買{'多' if STACK['TPEx'].iloc[-1] else '壞'}",
             "vp10": {m: round(float(VOL[m]["vp"].iloc[-1])) for m in ("TAIEX", "TPEx", "SPX")},
             "ts": round(float(VOL["TAIEX"]["ts"].iloc[-1]), 2),
-            "胃納": round(float(APP[last]), 1),
+            "蹺蹺板": round(float(APP[last]), 1),
             "深度": dep}
 
 
@@ -542,12 +552,12 @@ def main():
     for name, o in r9_out.items():
         print(f"  {name}: {o['mult']}x 年化{o['ann']}% MDD{o['mdd']}% 曝險{o['expo']}% 切換{o['sw']}次 粗夏普{o['sharpe']}")
     print("象限×指數日報酬(年化):", {k: f"{v['ann']}%/佔{v['occ']}%" for k, v in r9_q.items()})
-    print(f"胃納口徑對測: corr(價格版,量能版)={ap_corr:+.2f} 當下 P={ap_now['P']}% V={ap_now['V']}pp 占比20日均={ap_now['share']}%")
+    print(f"蹺蹺板口徑對測: corr(價格版,量能版)={ap_corr:+.2f} 當下 P={ap_now['P']}% V={ap_now['V']}pp 占比20日均={ap_now['share']}%")
     for label in ("價格版", "量能版"):
         h = ap_head[label]
         print(f"  {label}: score4 on {h['s4_on']['txt']} / off {h['s4_off']['txt']}"
               f" | 跌觸發 on {h['att_on']['txt']} / off {h['att_off']['txt']}")
-    print("聯合檢定(波動段內胃納是否仍分離):")
+    print("聯合檢定(波動段內蹺蹺板是否仍分離):")
     for k, v in ap_joint.items():
         print(f"  {k}: {v['txt']}")
     print("單利曲線Σpp:", {k: (v['sum'], v['n']) for k, v in curves.items()})
@@ -565,8 +575,8 @@ def main():
     print("對帳|score4×退潮<0.8:", cell(s4.loc[(ts4 < 0.8).values, "ret"])["txt"], "(考卷+13.81%/76%)")
     print("對帳|score4×低波vp<80:", cell(s4.loc[(vp4 < 80).values, "ret"])["txt"], "(考卷低波+10.58%)")
     print("對帳|score4×低波vp<50:", cell(s4.loc[(vp4 < 50).values, "ret"])["txt"], "(口徑探測)")
-    print("對帳|score4×risk-on:", r3_s4["risk-on(胃納>0)"]["txt"], "(考卷+14.36%)")
-    print("對帳|score4×risk-off:", r3_s4["risk-off(胃納≤0)"]["txt"], "(考卷+5.49%)")
+    print("對帳|score4×risk-on:", r3_s4["risk-on(小盤強)"]["txt"], "(考卷+14.36%)")
+    print("對帳|score4×risk-off:", r3_s4["risk-off(大盤強)"]["txt"], "(考卷+5.49%)")
     for c in ("加權先爆", "櫃買先爆", "同步爆"):
         print(f"對帳|兩市{c}:", lstat(w_two, c)["txt"])
     print("  升級|櫃買先爆×SPX錨後安靜:", lstat(w_two, "櫃買先爆", spx=False)["txt"],
@@ -637,7 +647,7 @@ td,th{border:1px solid #333;padding:4px 9px;text-align:right} th{text-align:left
     r5_html = table_html(r5_rows, ["雙多", "權值獨多", "櫃買獨多", "雙弱"])
     occ5 = "、".join(f"{k} {v}%" for k, v in r5_occ.items())
 
-    # R3b 胃納口徑對測
+    # R3b 蹺蹺板口徑對測
     aph = "".join(f"<tr><th>{lb}</th><td>{h['s4_on']['txt']}</td><td>{h['s4_off']['txt']}</td>"
                   f"<td>{(h['s4_on']['med'] - h['s4_off']['med']):+.2f}pp</td>"
                   f"<td>{h['att_on']['txt']}</td><td>{h['att_off']['txt']}</td>"
@@ -684,7 +694,7 @@ td,th{border:1px solid #333;padding:4px 9px;text-align:right} th{text-align:left
         ("排列版兩市", cur["排列"] + f"(加權月季差{r2_gap:+.2f}%)"),
         ("vp10位階", f"加權{cur['vp10']['TAIEX']}／櫃買{cur['vp10']['TPEx']}／SPX{cur['vp10']['SPX']}分位"),
         ("期限結構ts", f"{cur['ts']}(>1.2=升溫帶)"),
-        ("胃納20日", f"{cur['胃納']:+.1f}%"),
+        ("蹺蹺板20日", f"{cur['蹺蹺板']:+.1f}%"),
         ("兩市排列格", str(r5_cur)),
         ("殺出深度", f"上市{cur['深度']['上市']}%／上櫃{cur['深度']['上櫃']}%"),
     ])
@@ -712,7 +722,7 @@ td,th{border:1px solid #333;padding:4px 9px;text-align:right} th{text-align:left
 
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>大盤×OTC regime天氣線收官(2026-07-31)</title>
 <script src="plotly.min.js"></script><style>{css}</style></head><body>
-<h1>🌦️ 大盤×OTC regime天氣線收官報告——趨勢、波動、胃納三軸與策略值班表(2026-07-31)</h1>
+<h1>🌦️ 大盤×OTC regime天氣線收官報告——趨勢、波動、大小盤蹺蹺板三軸與策略值班表(2026-07-31)</h1>
 <div class="note">本卷收官2026-07-30深夜~07-31晨的regime系列研究(策略×Regime矩陣考卷c4f53f2/a2c6173+晨場行內追加),
 原判決只存在commit訊息,本檔=完整重跑複現+逐事件明細。資料=index_daily(加權1999起/櫃買2005起/SPX 1927起)、
 九策略事件取各考卷正式快取(不重新發明規則)。<b>定位=盤點層/觀察層,非上板開關</b>。
@@ -722,9 +732,9 @@ dashboard「天氣儀v1」是本卷結論的看盤速查版。</div>
 <div class="note">
 <p><b>這條線在問什麼:</b>大盤的「天氣」能不能用少數幾個收盤可判、零前視的數字講清楚,並且天氣不同時,
 該派哪支策略值班?答案=三軸:①<b>趨勢軸</b>(均線:年線位階×斜率,或排列月&gt;季&gt;年)、
-②<b>波動軸</b>(vol10位階vp10、期限結構vol10/vol60)、③<b>胃納軸</b>(櫃買/加權指數比值20日變化)。</p>
-<p><b>⚠名詞防呆(2026-07-31使用者提問後補):</b>「胃納」是櫃買/加權<b>指數比值</b>的相對強弱=資金風險偏好座標,
-<b>不是成交量</b>,與P5縮量止跌的「量縮」完全無關——P5是進場扳機(時點),胃納是天氣座標(狀態)。
+②<b>波動軸</b>(vol10位階vp10、期限結構vol10/vol60)、③<b>大小盤蹺蹺板軸</b>(櫃買/加權指數比值20日變化)。</p>
+<p><b>⚠名詞防呆(2026-07-31使用者提問後補):</b>「蹺蹺板」是櫃買/加權<b>指數比值</b>的相對強弱=資金風險偏好座標,
+<b>不是成交量</b>,與P5縮量止跌的「量縮」完全無關——P5是進場扳機(時點),蹺蹺板是天氣座標(狀態)。
 框架口訣:<b>深度定倉位、P5定扳機、天氣定值班</b>。</p>
 <p><b>核心結論一句話:</b>壞天氣才是這套研究體系的主場——事件策略(跌觸發/甜蜜格/處置)全部在盤整、空頭、
 高波動、升溫段突出;營收動能(score4)在低波、退潮、risk-on段突出;<b>多頭好天氣裡沒有任何策略突出,
@@ -740,13 +750,13 @@ V4處置空頭最肥=逆循環;<b>多頭期九策略無一突出</b>;H5多頭反
 配置引擎建議採排列版</td></tr>
 <tr><td>R3 波動位階雙軸</td><td class="good">✅獨立第二軸</td><td>高波日trend三分天下({dist_html});
 亂世派=跌觸發高波才有肉、治世派=score4低波/risk-on才肥</td></tr>
-<tr><td>R3b 胃納口徑對測(07-31追加)</td><td class="good">✅價格版勝出+象限力學驗證</td><td>價格版score4分離+6.72pp
-vs 量能版+3.93pp(corr=0.53,量能版=交叉驗證副口徑);<b>聯合檢定=升溫段內胃納把score4切成+23.91%/87% vs
-+0.04%/50%=「胃納要跟波動一起看」成立</b>;跌觸發的家=亂世格+10.83%/78%;過熱格新發現=score4急拉段+23.91%/87%(n=46觀察)</td></tr>
+<tr><td>R3b 蹺蹺板口徑對測(07-31追加)</td><td class="good">✅價格版勝出+象限力學驗證</td><td>價格版score4分離+6.72pp
+vs 量能版+3.93pp(corr=0.53,量能版=交叉驗證副口徑);<b>聯合檢定=升溫段內蹺蹺板把score4切成+23.91%/87% vs
++0.04%/50%=「蹺蹺板要跟波動一起看」成立</b>;跌觸發的家=亂世格+10.83%/78%;過熱格新發現=score4急拉段+23.91%/87%(n=46觀察)</td></tr>
 <tr><td>R8 單利權益曲線(07-31追加)</td><td class="good">✅天氣開關目視兌現</td><td>跌觸發Σ+4,537pp與考卷一字不差;
-升溫段52%事件吃61%的肉;score4開關=胃納張非ts;象限版接力棒=值班表忠實版(描述性)</td></tr>
-<tr><td>R9 指數擇時權益曲線(07-31使用者指定)</td><td class="warn">🟡均線=風控工具/胃納≠擇時器</td><td>斜率版開關
-夏普0.57/MDD-22.7%(買進持有0.49/-58.3%)=買MDD不買報酬;胃納擇時大盤0.36=爛+象限對指數無梯度
+升溫段52%事件吃61%的肉;score4開關=小盤強非ts;象限版接力棒=值班表忠實版(描述性)</td></tr>
+<tr><td>R9 指數擇時權益曲線(07-31使用者指定)</td><td class="warn">🟡均線=風控工具/蹺蹺板≠擇時器</td><td>斜率版開關
+夏普0.57/MDD-22.7%(買進持有0.49/-58.3%)=買MDD不買報酬;蹺蹺板擇時大盤0.36=爛+象限對指數無梯度
 =<b>天氣儀是策略選擇器不是大盤擇時器</b>,三軸各司其職</td></tr>
 <tr><td>R4 期限結構接力棒</td><td class="good">✅兩派主場互斥</td><td>跌觸發升溫段突出而退潮歸零;
 score4退潮段最肥;單窗口位階(10/20/60)結論穩健</td></tr>
@@ -765,7 +775,7 @@ score4退潮段最肥;單窗口位階(10/20/60)結論穩健</td></tr>
 <tr><td>跌觸發×升溫&gt;1.2 = +9.86%/勝76%</td><td>+9.86%/76%(n=250)</td><td class="good">✓一字不差</td></tr>
 <tr><td>score4×退潮&lt;0.8 = +13.81%/勝76%</td><td>+13.81%/76%(n=169)</td><td class="good">✓一字不差</td></tr>
 <tr><td>score4×risk-off = +5.49%</td><td>+5.69%/64%</td><td class="good">✓吻合</td></tr>
-<tr><td>score4×risk-on = +14.36%</td><td>+12.41%/75%</td><td class="good">✓方向與量級吻合(胃納窗口微差)</td></tr>
+<tr><td>score4×risk-on = +14.36%</td><td>+12.41%/75%</td><td class="good">✓方向與量級吻合(蹺蹺板窗口微差)</td></tr>
 <tr><td>跌觸發×高波 = +9.86%/74%</td><td>+11.39%/78%(vp10≥80)</td><td class="good">✓方向吻合(高波門檻微差)</td></tr>
 <tr><td>score4×低波 = +10.58%</td><td>+6.06%(vp&lt;80)</td><td class="warn">🟡方向同、量級差=行內「低波」門檻無從還原,以本卷口徑為準</td></tr>
 <tr><td>排列版比斜率版切換少4成</td><td>94次 vs 152次 = 少38%</td><td class="good">✓</td></tr>
@@ -805,20 +815,20 @@ score4退潮段最肥;單窗口位階(10/20/60)結論穩健</td></tr>
 {r3_html}
 <h3>跌觸發×regime×波動巢狀(「多頭內部仍有高波加成」的驗證)</h3>
 <table>{nest_html}</table>
-<h3>score4×胃納(risk-on/off)</h3>
+<h3>score4×蹺蹺板(risk-on/off)</h3>
 <table>{s4_html}</table>
 <div class="note">兩派分工成形:<b>亂世派</b>(跌觸發)=高波才有肉,低波近零;<b>治世派</b>(score4)=低波+risk-on才肥。
 共振介於中間(雙軸中性)。</div>
 
-<h2>R3b 胃納口徑考卷——價格版 vs 量能版(2026-07-31使用者挑戰後加開)</h2>
-<div class="note"><b>問題:</b>「胃納=資金風險偏好」這個解讀怎麼驗證?會不會該用成交量?<br>
+<h2>R3b 蹺蹺板口徑考卷——價格版 vs 量能版(2026-07-31使用者挑戰後加開)</h2>
+<div class="note"><b>問題:</b>「蹺蹺板=資金風險偏好」這個解讀怎麼驗證?會不會該用成交量?<br>
 <b>兩個候選口徑:</b>①<b>價格版</b>(現行天氣儀Y軸)=櫃買/加權<b>指數比值</b>20日變化%——量的是中小型「漲得比權值好不好」;
 ②<b>量能版</b>=櫃買成交值占兩市比%(20日均)的20日變化pp——量的是資金「人在哪裡」。兩版相關係數={ap_corr:+.2f}。<br>
 <b>驗證標準(力學派):</b>解讀對不對,看它能不能<b>分離策略報酬</b>——軸有分離力=軸有意義,語意是附贈的。</div>
 <h3>正面對決:同一個訊號各切on/off,誰的分離差距(on−off)大</h3>
-<table><tr><th>口徑</th><th>score4×胃納張</th><th>score4×胃納縮</th><th>差距</th>
-<th>跌觸發×胃納張</th><th>跌觸發×胃納縮</th><th>差距</th></tr>{aph}</table>
-<h3>波動聯合檢定(使用者:「胃納要跟波動一起看才有意義」——檢定=在同一波動段內,胃納還有沒有加分離力)</h3>
+<table><tr><th>口徑</th><th>score4×小盤強</th><th>score4×大盤強</th><th>差距</th>
+<th>跌觸發×小盤強</th><th>跌觸發×大盤強</th><th>差距</th></tr>{aph}</table>
+<h3>波動聯合檢定(使用者:「蹺蹺板要跟波動一起看才有意義」——檢定=在同一波動段內,蹺蹺板還有沒有加分離力)</h3>
 <table>{apj}</table>
 <h3>年度敘事對照(語意檢查:年均值與已知行情敘事是否相符)</h3>
 <div class="scroll" style="max-width:100%;overflow-x:auto">{apy}</div>
@@ -831,11 +841,11 @@ score4退潮段最肥;單窗口位階(10/20/60)結論穩健</td></tr>
 ①<b>價格版勝出,Y軸維持現行口徑</b>:score4分離差價格版+6.72pp vs 量能版+3.93pp(跌觸發兩版同向,
 量能版略深但整體價格版全面);corr=+0.53=兩構念相關但不相同,<b>量能版降為交叉驗證副口徑</b>
 (兩版方向一致=「風險偏好」構念穩健,不是單一口徑的巧合);<br>
-②<b>「胃納要跟波動一起看」成立(聯合檢定)</b>:升溫段內胃納把score4切成+23.91%/87% vs +0.04%/50%
+②<b>「蹺蹺板要跟波動一起看」成立(聯合檢定)</b>:升溫段內蹺蹺板把score4切成+23.91%/87% vs +0.04%/50%
 (差23.9pp!)、退潮段內+32.08%/85% vs +7.95%/72%——<b>單軸的分離力遠不如聯合,這就是四象限設計的力學依據</b>;<br>
-③跌觸發的家=<b>亂世格(升溫×胃納縮)+10.83%/78%(n=227)</b>,修復觀望格(退潮×縮)連跌觸發都負(-3.05%/38%)
+③跌觸發的家=<b>亂世格(升溫×大盤強)+10.83%/78%(n=227)</b>,修復觀望格(退潮×大盤強)連跌觸發都負(-3.05%/38%)
 =值班表逐格兌現;<br>
-④<b>新發現=「過熱」格(升溫×胃納張)score4 +23.91%/87%(n=46)</b>:升溫不只出現在崩盤,也出現在
+④<b>新發現=「過熱」格(升溫×小盤強)score4 +23.91%/87%(n=46)</b>:升溫不只出現在崩盤,也出現在
 V底右側急拉段——過熱格改讀「急拉段」:score4意外肥但波動仍高、含急轉風險(n小觀察層,象限命名維持)。
 </div>
 
@@ -910,7 +920,7 @@ SPX的資訊改由上面兩市層×SPX旗標承載(6/6分離,口徑固定可維�
 ={curves['att_hot']['n']/curves['att_all']['n']*100:.0f}%的事件吃走{curves['att_hot']['sum']/curves['att_all']['sum']*100:.0f}%的肉,
 退潮段近乎躺平——風暴中做反轉;<br>
 ②score4:全開{curves['s4_all']['sum']:+,}pp/{curves['s4_all']['n']}筆,退潮段最肥但中性段仍有肉=
-<b>ts單軸對score4切不乾淨,score4真正的開關是胃納張(risk-on),見R3b聯合檢定</b>;<br>
+<b>ts單軸對score4切不乾淨,score4真正的開關是小盤強(risk-on),見R3b聯合檢定</b>;<br>
 ③接力棒:ts版{curves['relay']['sum']:+,}pp/{curves['relay']['n']}筆 vs
 象限版{curves['relay_q']['sum']:+,}pp/{curves['relay_q']['n']}筆 vs 全開{curves['both_all']['sum']:+,}pp/{curves['both_all']['n']}筆
 ——象限版(值班表忠實版)以{curves['relay_q']['n']/curves['both_all']['n']*100:.0f}%的事件數留住
@@ -930,9 +940,9 @@ SPX的資訊改由上面兩市層×SPX旗標承載(6/6分離,口徑固定可維�
 粗夏普持平~微升——趨勢濾網的經典結論,擇時是風險控制工具非報酬增強器;<br>
 ②<b>指數擇時這件事上斜率版反而略優</b>(夏普0.57/MDD-22.7% vs 排列版0.50/-29.4%):R2說排列版「切換少、變天早」
 是指<b>當策略天氣標籤</b>用(少假翻轉),但直接開關大盤時,斜率版多留12pp曝險反而效率高——兩個工作用兩副眼鏡,不矛盾;<br>
-③<b>胃納拿去擇時大盤=爛</b>(0.36,MDD-40.9%,切換450次),象限×指數日報酬也無梯度
+③<b>蹺蹺板拿去擇時大盤=爛</b>(0.36,MDD-40.9%,切換450次),象限×指數日報酬也無梯度
 (修復觀望年化反而最高13.7%——「修復」兩字本來就是漲回來的日子)=<b>鐵證:天氣儀是「策略選擇器」不是「大盤擇時器」</b>,
-胃納的資訊全在「該做題材還是做事件」(R3b分離23.9pp),不在大盤方向——天氣定值班、趨勢管方向、深度管總水位,三軸各司其職;<br>
+蹺蹺板的資訊全在「該做題材還是做事件」(R3b分離23.9pp),不在大盤方向——天氣定值班、趨勢管方向、深度管總水位,三軸各司其職;<br>
 ⚠此節=描述性回測(規則來自本卷研究,非預註冊;無成本無滑價;空手期現金零報酬),定位=研究曲線非交易系統;
 個股/事件策略(R8)才是體系的主戰場,指數擇時是天氣儀的體檢表。</div>
 
@@ -969,12 +979,12 @@ Plotly.newPlot('c1', [
 Plotly.newPlot('c2', [{{x:D.ts.d,y:D.ts.v,name:'ts=vol10/vol60'}}],
  Object.assign({{title:'波動期限結構(2018起):>1.2升溫=亂世派主場,<0.8退潮=治世派主場',
  shapes:[[1,'#888'],[1.2,'#e06c5a'],[0.8,'#7ec97e']].map(s=>({{type:'line',y0:s[0],y1:s[0],xref:'paper',x0:0,x1:1,line:{{color:s[1],dash:'dash',width:1}}}}))}},BG));
-Plotly.newPlot('c3', [{{x:D.app.d,y:D.app.v,name:'胃納',fill:'tozeroy'}}],
- Object.assign({{title:'胃納=櫃買/加權比值20日變化%(2018起):正=敢買中小型'}} ,BG));
+Plotly.newPlot('c3', [{{x:D.app.d,y:D.app.v,name:'蹺蹺板',fill:'tozeroy'}}],
+ Object.assign({{title:'蹺蹺板=櫃買/加權比值20日變化%(2018起):正=敢買中小型'}} ,BG));
 Plotly.newPlot('c5', [
  {{x:D.app.d,y:D.app.v,name:'價格版(%)',line:{{width:1.5}}}},
  {{x:D.appv.d,y:D.appv.v,name:'量能版(pp)',yaxis:'y2',line:{{width:1.5,dash:'dot'}}}},
-], Object.assign({{title:'胃納兩口徑對照(2018起):價格版=左軸% / 量能版=右軸pp',
+], Object.assign({{title:'蹺蹺板兩口徑對照(2018起):價格版=左軸% / 量能版=右軸pp',
  yaxis2:{{overlaying:'y',side:'right',showgrid:false}}}},BG));
 const CVL = (k,nm,st)=>({{x:D.cv[k].d,y:D.cv[k].v,name:nm+'｜'+D.cv[k].lab,line:st||{{}}}});
 Plotly.newPlot('c6', [CVL('att_all','跌觸發全事件'),CVL('att_hot','×升溫ts>1.2',{{width:2.5,color:'#e06c5a'}}),
