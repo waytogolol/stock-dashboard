@@ -253,6 +253,8 @@ td,th{border:1px solid #333;padding:4px 9px;text-align:right} th{text-align:left
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>好壞波動分解探索(realized semivariance,2026-07-31)</title><style>{css}</style></head><body>
 <h1>🌗 好壞波動分解探索——這條新軸值不值得深挖?(2026-07-31第一階段探路卷)</h1>
+<div class="note">📎後續:風險/回撤角度+外部驗證(甜蜜格/處置V4)+bootstrap升級版見
+<a href="research_vol_updown_explore_v2.html" style="color:#6bb7e3">卷二延伸卷(2026-08-01)</a>。</div>
 <div class="note">動機:既有「波動期限結構」regime系統(vol10/vol60)只算總波動,沒拆「漲的波動」跟「跌的波動」。
 學術上realized semivariance把已實現波動拆成好波動(正報酬日貢獻)/壞波動(負報酬日貢獻),文獻上壞波動
 通常對未來報酬/風險預測力較強。本卷=探索階段(非bootstrap全套、非上板考卷),目標只有一個:
