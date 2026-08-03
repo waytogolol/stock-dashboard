@@ -166,18 +166,22 @@ def compute_pre_turnover(disp, stocks):
 
 
 def compute_tdcc_features(panel, tdcc):
-    """每事件: cutoff=announce-3日曆日的最新快照 → p1000/P52/PFULL/d4w(百分位規約=(窗<=now)比例,窗含now)。"""
+    """每事件: cutoff=announce-3日曆日的最新快照 → p1000/P52/PFULL/d4w(百分位規約=(窗<=now)比例,窗含now)。
+    d4w_800=800張版穩健性對照(千張為主口徑,同build_resonance_tdcc.py慣例),只加這一個變體特徵——
+    P52/PFULL位階不重算800版(match_min5/20的P52結論本身已互相反向,不夠格當headline,見main()判讀),
+    d4w才是唯一兩個match_min分層都顯著同向的發現,只有它值得花成本做穩健性對照。"""
     series = {}
     for code, g in tdcc.groupby("code"):
         g = g.sort_values("date")
-        series[code] = (g["date"].values.astype("datetime64[D]"), g["p1000"].values.astype(float))
+        series[code] = (g["date"].values.astype("datetime64[D]"), g["p1000"].values.astype(float),
+                        g["p800"].values.astype(float))
     rows = []
     for r in panel.itertuples():
         rec = {"event_id": r.event_id, "snap_date": pd.NaT, "snap_lag": np.nan, "p1000": np.nan,
-               "p52": np.nan, "p52_n": 0, "pfull": np.nan, "pfull_n": 0, "d4w": np.nan}
+               "p52": np.nan, "p52_n": 0, "pfull": np.nan, "pfull_n": 0, "d4w": np.nan, "d4w_800": np.nan}
         sv = series.get(r.code)
         if sv is not None and pd.notna(r.announce_date):
-            dts, vals = sv
+            dts, vals, vals8 = sv
             cutoff = np.datetime64((r.announce_date - pd.Timedelta(days=LAG_DAYS)).date())
             idx = int(np.searchsorted(dts, cutoff, side="right") - 1)
             if idx >= 0:
@@ -197,6 +201,7 @@ def compute_tdcc_features(panel, tdcc):
                         rec["pfull"] = (hist <= now).mean() * 100
                     if idx >= 4:
                         rec["d4w"] = now - vals[idx - 4]
+                        rec["d4w_800"] = vals8[idx] - vals8[idx - 4]
         rows.append(rec)
     return pd.DataFrame(rows)
 
@@ -253,7 +258,7 @@ def bucket_table(pop, bcol, order, vcols, title):
 def main():
     disp = read_sql_retry("SELECT * FROM disposition")
     px = read_sql_retry("SELECT code, date, open, close, volume FROM fm_daily_price ORDER BY code, date")
-    tdcc = read_sql_retry("SELECT code, date, p1000 FROM tdcc_weekly ORDER BY code, date")
+    tdcc = read_sql_retry("SELECT code, date, p1000, p800 FROM tdcc_weekly ORDER BY code, date")
     for c in ("announce_date", "start_date", "end_date"):
         disp[c] = pd.to_datetime(disp[c], errors="coerce")
     disp = disp.dropna(subset=["start_date", "end_date"]).reset_index(drop=True)  # event_id口徑=exit_fade panel
@@ -338,10 +343,12 @@ def main():
     for mm in ["5", "20"]:
         pop = panel[(panel.match_min == mm) & panel.v4_valid & panel.p52.notna()].copy()
         popc = evc[(evc.match_min == mm) & evc.p52.notna()].copy()
-        # d4w三分位(rank法處理0值大量並列,分層內自算)
+        # d4w三分位(rank法處理0值大量並列,分層內自算);d4w_800同法算一份供穩健性對照
         for df_ in (pop, popc):
             rk = df_.d4w.rank(pct=True)
             df_["d4w_ter"] = pd.cut(rk, bins=[-0.01, 1 / 3, 2 / 3, 1.01], labels=["T1低", "T2中", "T3高"])
+            rk8 = df_.d4w_800.rank(pct=True)
+            df_["d4w800_ter"] = pd.cut(rk8, bins=[-0.01, 1 / 3, 2 / 3, 1.01], labels=["T1低", "T2中", "T3高"])
         print("#" * 70)
         print(f"## match_min={mm}  V4可交易且P52有效 n={len(pop):,} / post端(不截斷)n={len(popc):,}")
         if len(pop):
@@ -362,6 +369,14 @@ def main():
             if a is not None and b is not None:
                 print(f"      中位差(高-餘): {(a.median() - b.median()) * 100:+.2f}pp")
             loto_bootstrap_diff(hi, rest, "v4d", "y", f"{mm}分盤V4 {lab}高-餘")
+
+        print("  -- 800張穩健性對照(僅測d4w,唯一兩個match_min分層都同向顯著的發現,P52/PFULL不夠格不測) --")
+        hi8, rest8 = pop[pop.d4w800_ter == "T3高"], pop[pop.d4w800_ter != "T3高"]
+        a8 = stat(hi8.v4d, "d4w_800最高三分位 高組")
+        b8 = stat(rest8.v4d, "d4w_800最高三分位 其餘")
+        if a8 is not None and b8 is not None:
+            print(f"      中位差(高-餘): {(a8.median() - b8.median()) * 100:+.2f}pp")
+        loto_bootstrap_diff(hi8, rest8, "v4d", "y", f"{mm}分盤V4 d4w800最高三分位高-餘")
 
         print("\n== 分析2: 出關後條件化(post5/10/20,窗末收盤起算) ==")
         pk = [f"post{k}" for k in POST_KS]

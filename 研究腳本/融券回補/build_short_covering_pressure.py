@@ -108,7 +108,11 @@ def load():
     px = pd.read_sql("SELECT code, date, close, volume, money FROM fm_daily_price WHERE close>0 ORDER BY code, date",
                      conn, parse_dates=["date"])
     mf = pd.read_sql("SELECT date, code, fin_limit, short_bal FROM margin_flow", conn, parse_dates=["date"])
-    mfo = pd.read_sql("SELECT date, code, fin_limit, short_bal FROM margin_flow_otc", conn, parse_dates=["date"])
+    # margin_flow_otc目前只有融資欄位(fetch_margin_flow_otc.py是為融資投降考卷而寫,未收融券餘額;
+    # TPEX margin/balance端點其實有券餘額,只是沒抓,屬另一件待辦)。short_bal留NaN讓上櫃強度分層
+    # 自然缺值(build_stock_panels既有的chip缺值容錯路徑),CAR事件研究(A/B/D)不需要short_bal照常算。
+    mfo = pd.read_sql("SELECT date, code, fin_limit FROM margin_flow_otc", conn, parse_dates=["date"])
+    mfo["short_bal"] = np.nan
     idx = pd.read_sql("SELECT market, date, close FROM index_daily WHERE market IN ('TAIEX','TPEx')",
                       conn, parse_dates=["date"])
     conn.close()
@@ -482,7 +486,11 @@ CI{ci_tag(boot10) if boot10 else 'n不足'}(n={boot10['n'] if boot10 else 0}); �
 公告date的前一交易日,若FinMind date欄位語意實際上略有出入(例如已經是最後回補日本身而非停止日),
 本卷口徑會系統性偏移1個交易日,不影響CAR形狀判讀但k=1可能需要謹慎解讀;④demean僅扣大盤指數
 (TAIEX/TPEx),非完整多因子模型(規模/動能因子未控制),案例對照(B段)為部分彌補;
-⑤股息未還原、交易成本未計入(本卷為訊號存在性檢定,非可執行策略回測)。</div>
+⑤股息未還原、交易成本未計入(本卷為訊號存在性檢定,非可執行策略回測);
+⑥<b>C段強度分層目前實質只有上市股</b>:margin_flow_otc(上櫃)當初只為融資投降考卷抓取,未收券餘額欄位
+(TPEX margin/balance端點其實有此欄,只是沒抓),此卷暫將上櫃short_bal留缺值,C段強度樣本以上市為主,
+上櫃個股仍計入A/B/D段(CAR事件研究不需要券餘額)——待fetch_margin_flow_otc.py補抓券餘額欄位後可重跑
+納入上櫃強度分層。</div>
 </body>
 <script>
 var p = {json.dumps(chart_payload)};

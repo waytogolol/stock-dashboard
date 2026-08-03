@@ -114,7 +114,7 @@ def run_market(market="tw"):
                      params=codes, parse_dates=["date"])
     tw = pd.read_sql("SELECT date, close FROM index_daily WHERE market=? ORDER BY date",
                      conn, params=(idx_mkt,), parse_dates=["date"]).set_index("date").close
-    td = pd.read_sql(f"SELECT date, code, p1000 FROM tdcc_weekly WHERE code IN ({ph}) "
+    td = pd.read_sql(f"SELECT date, code, p1000, p800 FROM tdcc_weekly WHERE code IN ({ph}) "
                      f"AND date>='2021-09-01'", conn, params=codes, parse_dates=["date"])
     conn.close()
     print(f"\n{'#' * 20} {tag}({tbl}, regime={idx_mkt}) {'#' * 20}")
@@ -245,53 +245,60 @@ def run_market(market="tw"):
               f" | 跌破季線 {ms:+.2f}%/{ws:.0f}%(n={ns})")
 
     # ---------- C3 加碼格: 融資×d4w背離(週頻) ----------
-    print("=" * 60 + "\nC3 加碼格·融資×d4w四象限(週頻,進場=快照+3天後首個交易日收盤)")
-    tdw = td.pivot(index="date", columns="code", values="p1000")
-    d4w = tdw - tdw.shift(4)
-    all_days = close.index
-    recs3 = []
-    for snap in [d for d in d4w.index if d >= pd.Timestamp("2022-02-01")]:
-        entry_i = all_days.searchsorted(snap + pd.Timedelta(days=3))
-        if entry_i + 20 >= len(all_days):
-            continue
-        ed = all_days[entry_i]
-        f20_e = (close.shift(-20) / close - 1).loc[ed] * 100
-        fin_e = finchg.loc[ed]
-        r20_e = ret20.loc[ed]
-        a20_e = amt20.loc[ed]
-        row = d4w.loc[snap].reindex(close.columns)
-        ok = row.notna() & fin_e.notna() & f20_e.notna() & (a20_e >= 0.3)
-        cs = row.index[ok]
-        if not len(cs):
-            continue
-        med0 = f20_e[cs].median()
-        for c in cs:
-            recs3.append({"code": c, "date": ed, "tpos": tpos[ed], "d4w": row[c],
-                          "fin": fin_e[c], "deep": bool(r20_e[c] <= -20),
-                          "f20dm": f20_e[c] - med0})
-    ev3 = pd.DataFrame(recs3)
-    ev3["ym"] = ev3.date.dt.strftime("%Y-%m")
-    ev3["year"] = ev3.date.dt.year
-    quads = {"散戶斷頭·大戶接(fin<=-5∧d4w>0)": (ev3.fin <= -5) & (ev3.d4w > 0),
-             "散戶斷頭·大戶跑(fin<=-5∧d4w<0)": (ev3.fin <= -5) & (ev3.d4w < 0),
-             "散戶進·大戶出(fin>=+5∧d4w<0)": (ev3.fin >= 5) & (ev3.d4w < 0),
-             "散戶進·大戶也進(fin>=+5∧d4w>0)": (ev3.fin >= 5) & (ev3.d4w > 0)}
-    c3_res = {}
-    for base_lab, base in (("全池", pd.Series(True, index=ev3.index)), ("深跌池內", ev3.deep)):
-        print(f"  [{base_lab}] (股-週n={int(base.sum())})")
-        for lab, m_ in quads.items():
-            sub = ev3[base & m_]
-            m, w, n = med_win(sub.f20dm)
-            c3_res[(base_lab, lab)] = (m, w, n)
-            if m is not None:
-                print(f"    {lab}: f20dm {m:+.2f}%/{w:.0f}%(n={n})")
-        a = ev3[base & quads["散戶斷頭·大戶接(fin<=-5∧d4w>0)"]].assign(value=lambda x: x.f20dm)
-        b = ev3[base & quads["散戶斷頭·大戶跑(fin<=-5∧d4w<0)"]].assign(value=lambda x: x.f20dm)
-        r = boot_diff_frame(a, b)
-        p, t = loto(a, b)
-        c3_res[(base_lab, "diff")] = (r, p, t)
-        if r:
-            print(f"    重點差(大戶接−大戶跑): {r[0]:+.2f}pp CI[{r[1]:+.2f},{r[2]:+.2f}] 逐年{p}/{t}正")
+    # 千張(p1000)為主口徑(全案慣例,同build_resonance_tdcc.py),800張版做穩健性對照——
+    # 這格上櫃子池是本考卷唯一「判決有效」的一格(-3.03pp CI排0,已上板旗標),換門檻會不會消失是關鍵。
+    def run_c3(col, label):
+        print("=" * 60 + f"\nC3 加碼格·融資×d4w四象限({label},週頻,進場=快照+3天後首個交易日收盤)")
+        tdw = td.pivot(index="date", columns="code", values=col)
+        d4w = tdw - tdw.shift(4)
+        all_days = close.index
+        recs3 = []
+        for snap in [d for d in d4w.index if d >= pd.Timestamp("2022-02-01")]:
+            entry_i = all_days.searchsorted(snap + pd.Timedelta(days=3))
+            if entry_i + 20 >= len(all_days):
+                continue
+            ed = all_days[entry_i]
+            f20_e = (close.shift(-20) / close - 1).loc[ed] * 100
+            fin_e = finchg.loc[ed]
+            r20_e = ret20.loc[ed]
+            a20_e = amt20.loc[ed]
+            row = d4w.loc[snap].reindex(close.columns)
+            ok = row.notna() & fin_e.notna() & f20_e.notna() & (a20_e >= 0.3)
+            cs = row.index[ok]
+            if not len(cs):
+                continue
+            med0 = f20_e[cs].median()
+            for c in cs:
+                recs3.append({"code": c, "date": ed, "tpos": tpos[ed], "d4w": row[c],
+                              "fin": fin_e[c], "deep": bool(r20_e[c] <= -20),
+                              "f20dm": f20_e[c] - med0})
+        ev3 = pd.DataFrame(recs3)
+        ev3["ym"] = ev3.date.dt.strftime("%Y-%m")
+        ev3["year"] = ev3.date.dt.year
+        quads = {"散戶斷頭·大戶接(fin<=-5∧d4w>0)": (ev3.fin <= -5) & (ev3.d4w > 0),
+                 "散戶斷頭·大戶跑(fin<=-5∧d4w<0)": (ev3.fin <= -5) & (ev3.d4w < 0),
+                 "散戶進·大戶出(fin>=+5∧d4w<0)": (ev3.fin >= 5) & (ev3.d4w < 0),
+                 "散戶進·大戶也進(fin>=+5∧d4w>0)": (ev3.fin >= 5) & (ev3.d4w > 0)}
+        c3_res = {}
+        for base_lab, base in (("全池", pd.Series(True, index=ev3.index)), ("深跌池內", ev3.deep)):
+            print(f"  [{base_lab}] (股-週n={int(base.sum())})")
+            for lab, m_ in quads.items():
+                sub = ev3[base & m_]
+                m, w, n = med_win(sub.f20dm)
+                c3_res[(base_lab, lab)] = (m, w, n)
+                if m is not None:
+                    print(f"    {lab}: f20dm {m:+.2f}%/{w:.0f}%(n={n})")
+            a = ev3[base & quads["散戶斷頭·大戶接(fin<=-5∧d4w>0)"]].assign(value=lambda x: x.f20dm)
+            b = ev3[base & quads["散戶斷頭·大戶跑(fin<=-5∧d4w<0)"]].assign(value=lambda x: x.f20dm)
+            r = boot_diff_frame(a, b)
+            p, t = loto(a, b)
+            c3_res[(base_lab, "diff")] = (r, p, t)
+            if r:
+                print(f"    重點差(大戶接−大戶跑): {r[0]:+.2f}pp CI[{r[1]:+.2f},{r[2]:+.2f}] 逐年{p}/{t}正")
+        return c3_res, quads
+
+    c3_res, quads = run_c3("p1000", "主·千張")
+    c3_res_800, _ = run_c3("p800", "變體·800張")
 
     # ---------- 報告 ----------
     def fm(v, pct=True):
@@ -316,17 +323,34 @@ def run_market(market="tw"):
         (m, w, n), (mb, wb, nb), (ms, ws, ns) = c2_res[k]
         c2tbl += (f"<tr><th>f{k}dm</th><td>{fm(m)}/{w:.0f}%(n={n})</td>"
                   f"<td>{fm(mb)}/{wb:.0f}%(n={nb})</td><td>{fm(ms)}/{ws:.0f}%(n={ns})</td></tr>")
-    c3tbl = ""
-    for base_lab in ("全池", "深跌池內"):
-        for lab in quads:
-            m, w, n = c3_res[(base_lab, lab)]
-            if m is not None:
-                c3tbl += (f"<tr><th>{base_lab}·{lab}</th>"
+    def c3_table_html(res):
+        t = ""
+        for base_lab in ("全池", "深跌池內"):
+            for lab in quads:
+                m, w, n = res[(base_lab, lab)]
+                if m is not None:
+                    t += (f"<tr><th>{base_lab}·{lab}</th>"
                           f"<td class='{'good' if m > 0 else 'bad'}'>{m:+.2f}%/{w:.0f}%</td>"
                           f"<td>{n}</td></tr>")
-        r, p, t = c3_res[(base_lab, "diff")]
-        rs = f"{r[0]:+.2f}pp CI[{r[1]:+.2f},{r[2]:+.2f}] 逐年{p}/{t}正" if r else "n小"
-        c3tbl += f"<tr class='hl'><th>{base_lab}·大戶接−大戶跑</th><td colspan=2>{rs}</td></tr>"
+            r, p, t2 = res[(base_lab, "diff")]
+            rs = f"{r[0]:+.2f}pp CI[{r[1]:+.2f},{r[2]:+.2f}] 逐年{p}/{t2}正" if r else "n小"
+            t += f"<tr class='hl'><th>{base_lab}·大戶接−大戶跑</th><td colspan=2>{rs}</td></tr>"
+        return t
+
+    c3tbl = c3_table_html(c3_res)
+    c3tbl_800 = c3_table_html(c3_res_800)
+    r1000 = c3_res[("深跌池內", "diff")][0]
+    r800 = c3_res_800[("深跌池內", "diff")][0]
+    ok1000 = r1000 and (r1000[1] > 0 or r1000[2] < 0)
+    ok800 = r800 and (r800[1] > 0 or r800[2] < 0)
+    c3_robust_note = (
+        f"<div class='note'><b>800張穩健性對照(深跌池內·大戶接−大戶跑,重點格)</b>: "
+        f"千張(主) {f'{r1000[0]:+.2f}pp CI[{r1000[1]:+.2f},{r1000[2]:+.2f}]' if r1000 else 'n小'}"
+        f"{' 排0' if ok1000 else ' 含0'} vs 800張(變體) "
+        f"{f'{r800[0]:+.2f}pp CI[{r800[1]:+.2f},{r800[2]:+.2f}]' if r800 else 'n小'}"
+        f"{' 排0' if ok800 else ' 含0'} —— "
+        f"{'兩門檻方向一致,結論穩健' if (ok1000 == ok800) else '⚠兩門檻結論不一致,門檻選擇會改變判決,需降級為描述性而非規則'}"
+        f"</div>")
 
     frag = f"""
 <h2>[{tag}] C1 主格·深跌池內融資投降增量(demean=全池當日中位)</h2>
@@ -336,8 +360,11 @@ def run_market(market="tw"):
 <table><tr><th>逐年 投降−沒動</th><th>f20dm差</th><th>投降n</th></tr>{yrtbl}</table>
 <h2>[{tag}] C2 反向格·融資急增×小型(demean=全池當日中位)</h2>
 <table><tr><th>水平</th><th>全體</th><th>站上季線</th><th>跌破季線</th></tr>{c2tbl}</table>
-<h2>[{tag}] C3 加碼格·融資×d4w四象限(週頻)</h2>
-<table><tr><th>象限</th><th>f20dm中位/勝率</th><th>n</th></tr>{c3tbl}</table>"""
+<h2>[{tag}] C3 加碼格·融資×d4w四象限(週頻,千張=主口徑)</h2>
+<table><tr><th>象限</th><th>f20dm中位/勝率</th><th>n</th></tr>{c3tbl}</table>
+<h3>800張版(穩健性對照,同法換門檻)</h3>
+<table><tr><th>象限</th><th>f20dm中位/勝率</th><th>n</th></tr>{c3tbl_800}</table>
+{c3_robust_note}"""
     return frag
 
 

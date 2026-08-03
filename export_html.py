@@ -1072,6 +1072,121 @@ def build():
         _sec_fail("補漲雷達計算失敗", e)
         data["catchup_radar"] = {"themes": [], "rows": []}
 
+    # ---- 沉寂覺醒雷達(2026-08-04上線;候選規則卡·未回測·樣本n=46/7年,胃納量僅幾十萬~一兩百萬,
+    #      正式研究=研究腳本/綜合策略/build_dormant_awakening_pattern.py"⑧疊加篩選版") ----
+    # 訊號=沉寂(成交金額後20%分位)∧波動放大(20日/100日波動比>=2x)∧市值小(後30%分位)∧
+    #      BVPS<10元(信用交易票面門檻,收盤/PBR反推)∧PBR<1.5∧52週千張大戶比例上升。
+    # ⭐⭐/⚠標記僅供輔助判斷,刻意不當作硬性篩選(雙濾網疊加測試曾出現100%勝率/0%回撤=過擬合假象,
+    # 見封存/研究紀錄,故清單保留全部候選由使用者自行權衡)。
+    try:
+        import numpy as _np
+        conn_da = sqlite3.connect(DB_PATH)
+        da_lookback = (pd.Timestamp(datetime.now()) - pd.Timedelta(days=800)).strftime("%Y-%m-%d")
+        da_px = pd.read_sql(
+            "SELECT code, date, close, money FROM fm_daily_price "
+            "WHERE code GLOB '[0-9][0-9][0-9][0-9]' AND date>=?", conn_da, params=(da_lookback,), parse_dates=["date"])
+        da_cap = pd.read_sql(
+            "SELECT code, date, shares FROM capital WHERE code GLOB '[0-9][0-9][0-9][0-9]'", conn_da, parse_dates=["date"])
+        da_pbr = pd.read_sql(
+            "SELECT code, date, pbr FROM per_daily WHERE code GLOB '[0-9][0-9][0-9][0-9]' AND date>=?",
+            conn_da, params=(da_lookback,), parse_dates=["date"])
+        da_tdcc = pd.read_sql(
+            "SELECT code, date, p1000 FROM tdcc_weekly WHERE code GLOB '[0-9][0-9][0-9][0-9]'", conn_da, parse_dates=["date"])
+        conn_da.close()
+
+        da_close = da_px.pivot(index="date", columns="code", values="close").astype("float32")
+        da_close = da_close.mask(da_close <= 0)
+        da_money = da_px.pivot(index="date", columns="code", values="money").astype("float32")
+        da_shares = da_cap.pivot(index="date", columns="code", values="shares")
+        da_shares = da_shares.reindex(da_close.index).ffill().astype("float32")
+        da_pbr_w = da_pbr.pivot(index="date", columns="code", values="pbr")
+        da_pbr_w = da_pbr_w.reindex(da_close.index).ffill(limit=5).astype("float32")
+        da_tdcc_w = da_tdcc.pivot(index="date", columns="code", values="p1000").astype("float32")
+        _da_cols = da_close.columns.union(da_money.columns)
+        da_close = da_close.reindex(columns=_da_cols)
+        da_money = da_money.reindex(columns=_da_cols)
+        da_shares = da_shares.reindex(columns=_da_cols)
+        da_pbr_w = da_pbr_w.reindex(columns=_da_cols)
+
+        DA_BASE_WIN, DA_GAP, DA_SCAN_DAYS, DA_DEDUP = 100, 20, 300, 60
+        da_base_money = da_money.rolling(DA_BASE_WIN, min_periods=DA_BASE_WIN).mean().shift(DA_GAP)
+        da_ret = da_close.pct_change(fill_method=None)
+        da_vol_awake = da_ret.rolling(DA_GAP, min_periods=DA_GAP).std()
+        da_vol_base = da_ret.rolling(DA_BASE_WIN, min_periods=DA_BASE_WIN).std().shift(DA_GAP)
+        da_vol_ratio = da_vol_awake / da_vol_base.replace(0, _np.nan)
+        da_dormant_rank = da_base_money.rank(axis=1, pct=True)
+        da_cap_now = (da_shares * da_close) / 1e8
+        da_cap_rank = da_cap_now.rank(axis=1, pct=True)
+        da_bvps = da_close / da_pbr_w.replace(0, _np.nan)
+        mask_da = ((da_dormant_rank <= 0.20) & (da_vol_ratio >= 2.0) & (da_cap_rank <= 0.30) &
+                   (da_bvps < 10.0) & (da_pbr_w < 1.5))
+
+        def _da_tdcc_delta52w(code, date):
+            if code not in da_tdcc_w.columns:
+                return None
+            s = da_tdcc_w[code].dropna()
+            if s.empty:
+                return None
+            i_now = s.index.searchsorted(date, side="right") - 1
+            i_before = s.index.searchsorted(date - pd.Timedelta(days=364), side="right") - 1
+            if i_now < 0 or i_before < 0:
+                return None
+            return float(s.iloc[i_now] - s.iloc[i_before])
+
+        # 全市場名稱查表(沉寂股常不在rankings週榜前200,先用tw_all_listed.csv全量墊底,
+        # rankings較新故仍優先覆蓋——同build_dormant_awakening_pattern.py load_names()慣例)
+        _da_names = {}
+        try:
+            import csv as _csv
+            with open("tw_all_listed.csv", encoding="utf-8-sig") as _f:
+                for _row in _csv.DictReader(_f):
+                    _da_names[_row["code"]] = _row["name"]
+        except Exception:
+            pass
+        _da_rk = rankings[rankings["country"] == "台"].sort_values("snapshot_date").drop_duplicates("code", keep="last")
+        _da_names.update(dict(zip(_da_rk["code"], _da_rk["name"])))
+
+        scan_start = max(0, len(da_close.index) - DA_SCAN_DAYS)
+        da_rows = []
+        da_last_trigger = None
+        for code in mask_da.columns:
+            col = mask_da[code].values
+            last_i = -10 ** 9
+            for i in range(len(col)):
+                if not col[i] or (i - last_i) < DA_DEDUP:
+                    continue
+                date_i = da_close.index[i]
+                delta = _da_tdcc_delta52w(code, date_i)
+                if delta is None or delta <= 0:
+                    continue
+                last_i = i
+                if da_last_trigger is None or date_i > da_last_trigger:
+                    da_last_trigger = date_i
+                if i < scan_start:
+                    continue
+                is_limitup = False
+                if i >= 1:
+                    c0, c1 = da_close[code].iloc[i], da_close[code].iloc[i - 1]
+                    if pd.notna(c0) and pd.notna(c1) and c1 > 0:
+                        is_limitup = bool((c0 / c1 - 1) >= 0.095)
+                da_rows.append({
+                    "code": code, "name": _da_names.get(code, code), "date": date_i.strftime("%Y-%m-%d"),
+                    "cap_yi": round(float(da_cap_now[code].iloc[i]), 1),
+                    "bvps": round(float(da_bvps[code].iloc[i]), 1),
+                    "pbr": round(float(da_pbr_w[code].iloc[i]), 2),
+                    "tdcc_delta52w": round(delta, 2),
+                    "dormant_money_wan": round(float(da_base_money[code].iloc[i]) / 1e4),
+                    "is_limitup": is_limitup,
+                })
+        da_rows.sort(key=lambda r: r["date"], reverse=True)
+        data["dormant_awakening_radar"] = {
+            "rows": da_rows,
+            "last_trigger": (da_last_trigger.strftime("%Y-%m-%d") if da_last_trigger is not None else None),
+        }
+    except Exception as e:
+        _sec_fail("沉寂覺醒雷達計算失敗", e)
+        data["dormant_awakening_radar"] = {"rows": [], "last_trigger": None}
+
     # ---- ⑫題材月營收動能score(2026-07-14上線;凍結研究口徑,正式builder=build_theme_score_topn.py) ----
     # score=巢狀MoM streak(0-3)+近3月YoY均值>0加1分;sig[i]=以資料月i收口的訊號,進場=次月15號(全shift無look-ahead)
     # 回測:score=4 TWII超額中位+2.55%/勝率56%(828筆/115題材-月,LOTO+cluster bootstrap通過);V2倉位=訊號照進×大盤tier
@@ -2791,6 +2906,9 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 /* ── 進場訊號頁 ───────────────────────────────────────────────── */
 .rule-card { background: var(--sf); border: 1px solid var(--bd); border-radius: var(--r); padding: 14px 18px; margin-bottom: 8px; }
 .rule-item { font-size: 13px; color: var(--tx2); line-height: 1.8; }
+.capacity-banner { display: flex; gap: 10px; align-items: flex-start; background: var(--amb-bg); border: 1px solid var(--amb); border-radius: var(--r); padding: 12px 16px; margin: 14px 0 18px; font-size: 13px; color: var(--tx); line-height: 1.7; }
+.capacity-banner .icon { font-size: 18px; flex: none; line-height: 1; }
+.capacity-banner b { color: var(--amb); }
 .sig-pass { color: var(--grn); font-weight: 700; }
 .sig-fail { color: var(--tx3); }
 .pos-badge { font-size: 10px; padding: 1px 6px; border-radius: 8px; font-weight: 700; white-space: nowrap; vertical-align: middle; margin-left: 4px; }
@@ -3201,6 +3319,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <button class="view-btn" id="sigViewResoBtn" onclick="switchSigView('reso')">🔥共振</button>
     <button class="view-btn" id="sigViewThermoBtn" onclick="switchSigView('thermo')">🌡️大盤溫度計</button>
     <button class="view-btn" id="sigViewPledgeBtn" onclick="switchSigView('pledge')">🔓內部解質警戒</button>
+    <button class="view-btn" id="sigViewDormantBtn" onclick="switchSigView('dormant')">🌙沉寂覺醒雷達</button>
   </div>
   <div class="hint">頁籤上的數字＝該檢視「現在有事」的量：大題材🔔=本週檢查清單觸發的題材數、微題材🔔=本週脈衝A/B級數、處置🔔=今日需行動檔數(V4/V5買點日·出場日·🟢攤平帶)、補漲🎯=現役候選檔數；主頁籤「進場訊號🔔」=大題材+微題材合計。沒掛數字=該頁目前無新觸發，常設內容照常看。</div>
   <div id="sigConfluView">
@@ -3368,6 +3487,21 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <h3 class="sec-title" style="margin-top:16px">窗內事件明細</h3>
   <div class="scroll-box"><table id="pledgeTable"></table></div>
   <div class="hint">狀態欄：🔴警戒=主測口徑（回測−6.9%那格）；觀察=內部人大額解質但位階未達80（半數真頂部事前位階不高，低位階≠安全）；股東會季=4-6月混淆組（無資訊僅記錄）。交叉欄：該股同時在訊號頁前3大／處置中／營收前5名單＝<b>持股減碼審查的實戰入口</b>。累積張=本批申報人異動後仍質押的張數。</div>
+  </div>
+
+  <div id="sigDormantView" style="display:none">
+  <h3 class="sec-title">🌙 沉寂覺醒雷達（候選規則卡・未回測・2026-08-04上線）</h3>
+  <div class="rule-card">
+    <div class="rule-item">動機：借殼上市/低流通吸貨型態的觀察名單。訊號＝本來很沒流通性的小型股，最近突然波動放大（20日/100日波動比≥2倍），同時卡在兩個法規門檻附近（每股淨值低於信用交易票面10元、股價淨值比低於1.5），且過去一年千張大戶持股比例持續墊高。<b>不要求股價已經噴出一段才觸發</b>——這是本雷達刻意設計成「早」的地方（研究發現：等漲幅確認再進場，勝率反而只有41-45%；不等確認、波動放大就算數，勝率回到49-51%）。</div>
+    <div class="rule-item">強度標記（輔助判斷用，不是篩選條件——篩太緊會漏掉真案例，見下方警語）：<span class="pos-badge crown">⭐⭐ 大戶增幅強</span> 52週千張大戶比例墊高&gt;1.5個百分點　<span class="pos-badge silver">⭐ 普通</span> 有墊高但幅度較小　<b style="color:var(--amb)">⚠ 觸發日漲停</b> 觸發當天股價本身漲停——歷史上這種案例後續表現明顯較差，多留意。</div>
+    <div class="rule-item" style="color:var(--tx3)">⚠讀這份清單前必看：①樣本極小（n=46起觸發/近7年，平均一年6-7次）——任何統計數字都只能當參考，不是保證。②<b>胃納量非常小</b>，見下方警示框，不是能重倉操作的訊號。③存活者偏差：資料庫用現存上市櫃股名單回填歷史，已下市/合併/改名的個股幾乎不在樣本內——本雷達能回答「這個型態出現後，公司還活著時股價續攻或洩壓」，不能回答「後來真的被借殼了嗎」。④「⭐⭐」與「⚠」是提示不是刪除——兩者疊加當硬性篩選曾在回測裡測出100%勝率/零回撤，那是過擬合假象不是真訊號，所以清單刻意保留全部候選，交給你自己判斷。詳細研究過程→研究腳本/綜合策略/build_dormant_awakening_pattern.py。</div>
+  </div>
+  <div class="capacity-banner">
+    <div class="icon">💰</div>
+    <div><b>胃納量提醒</b>：這批股票平常成交量很小，進場當下20日均成交金額中位數只有約177萬元。單筆部位抓「不超過當日均量15%」估算，建議上限約25萬元／筆；同時間可能有多檔候選，實務抓5筆分散，<b>整體這個雷達合理動用的資金大概是幾十萬到一兩百萬新台幣</b>。資金明顯更大就不用看這個雷達了——你的買賣單本身會把價格推離看到的樣子。</div>
+  </div>
+  <div class="hint" id="dormantAsof" style="font-weight:600"></div>
+  <div class="scroll-box"><table id="dormantTable"></table></div>
   </div>
 
   <div id="sigThermoView" style="display:none">
@@ -4804,7 +4938,7 @@ function renderBanner() {
 
 // ── 進場訊號頁籤 ──────────────────────────────────────────────────────
 function switchSigView(v) {
-  ["Conflu", "Macro", "Micro", "Catchup", "Revmom", "Attwatch", "Dispo", "Reso", "Thermo", "Pledge"].forEach(function(k) {
+  ["Conflu", "Macro", "Micro", "Catchup", "Revmom", "Attwatch", "Dispo", "Reso", "Thermo", "Pledge", "Dormant"].forEach(function(k) {
     const on = v === k.toLowerCase();
     document.getElementById("sigView" + k + "Btn").classList.toggle("active", on);
     document.getElementById("sig" + k + "View").style.display = on ? "" : "none";
@@ -5248,6 +5382,45 @@ function renderSignalTab() {
     {key: "營收YoY%", label: "營收YoY%", numeric: true}, {key: "資金位階%", label: "資金位階%", numeric: true},
     {key: "埋伏理由", label: "埋伏理由(符合數排序)", sortKey: "_n", numeric: true},
   ], cuRows);
+
+  // 沉寂覺醒雷達(2026-08-04上線)
+  const da = DATA.dormant_awakening_radar || {rows: [], last_trigger: null};
+  const daBtn = document.getElementById("sigViewDormantBtn");
+  if (daBtn && da.rows.length) daBtn.innerHTML = "🌙沉寂覺醒雷達 " + da.rows.length;
+  const daAsofEl = document.getElementById("dormantAsof");
+  if (daAsofEl) {
+    daAsofEl.innerHTML = da.rows.length
+      ? "近期候選 " + da.rows.length + " 檔（近300個交易日內觸發，依觸發日倒序）"
+      : "近300個交易日內無新觸發" + (da.last_trigger ? "，上一次觸發：" + da.last_trigger : "") + "（平均每年6-7次，安靜是常態，不用一直盯）。";
+  }
+  const daRows = da.rows.map(function(r) {
+    const tdccBadge = r.tdcc_delta52w > 1.5
+      ? "<span class=\"pos-badge crown\">⭐⭐ +" + r.tdcc_delta52w.toFixed(1) + "pp</span>"
+      : "<span class=\"pos-badge silver\">⭐ +" + r.tdcc_delta52w.toFixed(1) + "pp</span>";
+    return {
+      "觸發日": r.date,
+      "股票": "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('台|" + r.code + "')\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + r.code + " " + r.name + "</a>",
+      "市值": r.cap_yi + "億", "_cap": r.cap_yi,
+      "每股淨值": r.bvps + "元", "_bvps": r.bvps,
+      "股價淨值比": r.pbr, "_pbr": r.pbr,
+      "大戶增幅(52週)": tdccBadge, "_tdcc": r.tdcc_delta52w,
+      "觸發日狀態": r.is_limitup ? "<b style=\"color:var(--amb)\">⚠ 觸發日漲停</b>" : "—",
+      "沉寂期日均量": r.dormant_money_wan + "萬", "_dm": r.dormant_money_wan,
+    };
+  });
+  const daEl = document.getElementById("dormantTable");
+  if (daEl) {
+    daEl._sortState = {colIndex: 0, dir: -1};
+    buildTable(daEl, [
+      {key: "觸發日", label: "觸發日"}, {key: "股票", label: "股票"},
+      {key: "市值", label: "市值", sortKey: "_cap", numeric: true},
+      {key: "每股淨值", label: "每股淨值", sortKey: "_bvps", numeric: true},
+      {key: "股價淨值比", label: "股價淨值比", sortKey: "_pbr", numeric: true},
+      {key: "大戶增幅(52週)", label: "大戶增幅(52週)", sortKey: "_tdcc", numeric: true},
+      {key: "觸發日狀態", label: "觸發日狀態"},
+      {key: "沉寂期日均量", label: "沉寂期日均量", sortKey: "_dm", numeric: true},
+    ], daRows);
+  }
 
   // 微題材脈衝雷達
   const microRows = (DATA.micro_current || []).map(function(c) {
