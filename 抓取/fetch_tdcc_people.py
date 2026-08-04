@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""FinMind TDCC股權分級歷史庫「人數」版 -> capital_flow.db (tdcc_people)
+"""⚠2026-08-04起例行更新已改用抓取/fetch_tdcc.py(同一次TDCC官方免費請求順便補寫，零額外網路成本，
+  已排進update_all.py「集保大戶」步驟每次自動累積最新一週，不會再變舊)。本腳本當初做的2013-01~
+  2026-07-24全歷史backfill已完成入庫，此後保留僅供未來需要更早歷史或補漏檔時參考/重跑，不再是
+  日常更新路徑。
+FinMind TDCC股權分級歷史庫「人數」版 -> capital_flow.db (tdcc_people)
 用途: 大戶「人數」增減 vs 持股「比例」增減 象限分析(千張大戶人數變化特徵);
   tdcc_weekly建表時只留了percent、把各級距people丟掉,本腳本補抓同一資料集的人數面
 級距聚合: 與fetch_tdcc_history.py完全同口徑(定義一致,可直接join tdcc_weekly):
