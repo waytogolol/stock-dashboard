@@ -154,6 +154,19 @@ td,th{border:1px solid #333;padding:5px 9px;text-align:right} th{text-align:left
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>週級強者續強·廣宇宙複測+風控疊加考卷</title>
 <script src="plotly.min.js"></script><style>{css}</style></head><body>
 <h1>週級強者續強·廣宇宙複測+風控疊加考卷(2026-08-04)</h1>
+<div class='note' style="border:2px solid #e06c5a;padding:12px;margin:12px 0">
+<b style="color:#e06c5a">🚨 2026-08-05可執行性判決(後續研究推翻本卷絕對數字,務必先讀)</b>:本卷全部複利/年化/MDD
+數字建立在「訊號週收盤價進場」的假設上——即看到當週漲幅達標的收盤當下就買在收盤價,現實不可執行。
+可執行性校正系列(build_weekly_momo_entry_realism/gap_char/overnight_gap/executable_scan.py共63變體
+掃描)結論:①真實侵蝕=131x→3.0x(次日開盤進場,對稱口徑),原「edge」大半是開盤跳空吃不到的紙上富貴;
+②跳空的唯一主要來源=訊號日鎖漲停(高跳空組88%鎖死),隔夜缺口報酬本質是漲停排隊溢價,屬於鎖死前已
+進場者;③所有綁定星期幾的版本(含週四判斷週五進場)都不可靠,逐日滾動掃描才是正確估計;④活下來的
+最終形式=逐日掃近5日漲幅≥20%→次日(或+3日)收盤價進場→排除開低>2%→持有5節,年化+25.3%/MDD-36.3%/
+Calmar 0.70(50%曝險版年化+13.8%/MDD-19.4%),vs大盤買進持有+14.2%/-31.6%/Calmar 0.45——
+<b>薄但真實的edge,惟成本脆弱(單邊摩擦1.1%即歸零)+edge集中2020後+夏普輸大盤</b>;
+⑤下一步=量測小型股尾盤真實成交成本,>0.7%即關閉此線,<0.5%才值得walk-forward。
+本卷保留當「訊號存在性+風控疊加比較」的相對結論參考(regime全滅/長假安慰劑/停損有效等相對比較
+不受進場口徑影響),絕對績效數字一律以可執行版為準。</div>
 <div class='note'>承接<a href="research_weekly_momo.html">research_weekly_momo.html</a>(133檔動能選樣宇宙,
 2026-07-11)點名的下一步:「待inst_flow全市場~1400檔廣宇宙複測通過才算最終通過」。使用者提案每週輪動
 持有~10檔、目標高賺賠比+低MDD(展望理論框架),本卷做三件事:①全市場廣宇宙複測驗證方向是否為子集假象
