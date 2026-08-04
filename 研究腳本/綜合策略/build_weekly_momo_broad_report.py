@@ -62,6 +62,18 @@ def equity_chart(traces, title, chart_id, log=True):
             f'{json.dumps(layout, ensure_ascii=False)}, {{displayModeBar:false}});</script>')
 
 
+def taiex_bh_ret(grid):
+    """大盤買進持有週報酬序列,對齊grid(週五收盤,同fm_daily_price週化口徑)"""
+    con = sqlite3.connect(DB)
+    px = pd.read_sql("select date, close from index_daily where market='TAIEX' order by date",
+                      con, parse_dates=["date"])
+    con.close()
+    px["wk"] = px["date"].dt.to_period("W-FRI").dt.end_time.dt.normalize()
+    wk_close = px.groupby("wk")["close"].last()
+    wk_close = wk_close.reindex(grid, method="ffill")
+    return wk_close.pct_change()
+
+
 def fmt_row(d):
     sig = "✓排0" if (d["ci_lo"] > 0 or d["ci_hi"] < 0) else "含0"
     return (f"<tr><td>{d['name']}</td><td>{d['mult']:.2f}x</td><td>{d['cagr']:+.1f}%</td>"
@@ -83,7 +95,14 @@ def main():
         base_rows.append(row_stats(f"{th:.0%}門檻+top10", ret, exec_t))
         base_traces.append(equity_trace(ret, f"{th:.0%}門檻", colors[th]))
         base_data[th] = (baskets, ret)
-    equity_chart_base = equity_chart(base_traces, "廣宇宙複測·三門檻權益曲線(對數刻度,起點=1)", "eq_base")
+
+    print("大盤買進持有benchmark...")
+    ret_bh = taiex_bh_ret(grid)
+    bh_ret_clean = ret_bh.dropna()
+    bh_exec = pd.DataFrame({"net_ret": bh_ret_clean.values, "entry_week": bh_ret_clean.index})
+    base_rows.append(row_stats("大盤買進持有(TAIEX)", ret_bh, bh_exec))
+    base_traces.append(equity_trace(ret_bh, "大盤買進持有(TAIEX)", "#8a8878"))
+    equity_chart_base = equity_chart(base_traces, "廣宇宙複測·三門檻 vs 大盤買進持有 權益曲線(對數刻度,起點=1)", "eq_base")
 
     print("regime控倉(沿用build_weekly_momo_regime_overlay.py既有結果,重算20%門檻驗證數字一致性)...")
     baskets20, ret20 = base_data[0.20]
@@ -96,7 +115,7 @@ def main():
     print("長假減碼+安慰劑對照(20%/15%門檻)...")
     holidays_wide = load_holidays(4)
     holiday_rows_by_th = {}
-    holiday_traces = list(base_traces)  # 疊在同一張圖上比較
+    holiday_traces = [t for t in base_traces if t["name"] in ("20%門檻", "大盤買進持有(TAIEX)")]
     for th in (0.20, 0.15):
         baskets, ret_b = base_data[th]
         wk_list = list(baskets.keys())
