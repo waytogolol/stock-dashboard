@@ -3,13 +3,14 @@
 
 依據: build_us_tw_overnight_link.py(首輪,commit ac221a4)+build_us_tw_pocket_refine.py(第二輪精煉)
 已驗證的三個活口訊號,見研究報告/research_us_tw_overnight.html:
-  ①口袋: 美題材原始>2%且SPX<0 → 台股同題材「開盤市價」進場,持5-10交易日(CAR5+0.68%/CAR10+1.15% demean,
-    12年11正)。口袋日跳空不過衝,是全專案少見開盤追買活著的訊號。
-  ②深口袋: 美題材原始>2.5%且SPX<-0.5% → 同上但肉加倍(CAR5+1.44%/CAR10+1.83%),組合模擬0.5%來回成本
+  ①獨漲: 美題材原始>2%且SPX<0 → 台股同題材「開盤市價」進場,持5-10交易日(CAR5+0.68%/CAR10+1.15% demean,
+    12年11正)。獨漲日跳空不過衝,是全專案少見開盤追買活著的訊號。
+  ②強獨漲: 美題材原始>2.5%且SPX<-0.5% → 同上但肉加倍(CAR5+1.44%/CAR10+1.83%),組合模擬0.5%來回成本
     年化+19.9%/MDD-24.8%(持5)。事件~19題材日/年,出現頻率低,出現時是本訊號家族最強格。
   ③尾盤tilt: 美題材超額(減SPX)>2%但SPX>=0(有大盤掩護)→ 不追開盤(跳空過衝275%會回吐),只當
     「本來就要買的股票挑今天尾盤買」的tilt,持5日+0.57%(偏薄)。
-⚠精煉輪教訓: 口袋內不要疊創新高濾網(hi>0組反而較弱,跳空變大盤中回吐);「強題材子集」不延續
+命名(2026-08-05定名): 「題材獨漲」舊名「口袋」,「強獨漲」舊名「深口袋」,強度軸=分歧度。
+⚠精煉輪教訓: 短持(5-10日)獨漲內不要疊創新高濾網(hi>0組短窗較弱,跳空透支,k40後拉平);「強題材子集」不延續
   (split-half死亡),不要因為某題材最近強就只做該題材。
 時序: 美股收盤=台北清晨4-5點,訊號適用「下一個台股交易日」;本腳本可在當天台股開盤前任何時間跑。
 用法: python watch_us_tw_overnight.py   (從根目錄執行;前置=先跑 抓取/fetch_us_daily_price.py 增量+
@@ -34,7 +35,7 @@ MAPPED_THEMES = [
     "被動元件", "化合物半導體", "PCB/CCL", "電信",
 ]
 STALE_DAYS = 5          # 美股資料最新日距今>此日曆天數=陳舊警告
-LOOKBACK = 45           # 近況段: 回看45日曆天的口袋事件
+LOOKBACK = 45           # 近況段: 回看45日曆天的獨漲事件
 
 
 def theme_day_signals(conn, us_date):
@@ -70,9 +71,9 @@ def classify(row):
     if pd.isna(row["spx"]):
         return "?SPX缺", ""
     if row["r_raw"] >= 0.025 and row["spx"] <= -0.005:
-        return "🟢🟢深口袋", "開盤市價進同題材台股,持5-10日(本家族最強格)"
+        return "🟢🟢強獨漲", "開盤市價進同題材台股,持5-10日(本家族最強格)"
     if row["r_raw"] >= 0.02 and row["spx"] < 0:
-        return "🟢口袋", "開盤市價進同題材台股,持5-10日"
+        return "🟢獨漲", "開盤市價進同題材台股,持5-10日"
     if row["r_ex"] >= 0.02 and row["spx"] >= 0:
         return "🔵尾盤tilt", "不追開盤(跳空過衝);本來要買的挑今日尾盤買,持5日(薄)"
     return "", ""
@@ -91,7 +92,7 @@ def spx_fallback(us_date):
             print(f"[watch] index_daily無SPX {us_date},改用yfinance ^GSPC後備: {r[us_date] * 100:+.2f}%")
             return float(r[us_date])
     except Exception as e:
-        print(f"[watch] yfinance SPX後備也失敗({e}),超額/口袋分類今日無法判斷")
+        print(f"[watch] yfinance SPX後備也失敗({e}),超額/獨漲分類今日無法判斷")
     return float("nan")
 
 
@@ -130,20 +131,20 @@ def main():
     print("=" * 78)
     hits = sig[sig["tier"] != ""]
     if hits.empty:
-        print("今日無訊號(無題材達口袋/尾盤tilt門檻)。")
+        print("今日無訊號(無題材達獨漲/尾盤tilt門檻)。")
     for r in hits.itertuples():
         print(f"{r.tier:<8} {r.theme:<14} 美題材{r.r_raw * 100:+.2f}%(n={r.n_us}) "
               f"SPX{r.spx * 100:+.2f}% 超額{r.r_ex * 100:+.2f}% 新高比{r.hi_frac * 100:.0f}%")
         print(f"         → {r.action}")
         mems = tw_members(conn, r.theme)
         print(f"         台股成員({len(mems)}): {', '.join(mems)}")
-        print("         ⚠排除開盤跳空>=+9%(漲停鎖死買不到);口袋訊號勿再疊創新高/強題材濾網(精煉輪已證無效)")
+        print("         ⚠排除開盤跳空>=+9%(漲停鎖死買不到);短持勿疊創新高濾網、勿只做特定題材(精煉輪判決)")
     print("-" * 78)
     print("全題材今日狀態(參考層):")
     for r in sig.itertuples():
         print(f"  {r.theme:<14} 原始{r.r_raw * 100:+.2f}% 超額{r.r_ex * 100:+.2f}% 新高比{r.hi_frac * 100:.0f}% {r.tier}")
 
-    # 近況: 回看LOOKBACK日曆天的口袋事件(歷史紀錄用)
+    # 近況: 回看LOOKBACK日曆天的獨漲事件(歷史紀錄用)
     since = (pd.Timestamp(us_date) - timedelta(days=LOOKBACK)).strftime("%Y-%m-%d")
     dates = [r[0] for r in conn.execute(
         "select distinct date from us_daily_price where date>=? and date<=? order by date", (since, us_date))]
@@ -158,7 +159,7 @@ def main():
                          "r_raw": r.r_raw, "spx": r.spx})
     hist_df = pd.DataFrame(hist)
     print("-" * 78)
-    print(f"近{LOOKBACK}日曆天口袋事件({len(hist_df)}筆):")
+    print(f"近{LOOKBACK}日曆天獨漲事件({len(hist_df)}筆):")
     for r in hist_df.itertuples():
         print(f"  {r.d} {r.tier} {r.theme} 美題材{r.r_raw * 100:+.2f}% SPX{r.spx * 100:+.2f}%")
 
@@ -181,13 +182,13 @@ td,th{{border:1px solid #333;padding:4px 9px;text-align:right}} th{{text-align:l
 <h1>🌉 台美隔夜題材訊號 — 美股 {us_date} 收盤 → 下一個台股交易日</h1>
 <div class="note">SPX當日 {f"{spx_v * 100:+.2f}%" if pd.notna(spx_v) else "缺值⚠"} ·
 產表 {today}{'<span class="warn"> ⚠美股資料距今' + str(age) + '天=陳舊,先跑 抓取/fetch_us_daily_price.py</span>' if stale else ''}<br>
-規則: 🟢🟢深口袋=美題材>2.5%且SPX&lt;-0.5%(開盤進,最強) · 🟢口袋=美題材>2%且SPX&lt;0(開盤進,持5-10日) ·
+規則: 🟢🟢強獨漲=美題材>2.5%且SPX&lt;-0.5%(開盤進,最強) · 🟢獨漲=美題材>2%且SPX&lt;0(開盤進,持5-10日) ·
 🔵尾盤tilt=超額>2%且SPX&gt;=0(勿追開盤)。依據 research_us_tw_overnight.html 兩輪考卷;
-口袋勿疊創新高/強題材濾網;排除開盤跳空>=+9%成員。</div>
+獨漲勿疊創新高/強題材濾網;排除開盤跳空>=+9%成員。</div>
 <table><tr><th>訊號</th><th>題材</th><th>美題材原始</th><th>超額(減SPX)</th><th>美側新高比</th><th>行動/台股成員</th></tr>
 {"".join(row_html(r) for r in sig.itertuples())}
 </table>
-<h1 style="font-size:15px;margin-top:26px">近{LOOKBACK}日曆天口袋事件({len(hist_df)}筆)</h1>
+<h1 style="font-size:15px;margin-top:26px">近{LOOKBACK}日曆天獨漲事件({len(hist_df)}筆)</h1>
 <table><tr><th>美股日</th><th>級別</th><th>題材</th><th>美題材</th><th>SPX</th></tr>
 {"".join(f"<tr><td>{r.d}</td><td>{r.tier}</td><th>{r.theme}</th><td>{r.r_raw * 100:+.2f}%</td><td>{r.spx * 100:+.2f}%</td></tr>" for r in hist_df.itertuples())}
 </table>
