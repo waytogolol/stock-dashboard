@@ -54,6 +54,7 @@ STEPS = [
     ("上櫃融資彙總",    [PY, "抓取/fetch_margin_total_otc.py"],        "daily"),
     ("美股日線",        [PY, "抓取/fetch_us_daily_price.py"],          "daily"),
     ("陸股日線",        [PY, "抓取/fetch_cn_daily_price.py"],          "weekly"),
+    ("美股財報日",      [PY, "抓取/fetch_us_earnings_dates.py"],       "weekly"),
     ("財報日曆",        [PY, "check_earnings.py"],                "build"),
     ("台美隔夜訊號",    [PY, "watch_us_tw_overnight.py"],         "build"),
     ("題材共振",        [PY, "build_resonance_theme.py"],         "build"),

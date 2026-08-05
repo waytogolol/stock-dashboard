@@ -144,6 +144,22 @@ def main():
     for r in sig.itertuples():
         print(f"  {r.theme:<14} 原始{r.r_raw * 100:+.2f}% 超額{r.r_ex * 100:+.2f}% 新高比{r.hi_frac * 100:.0f}% {r.tier}")
 
+    # 未來7天美股題材成員財報日曆(us_earnings_dates含未來場次;財報版獨漲=exc>5%且SPX<0,
+    # 見research_us_earnings_tw_link.html: 反應日CAR5+0.55✓,利多傳導利空不傳導,不用管beat/miss)
+    try:
+        upcoming = pd.read_sql(
+            "select e.code, e.ann_date, e.session, c.main_group as theme "
+            "from us_earnings_dates e join classification c on c.code=e.code and c.country='美' "
+            "where e.ann_date >= date('now') and e.ann_date <= date('now','+7 day') "
+            "order by e.ann_date, e.code", conn)
+        print("-" * 78)
+        print(f"未來7天美股題材成員財報({len(upcoming)}場;公布後反應日>+5%且SPX<0=財報版獨漲訊號):")
+        for r in upcoming.itertuples():
+            print(f"  {r.ann_date} {r.session:<3} {r.code:<6} [{r.theme}]")
+    except Exception as e:
+        upcoming = pd.DataFrame()
+        print(f"[watch] 財報日曆讀取失敗({e}),先跑 抓取/fetch_us_earnings_dates.py")
+
     # 近況: 回看LOOKBACK日曆天的獨漲事件(歷史紀錄用)
     since = (pd.Timestamp(us_date) - timedelta(days=LOOKBACK)).strftime("%Y-%m-%d")
     dates = [r[0] for r in conn.execute(
@@ -192,7 +208,13 @@ td,th{{border:1px solid #333;padding:4px 9px;text-align:right}} th{{text-align:l
 <table><tr><th>美股日</th><th>級別</th><th>題材</th><th>美題材</th><th>SPX</th></tr>
 {"".join(f"<tr><td>{r.d}</td><td>{r.tier}</td><th>{r.theme}</th><td>{r.r_raw * 100:+.2f}%</td><td>{r.spx * 100:+.2f}%</td></tr>" for r in hist_df.itertuples())}
 </table>
-<div class="note">維運: python watch_us_tw_overnight.py(從根目錄);前置=fetch_us_daily_price增量+fetch_global_index(SPX)。</div>
+<h1 style="font-size:15px;margin-top:26px">未來7天美股題材成員財報日曆({len(upcoming)}場)</h1>
+<div class="note">公布後反應日「超額>+5%且SPX&lt;0」=財報版獨漲(CAR5+0.55✓,見research_us_earnings_tw_link.html);
+利多傳導/利空不傳導,不用管beat/miss只看價格反應。AMC=美股盤後(反應日=次一美股日)。</div>
+<table><tr><th>公布日</th><th>時段</th><th>代碼</th><th>題材</th></tr>
+{"".join(f"<tr><td>{r.ann_date}</td><td>{r.session}</td><th>{r.code}</th><td style='text-align:left'>{r.theme}</td></tr>" for r in upcoming.itertuples())}
+</table>
+<div class="note">維運: python watch_us_tw_overnight.py(從根目錄);前置=fetch_us_daily_price增量+fetch_global_index(SPX)+fetch_us_earnings_dates(週頻)。</div>
 </body></html>"""
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html)
