@@ -52,7 +52,10 @@ STEPS = [
     ("PER估值",         [PY, "抓取/fetch_per.py"],                     "weekly"),
     ("股本表",          [PY, "抓取/fetch_capital.py"],                 "weekly"),
     ("上櫃融資彙總",    [PY, "抓取/fetch_margin_total_otc.py"],        "daily"),
+    ("美股日線",        [PY, "抓取/fetch_us_daily_price.py"],          "daily"),
+    ("陸股日線",        [PY, "抓取/fetch_cn_daily_price.py"],          "weekly"),
     ("財報日曆",        [PY, "check_earnings.py"],                "build"),
+    ("台美隔夜訊號",    [PY, "watch_us_tw_overnight.py"],         "build"),
     ("題材共振",        [PY, "build_resonance_theme.py"],         "build"),
     ("題材量價RRG",     [PY, "build_heat_flow.py"],               "build"),
     ("dashboard",       [PY, "export_html.py"],                   "build"),
@@ -83,6 +86,8 @@ FRESH_RULES = [
     ("per_daily",      "date",          9),
     ("capital",        "date",          12),
     ("margin_total_otc", "date",        4),
+    ("us_daily_price", "date",          5),
+    ("cn_daily_price", "date",          9),
 ]
 # 凍結線:只顯示不判紅
 FROZEN = [

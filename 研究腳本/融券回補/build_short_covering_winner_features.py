@@ -48,6 +48,14 @@ build_short_covering_pressure.build_events()既有算法,lc-20既有部位,避�
 pre_dm_20重新定義贏家)」複驗+翻譯成開盤前規則套回全樣本驗證(vs全樣本基準+vs同批case-control),
 不只停在AUC層次——這是earnings卷的教訓,AUC有鑑別力不代表規則可交易。
 
+【v2追加(2026-08-05,使用者交辦「把市值/毛利率加進融券回補贏家特徵重跑」)】
+新增第⑦⑧兩個特徵角度: ⑦規模: size_cap(市值=capital.shares asof cutoff×cutoff收盤,億元)/
+money20(cutoff止20日日均成交額,億元,穩健配對——同構念「規模/流動性」不同運算元);
+⑧基本面: gm_chg(cutoff時已依法公告的最新一季毛利率QoQ變化pp,公告時滯avail_date=法定期限+5日
+緩衝,逐字比照build_fundamental_factors_exam.py)/gm_chg4(YoY同季比,穩健配對)/gm_lv+om_lv
+(水準對,觀察層)。財報僅tw_quarterly_financials_history覆蓋(2013Q1起826檔),早期事件天生NaN,
+n誠實揭露(同⑤法人特徵的涵蓋期不對稱處理)。
+
 用法: python 研究腳本/融券回補/build_short_covering_winner_features.py (從根目錄執行,鐵律)
 產出: 研究報告/research_short_covering_winner_features.html
 """
@@ -204,7 +212,8 @@ def load_ohlc_panels(idx, mkt_map):
         longflag = (body_pct >= LONGBAR_TH).astype(float)
         longflag[np.isnan(body_pct)] = np.nan
         panels[code] = {"date": g.date.values, "close": close, "open": opn,
-                        "high": g.high.values, "low": g.low.values, "longflag": longflag}
+                        "high": g.high.values, "low": g.low.values, "longflag": longflag,
+                        "money": g.money.values}
     print(f"[ohlc] OHLC面板建立: {len(panels):,}檔", flush=True)
     return px, panels
 
@@ -333,6 +342,83 @@ def compute_inst_flow_feature(df):
 
 
 # ======================================================================
+# 4b. v2追加: ⑦規模(市值/20日均額) + ⑧基本面(毛利率QoQ/YoY/水準) @ _feat_cutoff
+#     公告時滯avail_date逐字比照build_fundamental_factors_exam.py(法定期限+5日曆日緩衝)
+# ======================================================================
+STATUTORY = {1: (5, 15, 0), 2: (8, 14, 0), 3: (11, 14, 0), 4: (3, 31, 1)}
+FUND_BUFFER_DAYS = 5
+
+
+def _avail_date(quarter_end):
+    qe = pd.Timestamp(quarter_end)
+    q = (qe.month - 1) // 3 + 1
+    m, d, yoff = STATUTORY[q]
+    return pd.Timestamp(qe.year + yoff, m, d) + pd.Timedelta(days=FUND_BUFFER_DAYS)
+
+
+def compute_size_fund_features(df, ohlc_panels):
+    conn = sqlite3.connect(DB, timeout=60)
+    cap = pd.read_sql("SELECT code, date, shares FROM capital ORDER BY code, date",
+                      conn, parse_dates=["date"])
+    fin = pd.read_sql("SELECT code, date, gross_margin, operating_margin "
+                      "FROM tw_quarterly_financials_history", conn, parse_dates=["date"])
+    conn.close()
+    capmap = {c: (g.date.values, g.shares.values) for c, g in cap.groupby("code")}
+
+    fundmap = {}
+    for code, g in fin.groupby("code"):
+        g = g.sort_values("date")
+        qidx = pd.PeriodIndex(g.date, freq="Q")
+        g = g.set_index(qidx)
+        g = g[~g.index.duplicated(keep="first")]
+        full = pd.period_range(g.index.min(), g.index.max(), freq="Q")
+        g = g.reindex(full)
+        gm = g.gross_margin * 100
+        om = g.operating_margin * 100
+        f = pd.DataFrame({"gm_lv": gm, "om_lv": om,
+                          "gm_chg": gm - gm.shift(1), "gm_chg4": gm - gm.shift(4)})
+        f["avail"] = [np.datetime64(_avail_date(p.end_time.normalize())) for p in f.index]
+        f = f[g.date.notna().values].sort_values("avail")
+        fundmap[code] = (f.avail.values, f[["gm_chg", "gm_chg4", "gm_lv", "om_lv"]].values)
+
+    names = ["size_cap", "money20", "gm_chg", "gm_chg4", "gm_lv", "om_lv"]
+    out = {n: np.full(len(df), np.nan) for n in names}
+    codes_arr = df["code"].values
+    cut_arr = df["_feat_cutoff"].values
+    for pos in range(len(df)):
+        cut = cut_arr[pos]
+        if pd.isna(cut):
+            continue
+        code = codes_arr[pos]
+        pan = ohlc_panels.get(code)
+        # ⑦規模: cutoff收盤×shares(asof) / 20日均額
+        if pan is not None:
+            i = int(np.searchsorted(pan["date"], cut, side="right")) - 1
+            if i >= 0 and (pd.Timestamp(cut) - pd.Timestamp(pan["date"][i])).days <= 10:
+                close_cut = pan["close"][i]
+                mny = pan["money"][max(0, i - 19):i + 1]
+                if np.isfinite(mny).sum() >= 10:
+                    out["money20"][pos] = float(np.nanmean(mny)) / 1e8
+                cp = capmap.get(code)
+                if cp is not None and close_cut > 0:
+                    j = int(np.searchsorted(cp[0], cut, side="right")) - 1
+                    if j >= 0 and pd.notna(cp[1][j]) and cp[1][j] > 0:
+                        out["size_cap"][pos] = float(cp[1][j]) * float(close_cut) / 1e8
+        # ⑧基本面: 最新已公告季(avail<=cutoff,容忍200日曆天內)
+        fm = fundmap.get(code)
+        if fm is not None:
+            k = int(np.searchsorted(fm[0], cut, side="right")) - 1
+            if k >= 0 and (pd.Timestamp(cut) - pd.Timestamp(fm[0][k])).days <= 200:
+                for jj, nname in enumerate(("gm_chg", "gm_chg4", "gm_lv", "om_lv")):
+                    out[nname][pos] = fm[1][k, jj]
+    for n in names:
+        df[n] = out[n]
+    print("[feature] ⑦規模+⑧基本面(v2追加): " +
+          ", ".join(f"{n}可用{df[n].notna().sum():,}" for n in names))
+    return df
+
+
+# ======================================================================
 # 5. 贏家/輸家分組 + 同批(ym=last_cover所在年月,沿用既有欄位)case-control對照組
 # ======================================================================
 def case_control_events(win_idx, df, seed):
@@ -378,7 +464,8 @@ def build_groups(df):
 # ======================================================================
 FEATURES = ["vol_ann20", "amp_mean20", "maxdd_pre20", "maxdd_pre40", "mom_pre20", "mom_pre40",
             "longbar_ratio20", "longbar_ratio40", "inst_pct20", "inst_posday20",
-            "short_pct_float", "days_to_cover"]
+            "short_pct_float", "days_to_cover",
+            "size_cap", "money20", "gm_chg", "gm_chg4", "gm_lv", "om_lv"]
 
 FEATURE_LABEL = {
     "vol_ann20": "①20日年化波動(%)", "amp_mean20": "①20日日均振幅%(穩健配對)",
@@ -387,13 +474,19 @@ FEATURE_LABEL = {
     "longbar_ratio20": "④型態-20日長紅長黑比例%(K棒)", "longbar_ratio40": "④型態-40日長紅長黑比例%(穩健配對)",
     "inst_pct20": "⑤外資+投信20日買超位階(canonical,百分位)", "inst_posday20": "⑤外資+投信20日淨買超天數佔比%(穩健配對)",
     "short_pct_float": "⑥對照組-短占股本比%(C段舊特徵)", "days_to_cover": "⑥對照組-回補天數(C段舊特徵,穩健配對)",
+    "size_cap": "⑦規模-市值(cutoff shares×close,億元,v2)", "money20": "⑦規模-20日日均成交額(億元,穩健配對,v2)",
+    "gm_chg": "⑧基本面-最新已公告毛利率QoQ變化pp(v2)", "gm_chg4": "⑧基本面-毛利率YoY變化pp(穩健配對,v2)",
+    "gm_lv": "⑧基本面-毛利率水準%(觀察層,v2)", "om_lv": "⑧基本面-營益率水準%(水準配對,v2)",
 }
 ROBUST_PAIRS = {"vol_ann20": "amp_mean20", "amp_mean20": "vol_ann20",
                 "maxdd_pre20": "maxdd_pre40", "maxdd_pre40": "maxdd_pre20",
                 "mom_pre20": "mom_pre40", "mom_pre40": "mom_pre20",
                 "longbar_ratio20": "longbar_ratio40", "longbar_ratio40": "longbar_ratio20",
                 "inst_pct20": "inst_posday20", "inst_posday20": "inst_pct20",
-                "short_pct_float": "days_to_cover", "days_to_cover": "short_pct_float"}
+                "short_pct_float": "days_to_cover", "days_to_cover": "short_pct_float",
+                "size_cap": "money20", "money20": "size_cap",
+                "gm_chg": "gm_chg4", "gm_chg4": "gm_chg",
+                "gm_lv": "om_lv", "om_lv": "gm_lv"}
 
 
 def feat_vals(df, col, idx):
@@ -578,6 +671,20 @@ THREE_Q = {
               "(CI含0),本段是用不同統計方法(AUC vs 三分位中位數比較)在同一批舊特徵上再測一次,"
               "若依然不顯著,兩種方法互相印證,對「融券強度本身無法預測pre窗口報酬」這個結論的"
               "信心應該提高;若出現不一致,需誠實檢討兩種方法的敏感度差異,不應選對自己有利的一種。"),
+    "sizef": ("規模(市值/20日均額,v2追加)",
+              "誰被迫交易?——規模本身不是交易行為;但小型股流動性薄,同樣張數的強制回補買盤"
+              "價格衝擊更大,若小市值與贏家有鑑別力,較可能是「衝擊係數」機制而非資訊。",
+              "資訊是新的嗎?——市值/成交額是最公開的資訊,無任何資訊優勢。",
+              "為何別人沒吃掉它?——小型股效應的套利限制是經典命題(借券難/衝擊成本高),"
+              "與財報八因子卷「市值小贏大」的發現同源,不是回補特有訊號。"),
+    "fund": ("基本面(毛利率QoQ/YoY/水準,v2追加)",
+             "誰被迫交易?——財報是被迫披露(法定期限),毛利率改善若尚未被定價,回補期的軋空"
+             "拉抬可能與基本面順風疊加;但財報訊號本身不製造被迫交易者。",
+             "資訊是新的嗎?——已公告的財報是公開資訊(本卷嚴格用avail_date排除前視),"
+             "理論上已反映;若仍有鑑別力,是「反映不足」而非新資訊。",
+             "為何別人沒吃掉它?——毛利率QoQ改善在財報八因子卷是+5.25pp/60日的慢速因子,"
+             "若在回補贏家(10日窗)也有鑑別力,代表慢因子滲透到短窗;若無,則與「財報層"
+             "不加值於短線動能口徑」(fundamental_momo_interaction卷方向A的null)互相印證。"),
 }
 
 
@@ -588,6 +695,10 @@ def feature_category(name):
         return "pattern"
     if name.startswith("inst"):
         return "inst"
+    if name.startswith("size") or name.startswith("money"):
+        return "sizef"
+    if name.startswith("gm") or name.startswith("om"):
+        return "fund"
     return "short"
 
 
@@ -818,7 +929,9 @@ build_short_covering_pressure.py既有的boot_med/boot_diff/loto函式。</div>
 ③<b>資料涵蓋期不對稱</b>: inst_pct20/inst_posday20/short_pct_float/days_to_cover僅margin_flow/
 inst_flow覆蓋期(2022-01起)可算,樣本縮水為約{min(ev_summary['n_margin'], ev_summary['n_inst']):,}
 ~{max(ev_summary['n_margin'], ev_summary['n_inst']):,}筆(僅約4.5年單一regime),價格類特徵
-(波動度/型態)則涵蓋2005年至今全樣本,兩類特徵的統計檢定力不對稱,解讀時需留意n數差異。<br>
+(波動度/型態)則涵蓋2005年至今全樣本;v2追加的⑧基本面特徵僅tw_quarterly_financials_history
+覆蓋(2013Q1起826檔)且嚴格用avail_date公告時滯,早期/未覆蓋股天生NaN——三類特徵的統計檢定力
+不對稱,解讀時需留意各自n數差異。<br>
 ④<b>特徵窗口與outcome窗口的分隔是lc-{FEAT_END_GAP}這條線,非絕對無漏洞</b>: 選擇lc-{FEAT_END_GAP}
 是為了確保與outcome窗口[lc-10,lc]完全不重疊(留1個交易日緩衝),但這條線本身是研究者選擇,並非
 market microstructure上的必然分界,不同的緩衝天數理論上可能得到略有差異的AUC點估計(未做緩衝天數
@@ -893,6 +1006,9 @@ def main():
 
     print("=" * 60, "\n[main] ⑤ 法人籌碼特徵計算")
     df = compute_inst_flow_feature(df)
+
+    print("=" * 60, "\n[main] ⑦⑧ 規模+基本面特徵計算(v2追加)")
+    df = compute_size_fund_features(df, ohlc_panels)
 
     ev_summary = {"n": len(df), "n_codes": df.code.nunique(),
                   "date_min": str(df.last_cover_date.min().date()), "date_max": str(df.last_cover_date.max().date()),
