@@ -313,6 +313,60 @@ def build():
         mtime = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
         return {"rows": df.to_dict("records"), "mtime": mtime}
 
+    def load_tw_board():
+        """台股財報公布日(董事會): tw_board_earnings_dates(MOPS重大訊息,TOP40,fetch_tw_earnings_dates.py)。
+        pre_date=預告訊息日(董事會日在主旨文字裡,提前中位8天),actual_date=董事會核准日=財報公布日。
+        顯示: ①已預告未核准(預計日=主旨解析民國日期,解析不到用pre_date+8天推估) ②近10天已核准。"""
+        import re as _re
+        try:
+            _conn = sqlite3.connect("capital_flow.db", timeout=30)
+            bd = pd.read_sql("SELECT code, period, pre_date, pre_subj, actual_date, fetched "
+                             "FROM tw_board_earnings_dates", _conn)
+            nm = dict(_conn.execute(
+                "select code, name from rankings where country='台' and snapshot_date="
+                "(select max(snapshot_date) from rankings where country='台')"))
+            _conn.close()
+        except Exception as e:
+            _sec_fail("台股財報公布日載入失敗", e)
+            return {"rows": [], "mtime": None}
+
+        def parse_roc_date(subj):
+            if not isinstance(subj, str):
+                return None
+            hits = _re.findall(r"(\d{3})年(\d{1,2})月(\d{1,2})日", subj)
+            if not hits:
+                return None
+            y, m, d = hits[-1]
+            try:
+                return f"{int(y) + 1911:04d}-{int(m):02d}-{int(d):02d}"
+            except ValueError:
+                return None
+
+        today_s = datetime.now().strftime("%Y-%m-%d")
+        cut_pre = (datetime.now() - pd.Timedelta(days=35)).strftime("%Y-%m-%d")
+        cut_act = (datetime.now() - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
+        rows = []
+        for r in bd.itertuples():
+            if pd.notna(r.actual_date) and r.actual_date >= cut_act:
+                rows.append({"日期": r.actual_date, "狀態": "✅已公布(董事會核准)",
+                             "代碼": r.code, "公司": nm.get(r.code, ""), "期別": r.period})
+            elif pd.isna(r.actual_date) and pd.notna(r.pre_date) and r.pre_date >= cut_pre:
+                est = parse_roc_date(r.pre_subj)
+                if est and est >= today_s:
+                    rows.append({"日期": est, "狀態": "📌已預告(主旨載明日期)",
+                                 "代碼": r.code, "公司": nm.get(r.code, ""), "期別": r.period})
+                elif not est:
+                    est2 = (pd.Timestamp(r.pre_date) + pd.Timedelta(days=8)).strftime("%Y-%m-%d")
+                    if est2 >= today_s:
+                        rows.append({"日期": est2, "狀態": f"🕓已預告{r.pre_date}(推估+8天)",
+                                     "代碼": r.code, "公司": nm.get(r.code, ""), "期別": r.period})
+                    else:   # 推估日已過仍未見核准訊息=隨時可能公布
+                        rows.append({"日期": today_s, "狀態": f"🔥已預告{r.pre_date},推估日已過隨時公布",
+                                     "代碼": r.code, "公司": nm.get(r.code, ""), "期別": r.period})
+        rows.sort(key=lambda x: x["日期"])
+        mtime = bd.fetched.max() if len(bd) else None
+        return {"rows": rows, "mtime": mtime}
+
     try:
         import subprocess
         _vn = subprocess.run(["git", "rev-list", "--count", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -343,6 +397,7 @@ def build():
         "us_earnings": load_earnings_csv("us_earnings_watch.csv"),
         "tw_earnings": load_earnings_csv("tw_earnings_watch.csv"),
         "jpkr_earnings": load_earnings_csv("jp_kr_earnings_watch.csv"),
+        "tw_board": load_tw_board(),
         "theme_news": pd.read_csv("theme_news.csv").to_dict("records") if os.path.exists("theme_news.csv") else [],
         "expo_calendar": EXPO_CALENDAR,
     }
@@ -3218,6 +3273,13 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div class="hint">⭐=市值≥3000億美元、🔹=市值≥1000億美元(標在公司名前)，一天跳出幾十檔時用這個抓真正牽動大盤的重量級，不用逐行看市值欄。</div>
   <div class="scroll-box"><table id="usEarningsTable"></table></div>
   <div class="hint"><b>財報季作戰指南(2026-07回測,觀察層)</b>：①<b>美股龍頭財報「後」10日=台鏈跟漲觀察窗</b>(+0.9%中位/55%，MSFT/AAPL系最明顯；NVDA鏈反向=行情多在財報前price in、開獎後留意獲利了結)。②<b>首發者效應</b>：同題材首家開法說者的市場反應會傳染給還沒開的同業——首發開差→短窗迴避同題材後發成員(PCB/封測/CPO系最靈)；首發開好→後發者進關注清單。記憶體例外(公開報價題材無此效應)。③<b>台積電法說前後</b>：事前2週方向=市場對半導體的預期放大器(多頭年正/熊市年負,環境給方向)。④法說隔日的環節暴衝多為短打資金,等週級資金流訊號接手才算數。<b>點公司名→跳公司歷史頁(題材/產業鏈歸屬+同鏈成員)。</b></div>
+  <h4>台股財報公布日(董事會核准) <span id="twBoardMtime" style="color:#888;font-size:12px;"></span></h4>
+  <div class="hint">MOPS重大訊息「財報董事會」預告/核准(成交額前40大,fetch_tw_earnings_dates.py,週頻)。
+  📌=公司已預告且主旨載明日期 🕓=已預告但主旨無日期(依中位提前8天推估) ✅=已核准公布(近10天)。
+  ⚠2024新制起才有預告且非每家每季必發;大型權值股常法說會先公布自結EPS,董事會核准日非市場首次得知時點;
+  法定期限: Q1=5/15、Q2=8/14、Q3=11/14、年報=次年3/31。</div>
+  <div class="scroll-box"><table id="twBoardTable"></table></div>
+
   <h4>台股法說會 <span id="twEarningsMtime" style="color:#888;font-size:12px;"></span></h4>
   <div class="hint">⭐=成交金額排名前20、🔹=前50(標在公司名前，台股沒有市值欄，用排名近似份量)。</div>
   <div class="scroll-box"><table id="twEarningsTable"></table></div>
@@ -4455,6 +4517,14 @@ function renderEarningsTab() {
   ];
   buildTable(document.getElementById("twEarningsTable"), twCols, linkifyEarn(DATA.tw_earnings.rows, "台"), r => earningsTierClass(r["日期"]));
 
+  const twb = DATA.tw_board || {rows: []};
+  document.getElementById("twBoardMtime").innerHTML = mtimeLabel(twb.mtime);
+  const twbCols = [
+    {key: "日期", label: "日期(預計/實際)"}, {key: "狀態", label: "狀態"}, {key: "代碼", label: "代碼"},
+    {key: "公司", label: "公司"}, {key: "期別", label: "期別"},
+  ];
+  buildTable(document.getElementById("twBoardTable"), twbCols, twb.rows, r => earningsTierClass(r["日期"]));
+
   const jpkr = DATA.jpkr_earnings || {rows: []};
   document.getElementById("jpkrEarningsMtime").innerHTML = mtimeLabel(jpkr.mtime);
   const jpkrCols = [
@@ -4518,6 +4588,11 @@ function buildEvtMap() {
     const d = r["日期"]; if (!d) return;
     if (!m[d]) m[d] = [];
     m[d].push({label: importanceBadge(r, r["市場"]) + r["市場"] + " " + (r["公司"] || r["代碼"]), market: "jpkr", date: d});
+  });
+  ((DATA.tw_board || {}).rows || []).forEach(r => {
+    const d = r["日期"]; if (!d) return;
+    if (!m[d]) m[d] = [];
+    m[d].push({label: "📊 " + r["代碼"] + " " + (r["公司"] || "") + " " + r["期別"] + "財報", market: "tw", date: d});
   });
   Object.values(DATA.expo_calendar || {}).forEach(expo => {
     expo.dates.forEach(dr => {
