@@ -69,6 +69,12 @@ def main():
     rev_w = rev.pivot_table(index="date", columns="code", values="revenue", aggfunc="first").sort_index()
     yoy_m = rev_w / rev_w.shift(12) - 1                      # 逐月YoY
     q_of = rev_w.index.to_period("Q")
+    # v2追加操作化(2026-08-06使用者指定): 創新高/優於預期代理
+    hi_m = rev_w >= rev_w.rolling(12, min_periods=12).max()          # 月營收=近12月最高(含當月)
+    q_rev = rev_w.groupby(q_of).sum(min_count=3)                      # 季合計(3個月齊才算)
+    q_yoy_df = q_rev / q_rev.shift(4) - 1
+    q_hi4_df = q_rev >= q_rev.shift(1).rolling(4, min_periods=4).max()   # 季營收創4季新高
+    beat_df = q_yoy_df > q_yoy_df.shift(1).rolling(4, min_periods=4).mean()  # YoY超越自身前4季均值(beat代理)
 
     # 毛利率QoQ(該季,前提檢查用)
     gm_chg = {}
@@ -114,6 +120,14 @@ def main():
             if np.isnan(my).any():
                 continue
             accel = bool((my > 0).all() and my[2] > my[1] > my[0])
+            hi3 = hi_m.loc[months, code].values if code in hi_m.columns else np.array([False] * 3)
+            hi_last = bool(hi3[-1])                     # 季末月創12月新高
+            hi_all3 = bool(hi3.all())                   # 三個月全創(使用者「都很好」嚴格版)
+            qp = pd.Period(qs, freq="Q")
+            q_hi4 = bool(q_hi4_df.at[qp, code]) if (qp in q_hi4_df.index and code in q_hi4_df.columns
+                                                    and pd.notna(q_hi4_df.at[qp, code])) else False
+            beat = bool(beat_df.at[qp, code]) if (qp in beat_df.index and code in beat_df.columns
+                                                  and pd.notna(beat_df.at[qp, code])) else False
             if code not in C.columns:
                 continue
             ci = C.columns.get_loc(code)
@@ -131,6 +145,7 @@ def main():
             recs.append({"code": code, "q": qs, "qtype": f"Q{p.quarter}",
                          "entry": str(t_dates[e_i])[:10], "anchor": str(t_dates[a_i])[:10],
                          "qyoy": qyoy, "accel": accel,
+                         "hi_last": hi_last, "hi_all3": hi_all3, "q_hi4": q_hi4, "beat": beat,
                          "amb": (pa / pe - 1) - b_ea,          # 埋伏窗demean
                          "thr": (pa10 / pe - 1) - b_ea10,      # 含公告+10
                          "ann": (pa10 / pa - 1) - b_aa10,      # 純公告窗
@@ -146,7 +161,11 @@ def main():
     p0_rows = []
     for lab, mask in [("YoY<0", sub0.qyoy < 0), ("YoY 0~20%", (sub0.qyoy >= 0) & (sub0.qyoy < 0.2)),
                       ("YoY>20%", sub0.qyoy >= 0.2), ("YoY>50%", sub0.qyoy >= 0.5),
-                      ("加速flag", sub0.accel)]:
+                      ("加速flag", sub0.accel),
+                      ("季末月創12月高", sub0.hi_last), ("三個月全創高", sub0.hi_all3),
+                      ("季營收創4季高", sub0.q_hi4), ("beat自身趨勢", sub0.beat),
+                      ("創4季高×YoY>20%", sub0.q_hi4 & (sub0.qyoy >= 0.2)),
+                      ("beat×YoY>20%", sub0.beat & (sub0.qyoy >= 0.2))]:
         s = sub0[mask]
         p = (s.gm > 0).mean() * 100
         p0_rows.append({"lab": lab, "n": len(s), "p": p})
@@ -193,6 +212,10 @@ def main():
     for lab, mask in [("YoY<0", E.qyoy < 0), ("YoY 0~20%", (E.qyoy >= 0) & (E.qyoy < 0.2)),
                       ("YoY>20%", E.qyoy >= 0.2), ("YoY>50%", E.qyoy >= 0.5),
                       ("加速flag", E.accel), ("加速×YoY>20%", E.accel & (E.qyoy >= 0.2)),
+                      ("季末月創12月高", E.hi_last), ("三個月全創高", E.hi_all3),
+                      ("季營收創4季高", E.q_hi4), ("beat自身趨勢", E.beat),
+                      ("創4季高×YoY>20%", E.q_hi4 & (E.qyoy >= 0.2)),
+                      ("beat×YoY>20%", E.beat & (E.qyoy >= 0.2)),
                       ("(全樣本)", E.qyoy.notna())]:
         line(E[mask], lab, P1)
 
@@ -217,7 +240,12 @@ def main():
     P4 = []
     line(E[(E.qtype == "Q4") & (E.qyoy >= 0.2)], "Q4×YoY>20%", P4)
     line(E[(E.qtype == "Q4") & (E.qyoy < 0)], "Q4×YoY<0(歸因對照)", P4)
+    line(E[(E.qtype == "Q4") & E.q_hi4], "Q4×季營收創4季高", P4)
+    line(E[(E.qtype == "Q4") & E.q_hi4 & (E.qyoy >= 0.2)], "Q4×創4季高×YoY>20%", P4)
+    line(E[(E.qtype == "Q4") & E.beat & (E.qyoy >= 0.2)], "Q4×beat×YoY>20%", P4)
     line(E[(E.qtype != "Q4") & (E.qyoy >= 0.2)], "Q1-Q3×YoY>20%", P4)
+    line(E[(E.qtype != "Q4") & E.q_hi4 & (E.qyoy >= 0.2)], "Q1-Q3×創4季高×YoY>20%", P4)
+    line(E[(E.qtype != "Q4") & E.hi_all3 & (E.qyoy >= 0.2)], "Q1-Q3×三月全創高×YoY>20%", P4)
     # Q4同季配對(強-弱)
     e4 = E[E.qtype == "Q4"]
     day4 = e4.groupby(["q", e4.qyoy >= 0.2]).amb.mean().unstack().dropna()
@@ -289,22 +317,24 @@ CI[{pr['ann']['lo']:+.2f},{pr['ann']['hi']:+.2f}]{'✓排0' if pr['ann']['sig'] 
 (正號{pr['ann']['pos']}/{pr['ann']['n']}季)</div>
 <h2>Q4(年報)單獨 vs Q1-Q3</h2>
 {p4_tbl}
-<h2>⚖️ 判決(2026-08-06首輪)</h2>
+<h2>⚖️ 判決(2026-08-06首輪+v2改操作化翻盤)</h2>
 <ul>
-<li><span class="verdict v-warn">①前提鏈比直覺弱很多</span> P(毛利率QoQ改善|季營收YoY>20%)=54.5%
-vs 基準51.6%——「營收好→財報很可能優於預期」實際只是+3pp的微傾斜,不是高機率事件;
-最好的前提訊號是<b>加速flag(三個月YoY皆正且逐月遞增)=58.7%</b>(+7pp),方向如使用者直覺但幅度有限。</li>
-<li><span class="verdict v-bad">②一般季度(Q1-Q3)埋伏=null</span> YoY>20%組埋伏窗-0.37%含0——
-月營收在逐月公布當下已被市場消化三次,一個月的埋伏窗沒剩肉。公告窗本身普遍+1~1.6%✓
-(財報季效應)但<b>與營收品質無關</b>(強-弱配對+0.17%含0)=公告窗的肉用營收挑不出來。</li>
-<li><span class="verdict v-good">③活口=年報版(Q4)</span> 年營收YoY>20%: 1月中(12月營收全知)進場
-→4月初年報可得日=<b>埋伏窗+7.04%✓[+2.16,+11.59]/勝率53%/賺賠比1.98/逐年6/8</b>;
-歸因過關: Q4弱營收對照僅+0.42%含0、同季配對強-弱+4.86%✓排0(正號6/8年)=肉是營收訊號的功勞,
-不是1-4月窗口(年初行情)本身。機制候選=全年成績單敘事+股利宣告預期+Q1法說季的持續re-rate。
-僅8個年度樣本=<b>候選層</b>,每年1月中可操作一次。</li>
-<li><b>④實務翻譯</b>: 「埋伏季報」改成「埋伏年報」——每年1月10日12月營收公布後,
-篩「年營收YoY>20%」(加速版更佳)+流動池,1月中進場持有到4月初;Q1-Q3不做埋伏
-(該做的是公布後的三重門檻/毛利率資格門檻,見newhigh_gm卷)。</li>
+<li><span class="verdict v-good">①v2定調: 「營收創新高」遠強於「YoY水準」——使用者指定的操作化翻盤了首輪</span>
+前提鏈: P(毛利率QoQ改善|<b>三個月全創12月高</b>)=<b>68.5%</b>(+17pp!)、季末月創高63.1%(+11.5pp),
+vs YoY>20%只有54.5%(+3pp)、beat自身趨勢代理55.0%(無效)。「都很好」的正確操作化=創新高,
+不是YoY水準——feedback第16條(null可能只是操作化不對)的又一實例。</li>
+<li><span class="verdict v-good">②埋伏窗翻盤: 創新高版全部排0(首輪YoY版含0)</span>
+季末月創12月高: 埋伏窗<b>+3.92%✓[+1.48,+6.34]/勝率48%/賺賠1.96/逐年7/9</b>;
+三個月全創高: +4.23%✓;季營收創4季高×YoY>20%: +2.97%✓逐年7/9——事件量~70/季(全創版~17/季),可操作。</li>
+<li><span class="verdict v-good">③王者組合=Q4×季營收創4季高×YoY>20%</span>
+<b>埋伏窗+9.20%✓[+3.54,+13.98]/勝率55%/賺賠比2.19/逐年6/8</b>(n=883,~110檔/年)——
+1月中(12月營收全知)進場→4月初年報可得日;歸因已過關(Q4弱營收對照+0.42含0/同季配對+4.86✓)。</li>
+<li><span class="verdict v-warn">④Q1-Q3單獨仍含0(方向已轉正)</span> 創4季高×YoY>20%=+0.87含0/
+三月全創高×YoY>20%=+2.31含0(n=356薄)——pooled顯著主要由Q4驅動;Q1-Q3的純公告窗
+三月全創版+2.24✓是各分層最高,但埋伏層以Q4為主、Q1-Q3當觀察。</li>
+<li><b>⑤機制收斂</b>: 營收創新高=基本面版的「新高突破」——與價格新高突破卷(90日/52週,題材成員)
+同構,兩個「新高家族」訊號交乘(價格突破×營收創高)是自然下一張考卷;beat代理(YoY超越自身趨勢)
+無效=市場錨定的是「絕對水位創高」的顯著性,不是統計意義的預期差。</li>
 </ul>
 <h2>已知限制</h2>
 <div class="note">①營收YoY強=動能股,埋伏窗超額混合{{營收動能延續+財報預期定價}},靠三段窗分解區分
