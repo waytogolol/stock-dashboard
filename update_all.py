@@ -57,6 +57,7 @@ STEPS = [
     ("美股財報日",      [PY, "抓取/fetch_us_earnings_dates.py"],       "weekly"),
     ("財報日曆",        [PY, "check_earnings.py"],                "build"),
     ("台美隔夜訊號",    [PY, "watch_us_tw_overnight.py"],         "build"),
+    ("三重門檻掃描",    [PY, "watch_triple_gate.py"],             "build"),
     ("題材共振",        [PY, "build_resonance_theme.py"],         "build"),
     ("題材量價RRG",     [PY, "build_heat_flow.py"],               "build"),
     ("dashboard",       [PY, "export_html.py"],                   "build"),
