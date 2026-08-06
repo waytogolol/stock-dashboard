@@ -142,7 +142,29 @@ def main():
             b_ea = tai_f.iloc[a_i] / tai_f.iloc[e_i] - 1
             b_ea10 = tai_f.iloc[a_i + 10] / tai_f.iloc[e_i] - 1
             b_aa10 = tai_f.iloc[a_i + 10] / tai_f.iloc[a_i] - 1
+            # v3時點變體(2026-08-06使用者提案「月底埋伏買進到公布季報後幾天出場」):
+            # entry2=季底+30日曆(月底埋伏) / entry3=季底+43日曆(次月營收公布後=次月13日,含「次月也創高」確認)
+            e2_i = int(np.searchsorted(t_dates, (qe + pd.Timedelta(days=30)).strftime("%Y-%m-%d")))
+            e3_i = int(np.searchsorted(t_dates, (qe + pd.Timedelta(days=43)).strftime("%Y-%m-%d")))
+            m4 = months[-1] + pd.DateOffset(months=1)          # 季後首月(次月)
+            hi_next = bool(hi_m.at[m4, code]) if (m4 in hi_m.index and code in hi_m.columns
+                                                  and pd.notna(hi_m.at[m4, code])) else False
+            amb2 = thr3_5 = thr3_10 = np.nan
+            if e2_i < a_i and a_i + 5 < len(t_dates):
+                p2 = C.iat[e2_i, ci]
+                x5 = Cf.iat[a_i + 5, ci]
+                if pd.notna(p2) and pd.notna(x5) and p2 > 0:
+                    amb2 = (x5 / p2 - 1) - (tai_f.iloc[a_i + 5] / tai_f.iloc[e2_i] - 1)
+            if e3_i < a_i and a_i + 10 < len(t_dates):
+                p3 = C.iat[e3_i, ci]
+                x5 = Cf.iat[a_i + 5, ci]
+                x10 = Cf.iat[a_i + 10, ci]
+                if pd.notna(p3) and pd.notna(x5) and p3 > 0:
+                    thr3_5 = (x5 / p3 - 1) - (tai_f.iloc[a_i + 5] / tai_f.iloc[e3_i] - 1)
+                if pd.notna(p3) and pd.notna(x10) and p3 > 0:
+                    thr3_10 = (x10 / p3 - 1) - (tai_f.iloc[a_i + 10] / tai_f.iloc[e3_i] - 1)
             recs.append({"code": code, "q": qs, "qtype": f"Q{p.quarter}",
+                         "hi_next": hi_next, "amb2": amb2, "thr3_5": thr3_5, "thr3_10": thr3_10,
                          "entry": str(t_dates[e_i])[:10], "anchor": str(t_dates[a_i])[:10],
                          "qyoy": qyoy, "accel": accel,
                          "hi_last": hi_last, "hi_all3": hi_all3, "q_hi4": q_hi4, "beat": beat,
@@ -234,6 +256,37 @@ def main():
         p = pair_out[col]
         print(f"  {wl}: 強-弱={p['diff']:+.2f}% CI[{p['lo']:+.2f},{p['hi']:+.2f}]"
               f"{'✓排0' if p['sig'] else '含0'} 正號{p['pos']}/{p['n']}季")
+
+    # ---------- P3 v3時點變體(使用者提案: 月底埋伏/次月確認→公布後幾天出場) ----------
+    print("\nP3 時點變體(demean%): entry2=季底+30日(月底埋伏)→公布後5日 / "
+          "entry3=次月13日(次月營收已公布)→公布後5/10日")
+    P3 = []
+
+    def line3(sub, lab):
+        if len(sub) < 50:
+            print(f"  {lab:<28} n={len(sub)} 不足")
+            return
+        r = {"lab": lab, "n": len(sub)}
+        for col in ("amb2", "thr3_5", "thr3_10"):
+            b = boot_q(sub[col].values, sub.q.values)
+            v = sub[col].dropna()
+            w, l = v[v > 0], v[v <= 0]
+            r[col] = {"mean": v.mean() * 100, "b": b,
+                      "win": len(w) / len(v) * 100 if len(v) else np.nan,
+                      "wl": (w.mean() / abs(l.mean())) if len(w) and len(l) else np.nan}
+        P3.append(r)
+        f = lambda c: (f"{r[c]['mean']:+.2f}%"
+                       + (f"[{r[c]['b']['lo'] * 100:+.2f},{r[c]['b']['hi'] * 100:+.2f}]"
+                          f"{'✓' if r[c]['b']['sig'] else ''}" if r[c]["b"] else ""))
+        print(f"  {lab:<28} n={r['n']:>6,} 月底→公告+5:{f('amb2')} "
+              f"次月13→公告+5:{f('thr3_5')}(勝率{r['thr3_5']['win']:.0f}%/賺賠{r['thr3_5']['wl']:.2f}) "
+              f"次月13→公告+10:{f('thr3_10')}")
+
+    line3(E[E.hi_all3], "三月全創高")
+    line3(E[E.hi_all3 & E.hi_next], "三月全創高×次月也創高(使用者情境)")
+    line3(E[E.hi_last & E.hi_next], "季末月創高×次月也創高")
+    line3(E[E.hi_all3 & E.hi_next & (E.qtype != "Q4")], "Q1-Q3×三月全創×次月創")
+    line3(E[E.qyoy.notna()], "(全樣本)")
 
     # Q4拆出(含歸因對照: Q4弱營收組——若也大正,肉是「1-4月窗口」不是「營收訊號」)
     print("\nQ4(年報,埋伏窗~3個月)單獨+歸因對照:")
@@ -335,6 +388,15 @@ vs YoY>20%只有54.5%(+3pp)、beat自身趨勢代理55.0%(無效)。「都很好
 <li><b>⑤機制收斂</b>: 營收創新高=基本面版的「新高突破」——與價格新高突破卷(90日/52週,題材成員)
 同構,兩個「新高家族」訊號交乘(價格突破×營收創高)是自然下一張考卷;beat代理(YoY超越自身趨勢)
 無效=市場錨定的是「絕對水位創高」的顯著性,不是統計意義的預期差。</li>
+<li><span class="verdict v-good">⑥v3時點變體(使用者提案「月底埋伏→公布後幾天出場」)=效率更高的最終配方</span>
+<b>季末月創12月高×次月營收也創高</b>: 次月13日進場(次月營收已公布=「預計也創高」不用預計,等公布確認)
+→公告+5日出=<b>+4.25%✓[+1.50,+7.37]/勝率53%/賺賠比2.14</b>,→公告+10日出=+5.68%✓;月底(季底+30日)
+進場版+4.77%✓——窗長只有2-4週,單位時間效率約為原版埋伏窗(25日+3.92%)的兩倍。
+使用者原始情境(三月全創×次月創)+2.41%✓/+3.77%✓也成立但略遜(條件更嚴只刪樣本沒加肉);
+<b>Q1-Q3也被救活</b>(三月全創×次月創→公告+10=+1.91%✓,首輪Q1-Q3 null的解=更晚進場+次月確認+抱過公告);
+全樣本基準(次月13→公告+10)+2.35%✓=財報季本身有drift,訊號增量約+3.3pp。
+⚠執行注意: anchor=法定可得日,部分公司提早公布——實際操作配合dashboard「台股財報公布日」提醒,
+進場時已公布財報的個股跳過(埋伏已失效)。</li>
 </ul>
 <h2>已知限制</h2>
 <div class="note">①營收YoY強=動能股,埋伏窗超額混合{{營收動能延續+財報預期定價}},靠三段窗分解區分
