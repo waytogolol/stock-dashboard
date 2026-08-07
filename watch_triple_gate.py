@@ -300,6 +300,26 @@ th{{text-align:left;color:#c3c2b7}} .note{{color:#8a8878;font-size:12.5px;line-h
         f.write(html)
     print(f"\n[watch] 已輸出 {OUT}")
 
+    # ---------- JSON匯出(儀表板「進場訊號→🌟季級持股」檢視吃這份, export_html.py讀) ----------
+    import json
+    payload = {
+        "generated": today, "last_day": last_day, "age_days": age,
+        "rev_months": f"{str(kn2)[:7]}+{str(kn1)[:7]}" if kn1 is not None else "—",
+        "dual": [{k: r[k] for k in ("code", "name", "theme", "dist", "reso")} for r in dual_rows],
+        "standby": [{k: r[k] for k in ("code", "name", "theme", "dist", "reso")} for r in standby_rows[:30]],
+        "standby_total": len(standby_rows),
+        "triple_today": [{k: r[k] for k in ("code", "name", "theme", "status")} for r in t3],
+        "triple_recent": [{k: r[k] for k in ("d", "code", "name", "theme", "status")} for r in rec3],
+        "holding": [{k: r[k] for k in ("d", "code", "name", "theme", "days_held", "exit_in")}
+                    for r in sorted(rows_holding, key=lambda x: x["exit_in"])],
+        "amb_status": amb_status, "amb_q": f"Q{qe.quarter}",
+        "amb_entry": str(entry_amb.date()), "amb_anchor": str(anchor_amb.date()),
+        "amb_rows": [{k: r[k] for k in ("code", "name", "theme", "nm")} for r in amb_rows[:30]],
+    }
+    with open("quarterly_signals.json", "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    print("[watch] 已輸出 quarterly_signals.json(儀表板用)")
+
 
 if __name__ == "__main__":
     main()

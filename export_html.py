@@ -398,6 +398,8 @@ def build():
         "tw_earnings": load_earnings_csv("tw_earnings_watch.csv"),
         "jpkr_earnings": load_earnings_csv("jp_kr_earnings_watch.csv"),
         "tw_board": load_tw_board(),
+        "quarterly": (lambda: json.load(open("quarterly_signals.json", encoding="utf-8"))
+                      if os.path.exists("quarterly_signals.json") else {})(),
         "theme_news": pd.read_csv("theme_news.csv").to_dict("records") if os.path.exists("theme_news.csv") else [],
         "expo_calendar": EXPO_CALENDAR,
     }
@@ -3372,6 +3374,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div class="expo-watch-card" id="warRoom" style="border-left:4px solid var(--ac);margin-bottom:14px;line-height:1.8"></div>
   <div class="sc-view-switch">
     <button class="view-btn active" id="sigViewConfluBtn" onclick="switchSigView('conflu')">🎯訊號交集</button>
+    <button class="view-btn" id="sigViewQuarterlyBtn" onclick="switchSigView('quarterly')">🌟季級持股</button>
     <button class="view-btn" id="sigViewMacroBtn" onclick="switchSigView('macro')">大題材檢查清單</button>
     <button class="view-btn" id="sigViewMicroBtn" onclick="switchSigView('micro')">微題材脈衝雷達</button>
     <button class="view-btn" id="sigViewCatchupBtn" onclick="switchSigView('catchup')">補漲雷達</button>
@@ -3400,6 +3403,29 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <span class="hint" style="display:inline">（預設只列同時出現在≥2條訊號線的股票；「全部」含單一訊號成員）</span>
   </div>
   <div class="scroll-box"><table id="confluTable"></table></div>
+  </div>
+
+  <div id="sigQuarterlyView" style="display:none">
+  <h3 class="sec-title">🌟季級持股訊號——雙新高主幹＋三重門檻衛星＋埋伏窗（2026-08-07上線·候選層live驗證中）</h3>
+  <div class="rule-card">
+    <div class="rule-item">🌟<b>雙新高（主幹·月頻）</b>＝股價貼半年高2%內×最近兩個已公布月營收皆創12月新高。<b>每月13日照清單調倉</b>，其餘日子不動作。回測（修正前視bug後）：k40 demean+8.90%✓/逐年9/9全正；組合H40·0.5%成本年化+66.8%/MDD-41.3%/Calmar1.62（TAIEX同期0.57）。🔥＝題材20日動能正（共振，長窗報酬約2.5倍差）。</div>
+    <div class="rule-item">📋<b>預備名單</b>＝營收已連創但價格未貼高——<b>不是買點</b>，等突破進貼高帶那天再進（歷史+6.49%✓）。依距高排序，越前面越接近觸發。</div>
+    <div class="rule-item">⚡<b>三重門檻（衛星·事件）</b>＝題材成員×90日獨立突破×最新季毛利率QoQ改善→<b>訊號次日收盤進，持40交易日</b>（事件層k40絕對+7.25%/組合Calmar1.13）。與雙新高重疊僅9%＝互補，各配資金。</div>
+    <div class="rule-item">🪤<b>埋伏配方（季頻）</b>＝季末月＋次月營收連創→次月13日進，財報公布後5-10日出（+4.25~5.68%✓/勝率53%；年報版1月中→4月初+9.20%✓）。</div>
+    <div class="rule-item" style="color:var(--red)">⚠三條皆<b>候選層</b>（live樣本外累積中，尾盤成交成本未實測）；「查無財報」股票一律排除（四卷重現長窗-10%）；MDD量級與大盤相當（-33~-41%），非低回撤策略。詳版：研究報告/watch_triple_gate.html。</div>
+  </div>
+  <div class="hint" id="qtrAsof" style="font-weight:600"></div>
+  <h4>🌟雙新高持有清單</h4>
+  <div class="scroll-box"><table id="qtrDualTable"></table></div>
+  <h4>📋預備名單（等突破，前30檔按距高排序）</h4>
+  <div class="scroll-box"><table id="qtrStandbyTable"></table></div>
+  <h4>⚡三重門檻：今日觸發＋近5日觸發</h4>
+  <div class="scroll-box"><table id="qtrTripleTable"></table></div>
+  <h4>⚡三重門檻：持有中（出場倒數）</h4>
+  <div class="scroll-box"><table id="qtrHoldTable"></table></div>
+  <h4>🪤埋伏配方</h4>
+  <div class="hint" id="qtrAmbStatus"></div>
+  <div class="scroll-box"><table id="qtrAmbTable"></table></div>
   </div>
 
   <div id="sigMacroView" style="display:none">
@@ -5013,13 +5039,58 @@ function renderBanner() {
 
 // ── 進場訊號頁籤 ──────────────────────────────────────────────────────
 function switchSigView(v) {
-  ["Conflu", "Macro", "Micro", "Catchup", "Revmom", "Attwatch", "Dispo", "Reso", "Thermo", "Pledge", "Dormant"].forEach(function(k) {
+  ["Conflu", "Quarterly", "Macro", "Micro", "Catchup", "Revmom", "Attwatch", "Dispo", "Reso", "Thermo", "Pledge", "Dormant"].forEach(function(k) {
     const on = v === k.toLowerCase();
     document.getElementById("sigView" + k + "Btn").classList.toggle("active", on);
     document.getElementById("sig" + k + "View").style.display = on ? "" : "none";
   });
   // 天氣儀在隱藏分頁初繪時寬度會抓錯,切進來時重繪一次(Plotly.newPlot幂等)
   if (v === "thermo") renderWeatherGauge();
+}
+
+// ── 季級持股訊號檢視(2026-08-07上線, 資料=watch_triple_gate.py→quarterly_signals.json) ──
+function renderQuarterlySig() {
+  const Q = DATA.quarterly || {};
+  const asof = document.getElementById("qtrAsof");
+  if (!asof) return;
+  if (!Q.generated) {
+    asof.innerHTML = "<span style='color:var(--red)'>⚠尚無資料——先跑 python watch_triple_gate.py（或 update_all）</span>";
+    return;
+  }
+  const stale = (Q.age_days || 0) > 4;
+  asof.innerHTML = "資料日：台股 " + Q.last_day + "｜營收判定月 " + Q.rev_months + "｜產出 " + Q.generated +
+    (stale ? " <span style='color:var(--red)'>⚠資料已 " + Q.age_days + " 天未更新</span>" : "");
+  function codeLink(r) {
+    const key = "台|" + r.code;
+    const nm = r.name || "";
+    return (DATA.company_history && DATA.company_history[key])
+      ? "<a href=\"javascript:void(0)\" onclick=\"jumpToCompany('" + key + "');showTab(2)\" style=\"color:inherit;border-bottom:1px dotted var(--tx3);text-decoration:none\">" + r.code + " " + nm + "</a>"
+      : r.code + " " + nm;
+  }
+  function fill(id, rows, cols) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (!rows || !rows.length) { el.innerHTML = "<tr><td class='hint'>目前無</td></tr>"; return; }
+    let h = "<tr>" + cols.map(c => "<th>" + c[1] + "</th>").join("") + "</tr>";
+    rows.forEach(r => {
+      h += "<tr>" + cols.map(c => "<td>" + (c[0] === "_code" ? codeLink(r) : (r[c[0]] != null ? r[c[0]] : "")) + "</td>").join("") + "</tr>";
+    });
+    el.innerHTML = h;
+  }
+  fill("qtrDualTable", Q.dual, [["_code", "股票"], ["theme", "題材"], ["dist", "距126日高"], ["reso", "共振"]]);
+  fill("qtrStandbyTable", Q.standby, [["_code", "股票"], ["theme", "題材"], ["dist", "距高"], ["reso", "共振"]]);
+  const trip = (Q.triple_today || []).map(r => Object.assign({d: "今日"}, r)).concat(Q.triple_recent || []);
+  fill("qtrTripleTable", trip, [["d", "訊號日"], ["_code", "股票"], ["theme", "題材"], ["status", "毛利率"]]);
+  fill("qtrHoldTable", Q.holding, [["d", "訊號日"], ["_code", "股票"], ["theme", "題材"], ["days_held", "已持日"], ["exit_in", "出場倒數"]]);
+  const amb = document.getElementById("qtrAmbStatus");
+  if (amb) amb.innerHTML = (Q.amb_q || "") + "財報埋伏窗：<b>" + (Q.amb_status || "—") + "</b>（進場" + (Q.amb_entry || "?") + "→財報可得" + (Q.amb_anchor || "?") + "+5~10日出）";
+  fill("qtrAmbTable", Q.amb_rows, [["_code", "股票"], ["theme", "題材"], ["nm", "次月確認"]]);
+  // 頁籤掛數字: 今日有三重觸發或雙新高清單有變動價值時
+  const btn = document.getElementById("sigViewQuarterlyBtn");
+  if (btn) {
+    const nAct = (Q.triple_today || []).length;
+    btn.innerHTML = "🌟季級持股" + (nAct ? "<span class=\"bell\">🔔" + nAct + "</span>" : "");
+  }
 }
 
 // ── 法說會筆記(2026-07-19上板) ────────────────────────────────────
@@ -6752,6 +6823,7 @@ function init() {
   renderRotationHeatmap();
   renderFullTable();
   renderEarningsTab();
+  renderQuarterlySig();
   renderNewsTable();
   initSupplyChain();
   renderRadar();
