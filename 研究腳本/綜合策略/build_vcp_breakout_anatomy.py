@@ -96,7 +96,9 @@ def main():
     hi2 = hi_rev & hi_rev.shift(1)
     r3 = rev_w.rolling(3).sum()
     ryoy = r3 / r3.shift(12) - 1                                      # 近3月合計YoY
-    pub_idx = [(m + pd.Timedelta(days=12)).strftime("%Y-%m-%d") for m in rev_w.index]
+    # ⚠公布錨=次月12日(2026-08-07修正前視bug: 原版m+12天提早一個月)
+    pub_idx = [(m + pd.DateOffset(months=1) + pd.Timedelta(days=11)).strftime("%Y-%m-%d")
+               for m in rev_w.index]
     hi2_pub = hi2.copy()
     hi2_pub.index = pub_idx
     ryoy_pub = ryoy.copy()
@@ -334,10 +336,10 @@ ul{margin:4px 0;padding-left:20px;font-size:12.5px;color:#ccc;line-height:1.7}
 冷門假突破?機制待考)。</li>
 <li><span class="verdict v-good">②「背後因子」=策略本體(使用者第二問才是對的問題)</span>
 突破後「走很長一段」由基本面與題材決定: <b>題材共振(題材成員×題材20日動能正)k120+9.17%✓/
-右尾19%/賺賠2.26/逐年12/12全正</b>=全卷最強;營收R1(兩月連創)k120+7.09%✓;毛利/營益/淨利QoQ改善
-k120+4.2~4.9%✓全過;<b>無財報資料k120-10.41%✓/勝率30%(第四次重現=鐵排除規則)</b>;
-非題材成員k120-7.62%✓。<b>市值無結構(全含0)、P/B僅弱結構</b>(&lt;1.5的k120+2.98邊緣✓)=
-使用者清單中這兩項可以放下。</li>
+右尾19%/賺賠2.26/逐年12/12全正</b>=全卷最強;營收R1(兩月連創)k120+6.10%✓(已修正營收公布錨
+前視bug後的數字);毛利/營益/淨利QoQ改善k120+4.2~4.9%✓全過;<b>無財報資料k120-10.41%✓/勝率30%
+(第四次重現=鐵排除規則)</b>;非題材成員k120-7.62%✓。<b>市值無結構(全含0)、P/B僅弱結構</b>
+(&lt;1.5的k120+2.98邊緣✓)=使用者清單中這兩項可以放下。</li>
 <li><span class="verdict v-warn">③合成: 型態把好因子拖下水</span> 型態×毛利改善k120-3.86/
 型態×題材共振+3.61含0(vs題材共振單獨+9.17)——疊上緊盤整/小放量條件後反而變差,
 <b>不要用型態當濾網</b>。</li>
