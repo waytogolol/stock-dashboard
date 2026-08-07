@@ -260,8 +260,22 @@ ul{margin:4px 0;padding-left:20px;font-size:12.5px;color:#ccc;line-height:1.7}
                          f"<td>{s['calmar']:.2f}</td><td>{s['conc']:.1f}</td><td>{s['win']:.0f}%</td>"
                          f"<td>{s['wl']:.2f}</td><td>{s['pf']:.2f}</td></tr>" for s in sims)
                + "</table></div>")
+    import json as _json
+    nav_payload = []
+    for s in sims:
+        ns = s["nav_s"].resample("W").last().dropna()
+        nav_payload.append({"name": s["lab"], "dates": [d.strftime("%Y-%m-%d") for d in ns.index],
+                            "vals": [round(v, 4) for v in ns.values]})
+    tn = tai_nav.copy()
+    tn.index = pd.to_datetime(tn.index)
+    tnw = tn.resample("W").last().dropna()
+    nav_payload.append({"name": "TAIEX", "dates": [d.strftime("%Y-%m-%d") for d in tnw.index],
+                        "vals": [round(v, 4) for v in tnw.values]})
+    nav_json = _json.dumps(nav_payload, ensure_ascii=False)
+
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>季級訊號整合(2026-08-07)</title><style>{CSS}</style></head><body>
+<title>季級訊號整合(2026-08-07)</title>
+<script src="plotly.min.js"></script><style>{CSS}</style></head><body>
 <h1>🔗 季級訊號整合: 雙新高 vs 三重門檻</h1>
 <div class="note">兩條季級訊號的重疊度與同引擎合併組合(H{HOLD},0.5%來回成本,2018-02起,持有中去重,
 日頻等權)。母卷: research_dual_newhigh_matrix.html / research_triple_gate_portfolio.html。</div>
@@ -271,6 +285,7 @@ ul{margin:4px 0;padding-left:20px;font-size:12.5px;color:#ccc;line-height:1.7}
 <h2>Q2 同引擎合併組合</h2>
 {sim_tbl}
 <div class="note">TAIEX同期(2018-02起): 年化{tai_ann * 100:+.1f}%/MDD{tai_dd * 100:.1f}%/Calmar{tai_ann / abs(tai_dd):.2f}</div>
+<div id="c_nav" style="height:460px"></div>
 <h2>⚖️ 判決(2026-08-07)</h2>
 <ul>
 <li><span class="verdict v-good">①互補確認: 兩條訊號抓的是不同的股票/時點</span>
@@ -295,6 +310,14 @@ ul{margin:4px 0;padding-left:20px;font-size:12.5px;color:#ccc;line-height:1.7}
 (對齊營收YoY),與triple_gate卷(2015起)數字不可直接比;③除權息未還原;④持有中去重後,聯集/交集的
 事件計數受先觸發者佔用影響;⑤題材名單事後偏誤沿卷。</div>
 <div class="note">維運: python 研究腳本/綜合策略/build_quarterly_signal_integration.py(從根目錄執行)。</div>
+<script>
+const NAVS={nav_json};
+Plotly.newPlot('c_nav', NAVS.map(s=>({{x:s.dates,y:s.vals,name:s.name,mode:'lines'}})),
+  {{title:'權益曲線(H40,0.5%來回成本,週頻取樣,對數軸) vs TAIEX',
+    paper_bgcolor:'#1a1a19',plot_bgcolor:'#22221f',font:{{color:'#ddd',size:12}},
+    yaxis:{{title:'NAV',type:'log'}},legend:{{orientation:'h'}},
+    margin:{{t:42,l:52,r:18,b:40}}}});
+</script>
 </body></html>"""
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html)

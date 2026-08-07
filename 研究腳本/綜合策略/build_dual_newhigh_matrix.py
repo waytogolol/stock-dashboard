@@ -226,6 +226,40 @@ def main():
     line(p1r1[p1r1.theme], "P1×R1×題材成員", Ff)
     line(p1r1[~p1r1.theme], "P1×R1×非題材", Ff)
 
+    # ---------- 權益曲線(月頻再平衡: 形成日收盤→下一形成日收盤,雙新高組 vs TAIEX) ----------
+    forms = sorted(E.f.unique())
+    nav_lines = {"P1×R1雙新高": None, "P1×R1×題材": None, "TAIEX": None}
+    navs = {k: [1.0] for k in nav_lines}
+    nav_dates = [forms[0]]
+    dpos_all = {d: i for i, d in enumerate(C.index)}
+    tai_v = tai.reindex(C.index).ffill().values
+    for a, b in zip(forms[:-1], forms[1:]):
+        ia, ib = dpos_all[a], dpos_all[b]
+        for key, mask in (("P1×R1雙新高", (E.f == a) & (E.pcell == "P1貼高") & E.r1),
+                          ("P1×R1×題材", (E.f == a) & (E.pcell == "P1貼高") & E.r1 & E.theme)):
+            codes = E[mask].code.tolist()
+            rets = []
+            for c in codes:
+                ci = Cf.columns.get_loc(c)
+                p0, p1 = C.iat[ia, ci], Cf.iat[ib, ci]
+                if pd.notna(p0) and pd.notna(p1) and p0 > 0:
+                    rets.append(p1 / p0 - 1)
+            r = np.mean(rets) if rets else 0.0          # 空月=空手
+            navs[key].append(navs[key][-1] * (1 + r))
+        navs["TAIEX"].append(navs["TAIEX"][-1] * (tai_v[ib] / tai_v[ia]))
+        nav_dates.append(b)
+    nav_stats = {}
+    for k, v in navs.items():
+        s = pd.Series(v)
+        yrs = (pd.Timestamp(nav_dates[-1]) - pd.Timestamp(nav_dates[0])).days / 365.25
+        ann = s.iloc[-1] ** (1 / yrs) - 1
+        mdd = (s / s.cummax() - 1).min()
+        nav_stats[k] = f"{k}: NAV={s.iloc[-1]:.2f} 年化{ann * 100:+.1f}% MDD{mdd * 100:.1f}%"
+        print(f"[nav] {nav_stats[k]}")
+    import json as _json
+    nav_json = _json.dumps([{"name": k, "dates": nav_dates, "vals": [round(x, 4) for x in v]}
+                            for k, v in navs.items()], ensure_ascii=False)
+
     # ---------- HTML ----------
     CSS = """
 body{background:#1a1a19;color:#fff;font-family:"Noto Sans TC",sans-serif;margin:24px;max-width:1150px}
@@ -259,7 +293,8 @@ ul{margin:4px 0;padding-left:20px;font-size:12.5px;color:#ccc;line-height:1.7}
         return h + "</table></div>"
 
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>雙新高九宮格(2026-08-07)</title><style>{CSS}</style></head><body>
+<title>雙新高九宮格(2026-08-07)</title>
+<script src="plotly.min.js"></script><style>{CSS}</style></head><body>
 <h1>🧩 雙新高九宮格考卷: 價格狀態 × 營收創高 全矩陣</h1>
 <div class="note">形成日=每月13日後首個交易日(上月營收全公布),2018-02~2026-04共{E.m.nunique()}個月頻決策點,
 panel {len(E):,}筆;池=20日均額>=0.3億;進場=形成日收盤,outcome=k20/40/60 demean(減TAIEX),月群bootstrap。
@@ -277,6 +312,9 @@ panel {len(E):,}筆;池=20日均額>=0.3億;進場=形成日收盤,outcome=k20/4
 {tbl(Ee, ("三新高",))}
 <h2>F) 題材成員split(P1×R1)</h2>
 {tbl(Ff)}
+<h2>權益曲線(月頻再平衡: 形成日收盤→下一形成日收盤,毛報酬未扣成本)</h2>
+<div class="note">{" · ".join(nav_stats.values())}</div>
+<div id="c_nav" style="height:440px"></div>
 <h2>⚖️ 判決(2026-08-07首輪)</h2>
 <ul>
 <li><span class="verdict v-good">①雙新高共振確認=全專案季級最強格</span>
@@ -308,6 +346,13 @@ P1貼高×R1營收連創: <b>k40 demean+8.90%✓[+4.40,+14.22]/勝率55%/賺賠�
 兩卷數字不可直接相比;④P3落後格的「落後」原因異質(本卷只用毛利率拆,產業逆風/一次性因素未拆);
 ⑤六宮格×多段=多重比較,主判讀靠k40+跨窗一致+逐年,不靠單格CI;⑥題材成員=事後名單偏誤沿卷。</div>
 <div class="note">維運: python 研究腳本/綜合策略/build_dual_newhigh_matrix.py(從根目錄執行)。</div>
+<script>
+const NAVS={nav_json};
+Plotly.newPlot('c_nav', NAVS.map(s=>({{x:s.dates,y:s.vals,name:s.name,mode:'lines'}})),
+  {{title:'雙新高月頻權益曲線(毛報酬,對數軸)', paper_bgcolor:'#1a1a19',plot_bgcolor:'#22221f',
+    font:{{color:'#ddd',size:12}},yaxis:{{title:'NAV',type:'log'}},legend:{{orientation:'h'}},
+    margin:{{t:42,l:52,r:18,b:40}}}});
+</script>
 </body></html>"""
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html)

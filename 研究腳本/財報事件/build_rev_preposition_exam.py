@@ -149,7 +149,7 @@ def main():
             m4 = months[-1] + pd.DateOffset(months=1)          # 季後首月(次月)
             hi_next = bool(hi_m.at[m4, code]) if (m4 in hi_m.index and code in hi_m.columns
                                                   and pd.notna(hi_m.at[m4, code])) else False
-            amb2 = thr3_5 = thr3_10 = np.nan
+            amb2 = thr3_5 = thr3_10 = thr3abs = np.nan
             if e2_i < a_i and a_i + 5 < len(t_dates):
                 p2 = C.iat[e2_i, ci]
                 x5 = Cf.iat[a_i + 5, ci]
@@ -161,10 +161,12 @@ def main():
                 x10 = Cf.iat[a_i + 10, ci]
                 if pd.notna(p3) and pd.notna(x5) and p3 > 0:
                     thr3_5 = (x5 / p3 - 1) - (tai_f.iloc[a_i + 5] / tai_f.iloc[e3_i] - 1)
+                    thr3abs = x5 / p3 - 1                     # 絕對報酬(權益曲線用)
                 if pd.notna(p3) and pd.notna(x10) and p3 > 0:
                     thr3_10 = (x10 / p3 - 1) - (tai_f.iloc[a_i + 10] / tai_f.iloc[e3_i] - 1)
             recs.append({"code": code, "q": qs, "qtype": f"Q{p.quarter}",
                          "hi_next": hi_next, "amb2": amb2, "thr3_5": thr3_5, "thr3_10": thr3_10,
+                         "thr3abs": thr3abs,
                          "entry": str(t_dates[e_i])[:10], "anchor": str(t_dates[a_i])[:10],
                          "qyoy": qyoy, "accel": accel,
                          "hi_last": hi_last, "hi_all3": hi_all3, "q_hi4": q_hi4, "beat": beat,
@@ -288,6 +290,34 @@ def main():
     line3(E[E.hi_all3 & E.hi_next & (E.qtype != "Q4")], "Q1-Q3×三月全創×次月創")
     line3(E[E.qyoy.notna()], "(全樣本)")
 
+    # ---------- 權益曲線: v3配方逐季複利(次月13進→公告+5出,窗外空手) vs TAIEX買進持有 ----------
+    sub_curve = E[E.hi_last & E.hi_next].dropna(subset=["thr3abs"])
+    q_pts = []
+    for qq, g in sub_curve.groupby("q"):
+        if len(g) >= 5:
+            q_pts.append((qq, g.thr3abs.mean(), g.anchor.max()))
+    q_pts.sort()
+    nav = 1.0
+    curve_dates, curve_vals = [], []
+    for qq, r, ad in q_pts:
+        nav *= (1 + r)
+        curve_dates.append(ad)
+        curve_vals.append(round(nav, 4))
+    tai_vals = []
+    if curve_dates:
+        t0v = tai_f.loc[curve_dates[0]] if curve_dates[0] in tai_f.index else np.nan
+        tai_vals = [round(float(tai_f.loc[d] / t0v), 4) if d in tai_f.index else None
+                    for d in curve_dates]
+    yrs_c = max((pd.Timestamp(curve_dates[-1]) - pd.Timestamp(curve_dates[0])).days / 365.25, 0.5) if curve_dates else 1
+    curve_ann = (nav ** (1 / yrs_c) - 1) * 100 if curve_dates else np.nan
+    mdd_c = (pd.Series(curve_vals) / pd.Series(curve_vals).cummax() - 1).min() * 100 if curve_vals else np.nan
+    print(f"\n[nav] v3配方(季末月×次月連創,次月13→公告+5)逐季複利: NAV={nav:.2f} "
+          f"年化{curve_ann:+.1f}% 季頻MDD{mdd_c:.1f}%(窗外空手,毛報酬)")
+    import json as _json
+    nav_json = _json.dumps([
+        {"name": "v3配方(窗外空手,毛報酬)", "dates": curve_dates, "vals": curve_vals},
+        {"name": "TAIEX買進持有", "dates": curve_dates, "vals": tai_vals}], ensure_ascii=False)
+
     # Q4拆出(含歸因對照: Q4弱營收組——若也大正,肉是「1-4月窗口」不是「營收訊號」)
     print("\nQ4(年報,埋伏窗~3個月)單獨+歸因對照:")
     P4 = []
@@ -352,7 +382,8 @@ ul{margin:4px 0;padding-left:20px;font-size:12.5px;color:#ccc;line-height:1.7}
                         + cell(r, "ann") + "</tr>" for r in P4) + "</table>")
     pr = pair_out
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>月營收→季報埋伏考卷(2026-08-06)</title><style>{CSS}</style></head><body>
+<title>月營收→季報埋伏考卷(2026-08-06)</title>
+<script src="plotly.min.js"></script><style>{CSS}</style></head><body>
 <h1>🪤 月營收品質 → 季報公布前埋伏考卷</h1>
 <div class="note">使用者假說:「當月營收都很好時,季財報就可能優於預期,可以公布前先埋伏買」。
 台股結構: 季底次月10日三個月營收全知 vs 財報法定期限(Q1=5/15/Q2=8/14/Q3=11/14/Q4=3/31)——
@@ -370,6 +401,17 @@ CI[{pr['ann']['lo']:+.2f},{pr['ann']['hi']:+.2f}]{'✓排0' if pr['ann']['sig'] 
 (正號{pr['ann']['pos']}/{pr['ann']['n']}季)</div>
 <h2>Q4(年報)單獨 vs Q1-Q3</h2>
 {p4_tbl}
+<h2>權益曲線: v3最終配方逐季複利(窗外空手,毛報酬)</h2>
+<div class="note">配方=季末月創12月高×次月也創高,次月13日收盤進→財報可得日+5收盤出;
+NAV={nav:.2f} 年化{curve_ann:+.1f}%(曝險僅每季2-3週) vs TAIEX買進持有。</div>
+<div id="c_nav" style="height:420px"></div>
+<script>
+const NAVS={nav_json};
+Plotly.newPlot('c_nav', NAVS.map(s=>({{x:s.dates,y:s.vals,name:s.name,mode:'lines+markers'}})),
+  {{title:'埋伏配方權益曲線(季頻)', paper_bgcolor:'#1a1a19',plot_bgcolor:'#22221f',
+    font:{{color:'#ddd',size:12}},yaxis:{{title:'NAV'}},legend:{{orientation:'h'}},
+    margin:{{t:42,l:52,r:18,b:40}}}});
+</script>
 <h2>⚖️ 判決(2026-08-06首輪+v2改操作化翻盤)</h2>
 <ul>
 <li><span class="verdict v-good">①v2定調: 「營收創新高」遠強於「YoY水準」——使用者指定的操作化翻盤了首輪</span>
