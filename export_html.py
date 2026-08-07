@@ -3415,9 +3415,12 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div class="rule-item">⚡<b>三重門檻（衛星·事件）</b>＝題材成員×90日獨立突破×最新季毛利率QoQ改善→<b>訊號次日收盤進，持40交易日</b>（事件層k40絕對+7.25%/組合Calmar1.13）。與雙新高重疊僅9%＝互補，各配資金。</div>
     <div class="rule-item">🪤<b>埋伏配方（季頻）</b>＝季末月＋次月營收連創→次月13日進，財報公布後5-10日出（+4.25~5.68%✓/勝率53%；年報版1月中→4月初+9.20%✓）。</div>
     <div class="rule-item">⏰<b>忘了看怎麼補（2026-08-07實測）</b>：三重門檻遲到進場衰減極緩——訊號+1日demean+3.91%、+3日+3.66%、+5日+3.55%、+8日仍+3.05%（保留78%），<b>「近5日觸發」區就是補進窗，5天內照補</b>；雙新高是月頻狀態訊號整月有效，13日忘了調倉哪天看到哪天調即可；埋伏配方有固定日期窗錯過等下季。（快訊號獨漲相反：隔夜事件，超過2天放掉等下一次。）</div>
+    <div class="rule-item">🚪<b>出場條件（全部＝回測驗證過的時間出場口徑）</b>：三重門檻＝<b>第40交易日收盤賣出</b>（到期日當天若又出現在觸發清單＝續持再算40日）；雙新高＝<b>每月13日調倉</b>，上次清單有、這次沒有→賣出（下方「調倉賣出」名單直接列）；埋伏配方＝財報公布後5-10日；獨漲＝第5-10日。<b style="color:var(--red)">停損：季級線目前沒有已驗證的停損規則</b>（時間出場是唯一回測口徑；週級動能的-15%週中停損屬舊口徑候選，未在季級複驗，別自行嫁接）。</div>
     <div class="rule-item" style="color:var(--red)">⚠三條皆<b>候選層</b>（live樣本外累積中，尾盤成交成本未實測）；「查無財報」股票一律排除（四卷重現長窗-10%）；MDD量級與大盤相當（-33~-41%），非低回撤策略。詳版：研究報告/watch_triple_gate.html。</div>
   </div>
   <div class="hint" id="qtrAsof" style="font-weight:600"></div>
+  <h4>🚪出場行動（今日到期／3日內到期／雙新高調倉賣出）</h4>
+  <div class="scroll-box"><table id="qtrExitTable"></table></div>
   <h4>🌟雙新高持有清單</h4>
   <div class="scroll-box"><table id="qtrDualTable"></table></div>
   <h4>📋預備名單（等突破，前30檔按距高排序）</h4>
@@ -5080,6 +5083,10 @@ function renderQuarterlySig() {
     });
     el.innerHTML = h;
   }
+  const exits = (Q.exits_today || []).map(r => Object.assign({act: "🔴今日到期賣出(三重門檻,第40日)"}, r))
+    .concat((Q.exits_soon || []).map(r => Object.assign({act: "🟠倒數" + r.exit_in + "日到期(三重門檻)"}, r)))
+    .concat((Q.dual_sell || []).map(r => Object.assign({act: "🔄調倉賣出(雙新高" + (Q.rebalance_cmp || "") + "已出清單)"}, r)));
+  fill("qtrExitTable", exits, [["act", "行動"], ["_code", "股票"], ["theme", "題材"], ["d", "進場日"]]);
   fill("qtrDualTable", Q.dual, [["_code", "股票"], ["theme", "題材"], ["dist", "距126日高"], ["reso", "共振"]]);
   fill("qtrStandbyTable", Q.standby, [["_code", "股票"], ["theme", "題材"], ["dist", "距高"], ["reso", "共振"]]);
   const trip = (Q.triple_today || []).map(r => Object.assign({d: "今日"}, r)).concat(Q.triple_recent || []);
@@ -5091,7 +5098,7 @@ function renderQuarterlySig() {
   // 頁籤掛數字: 今日有三重觸發或雙新高清單有變動價值時
   const btn = document.getElementById("sigViewQuarterlyBtn");
   if (btn) {
-    const nAct = (Q.triple_today || []).length;
+    const nAct = (Q.triple_today || []).length + (Q.exits_today || []).length + (Q.dual_sell || []).length;
     btn.innerHTML = "🌟季級持股" + (nAct ? "<span class=\"bell\">🔔" + nAct + "</span>" : "");
   }
 }

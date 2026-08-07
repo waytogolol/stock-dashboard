@@ -202,6 +202,44 @@ def main():
                 standby_rows.append({**rec, "dist_v": dist})
         standby_rows.sort(key=lambda x: -x["dist_v"])
 
+    # ---------- 🚪出場行動 ----------
+    # (a)三重門檻到期: 持有中exit_in==0=今日到期賣出(當日若再觸發=續持), 1<=exit_in<=3=即將到期
+    exits_today = [r for r in rows_holding if r["exit_in"] <= 0]
+    exits_soon = [r for r in rows_holding if 1 <= r["exit_in"] <= 3]
+    # (b)雙新高調倉賣出: 上一形成日(上月13日)在清單、最近形成日已不在 → 調倉賣出
+    HI126 = C.rolling(126, min_periods=100).max()
+    LIQ20 = MN.rolling(20, min_periods=15).mean()
+    t_arr = np.array(dates)
+
+    def formation_list(fi):
+        """指定交易日index的雙新高清單(法定公布錨口徑: m月營收次月12日起可用)。"""
+        if fi < 0 or fi >= len(dates):
+            return set()
+        d_ts = pd.Timestamp(dates[fi])
+        mons = [m for m in rev_w.index if (m + pd.DateOffset(months=1) + pd.Timedelta(days=11)) <= d_ts]
+        if len(mons) < 2:
+            return set()
+        h1, h2 = hi_rev.loc[mons[-1]], hi_rev.loc[mons[-2]]
+        dist_r = C.iloc[fi] / HI126.iloc[fi] - 1
+        liq_r = LIQ20.iloc[fi]
+        out = set()
+        for code in C.columns:
+            if (pd.notna(liq_r.get(code, np.nan)) and liq_r[code] >= LIQ_MIN
+                    and bool(h1.get(code, False)) and bool(h2.get(code, False))
+                    and pd.notna(dist_r.get(code, np.nan)) and dist_r[code] >= -0.02):
+                out.add(code)
+        return out
+
+    m_now = pd.Timestamp(datetime.now().strftime("%Y-%m-01"))
+    m_last = m_now if datetime.now().day >= 13 else m_now - pd.DateOffset(months=1)   # 上次調倉月
+    fi_last = min(int(np.searchsorted(t_arr, (m_last + pd.Timedelta(days=12)).strftime("%Y-%m-%d"))),
+                  len(dates) - 1)
+    set_last = formation_list(fi_last)                    # 上次調倉建倉清單
+    cur_set = {r["code"] for r in dual_rows}              # 現況合格清單(逐檔最新已公布營收)
+    dual_sell = sorted(set_last - cur_set)                # 上次建倉、現已不符 → 賣出
+    dual_sell_rows = [{"code": c, "name": names.get(c, ""), "theme": theme_map.get(c, "—")}
+                      for c in dual_sell]
+
     # ---------- ③埋伏窗提示(當前季週期) ----------
     qe = (now_ts - pd.offsets.QuarterEnd(1)).normalize()      # 最近已結束季的季底
     nm_month = (qe + pd.offsets.MonthBegin(1)).normalize()    # 季後首月
@@ -227,6 +265,14 @@ def main():
     print("=" * 84)
     print(f"季級持股統一掃描  台股最新交易日={last_day}(距今{age}天{'⚠陳舊' if age > 4 else ''})  產表{today}")
     print("=" * 84)
+    print(f"\n🚪出場行動: 三重門檻今日到期{len(exits_today)}檔 / 3日內到期{len(exits_soon)}檔 / "
+          f"雙新高調倉賣出{len(dual_sell_rows)}檔({str(m_last)[:7]}調倉建倉→現已不符)")
+    for r in exits_today:
+        print(f"  [今日到期賣] {r['code']}{r['name']:<8} [{r['theme']}] {r['d']}進場")
+    for r in exits_soon:
+        print(f"  [倒數{r['exit_in']}日] {r['code']}{r['name']:<8} [{r['theme']}]")
+    for r in dual_sell_rows:
+        print(f"  [調倉賣出] {r['code']}{r['name']:<8} [{r['theme']}]")
     print(f"\n🌟①雙新高主幹(P1貼高×R1兩月營收連創,月頻H40): {len(dual_rows)}檔"
           f"(營收判定月={str(kn2)[:7]}+{str(kn1)[:7]})")
     for r in dual_rows:
@@ -318,6 +364,10 @@ th{{text-align:left;color:#c3c2b7}} .note{{color:#8a8878;font-size:12.5px;line-h
         "amb_status": amb_status, "amb_q": f"Q{qe.quarter}",
         "amb_entry": str(entry_amb.date()), "amb_anchor": str(anchor_amb.date()),
         "amb_rows": [{k: r[k] for k in ("code", "name", "theme", "nm")} for r in amb_rows[:30]],
+        "exits_today": [{k: r[k] for k in ("d", "code", "name", "theme")} for r in exits_today],
+        "exits_soon": [{k: r[k] for k in ("d", "code", "name", "theme", "exit_in")} for r in exits_soon],
+        "dual_sell": dual_sell_rows,
+        "rebalance_cmp": f"{str(m_last)[:7]}調倉建倉→現已不符",
     }
     with open("quarterly_signals.json", "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
