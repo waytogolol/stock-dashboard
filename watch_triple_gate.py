@@ -51,9 +51,12 @@ def main():
     theme_map = dict(conn.execute(
         "select code, group_concat(main_group,'/') from classification "
         "where country='台' group by code"))
-    names = dict(conn.execute(
-        "select code, name from rankings where country='台' and snapshot_date="
-        "(select max(snapshot_date) from rankings where country='台')"))
+    # 名稱: company_names全上市櫃2,335檔為主(2026-08-07回填自tw_all_listed),rankings補缺(ETF等)
+    names = dict(conn.execute("select code, name_zh from company_names where country='台'"))
+    for c, n in conn.execute(
+            "select code, name from rankings where country='台' and snapshot_date="
+            "(select max(snapshot_date) from rankings where country='台')"):
+        names.setdefault(c, n)
     fin = pd.read_sql("SELECT code, date, gross_margin FROM tw_quarterly_financials_history",
                       conn, parse_dates=["date"])
     rev = pd.read_sql("SELECT code, date, revenue FROM fm_month_rev", conn, parse_dates=["date"])

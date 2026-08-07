@@ -322,9 +322,11 @@ def build():
             _conn = sqlite3.connect("capital_flow.db", timeout=30)
             bd = pd.read_sql("SELECT code, period, pre_date, pre_subj, actual_date, fetched "
                              "FROM tw_board_earnings_dates", _conn)
-            nm = dict(_conn.execute(
-                "select code, name from rankings where country='台' and snapshot_date="
-                "(select max(snapshot_date) from rankings where country='台')"))
+            nm = dict(_conn.execute("select code, name_zh from company_names where country='台'"))
+            for _c, _n in _conn.execute(
+                    "select code, name from rankings where country='台' and snapshot_date="
+                    "(select max(snapshot_date) from rankings where country='台')"):
+                nm.setdefault(_c, _n)
             _conn.close()
         except Exception as e:
             _sec_fail("台股財報公布日載入失敗", e)
@@ -3412,6 +3414,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     <div class="rule-item">📋<b>預備名單</b>＝營收已連創但價格未貼高——<b>不是買點</b>，等突破進貼高帶那天再進（歷史+6.49%✓）。依距高排序，越前面越接近觸發。</div>
     <div class="rule-item">⚡<b>三重門檻（衛星·事件）</b>＝題材成員×90日獨立突破×最新季毛利率QoQ改善→<b>訊號次日收盤進，持40交易日</b>（事件層k40絕對+7.25%/組合Calmar1.13）。與雙新高重疊僅9%＝互補，各配資金。</div>
     <div class="rule-item">🪤<b>埋伏配方（季頻）</b>＝季末月＋次月營收連創→次月13日進，財報公布後5-10日出（+4.25~5.68%✓/勝率53%；年報版1月中→4月初+9.20%✓）。</div>
+    <div class="rule-item">⏰<b>忘了看怎麼補（2026-08-07實測）</b>：三重門檻遲到進場衰減極緩——訊號+1日demean+3.91%、+3日+3.66%、+5日+3.55%、+8日仍+3.05%（保留78%），<b>「近5日觸發」區就是補進窗，5天內照補</b>；雙新高是月頻狀態訊號整月有效，13日忘了調倉哪天看到哪天調即可；埋伏配方有固定日期窗錯過等下季。（快訊號獨漲相反：隔夜事件，超過2天放掉等下一次。）</div>
     <div class="rule-item" style="color:var(--red)">⚠三條皆<b>候選層</b>（live樣本外累積中，尾盤成交成本未實測）；「查無財報」股票一律排除（四卷重現長窗-10%）；MDD量級與大盤相當（-33~-41%），非低回撤策略。詳版：研究報告/watch_triple_gate.html。</div>
   </div>
   <div class="hint" id="qtrAsof" style="font-weight:600"></div>

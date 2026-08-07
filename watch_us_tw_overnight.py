@@ -100,9 +100,11 @@ def tw_members(conn, theme):
     rows = conn.execute(
         "select distinct code from classification where country='台' and main_group=?", (theme,))
     codes = [r[0] for r in rows]
-    names = dict(conn.execute(
-        "select code, name from rankings where country='台' and snapshot_date="
-        "(select max(snapshot_date) from rankings where country='台')"))
+    names = dict(conn.execute("select code, name_zh from company_names where country='台'"))
+    for c, n in conn.execute(
+            "select code, name from rankings where country='台' and snapshot_date="
+            "(select max(snapshot_date) from rankings where country='台')"):
+        names.setdefault(c, n)
     return [f"{c}{names.get(c, '')}" for c in sorted(codes)]
 
 
