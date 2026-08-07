@@ -3063,7 +3063,11 @@ code { background: var(--sf2); color: var(--ac); padding: 2px 6px; border-radius
 .health-dot.crit { background: var(--red); }
 
 /* ── 供應鏈視圖切換 + 產業鏈上中下游 ─────────────────────────── */
-.sc-view-switch { display: flex; gap: 8px; margin-bottom: 16px; }
+.sc-view-switch { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.sig-groups { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.sig-group-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.sig-group-label { color: var(--tx3); font-size: 11.5px; font-weight: 600; min-width: 108px;
+  text-align: right; padding-right: 8px; border-right: 2px solid var(--ac); }
 .view-btn {
   background: var(--sf); border: 1px solid var(--bdm); color: var(--tx2);
   padding: 7px 18px; border-radius: 6px; cursor: pointer;
@@ -3374,21 +3378,31 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
 
 <div class="tab-content" id="tab7">
   <div class="expo-watch-card" id="warRoom" style="border-left:4px solid var(--ac);margin-bottom:14px;line-height:1.8"></div>
-  <div class="sc-view-switch">
-    <button class="view-btn active" id="sigViewConfluBtn" onclick="switchSigView('conflu')">🎯訊號交集</button>
-    <button class="view-btn" id="sigViewQuarterlyBtn" onclick="switchSigView('quarterly')">🌟季級持股</button>
-    <button class="view-btn" id="sigViewMacroBtn" onclick="switchSigView('macro')">大題材檢查清單</button>
-    <button class="view-btn" id="sigViewMicroBtn" onclick="switchSigView('micro')">微題材脈衝雷達</button>
-    <button class="view-btn" id="sigViewCatchupBtn" onclick="switchSigView('catchup')">補漲雷達</button>
-    <button class="view-btn" id="sigViewRevmomBtn" onclick="switchSigView('revmom')">題材營收動能</button>
-    <button class="view-btn" id="sigViewAttwatchBtn" onclick="switchSigView('attwatch')">📉跌觸發/處置預警</button>
-    <button class="view-btn" id="sigViewDispoBtn" onclick="switchSigView('dispo')">處置股觀察</button>
-    <button class="view-btn" id="sigViewResoBtn" onclick="switchSigView('reso')">🔥共振</button>
-    <button class="view-btn" id="sigViewThermoBtn" onclick="switchSigView('thermo')">🌡️大盤溫度計</button>
-    <button class="view-btn" id="sigViewPledgeBtn" onclick="switchSigView('pledge')">🔓內部解質警戒</button>
-    <button class="view-btn" id="sigViewDormantBtn" onclick="switchSigView('dormant')">🌙沉寂覺醒雷達</button>
+  <div class="sig-groups">
+    <div class="sig-group-row"><span class="sig-group-label">🎯索引</span>
+      <button class="view-btn active" id="sigViewConfluBtn" onclick="switchSigView('conflu')">🎯訊號交集</button>
+    </div>
+    <div class="sig-group-row"><span class="sig-group-label">📅今日行動·日級</span>
+      <button class="view-btn" id="sigViewDispoBtn" onclick="switchSigView('dispo')">處置股觀察</button>
+      <button class="view-btn" id="sigViewAttwatchBtn" onclick="switchSigView('attwatch')">📉跌觸發/處置預警</button>
+    </div>
+    <div class="sig-group-row"><span class="sig-group-label">🌟持股·月/季級</span>
+      <button class="view-btn" id="sigViewQuarterlyBtn" onclick="switchSigView('quarterly')">🌟季級持股</button>
+      <button class="view-btn" id="sigViewRevmomBtn" onclick="switchSigView('revmom')">題材營收動能</button>
+    </div>
+    <div class="sig-group-row"><span class="sig-group-label">📡雷達·週級</span>
+      <button class="view-btn" id="sigViewMacroBtn" onclick="switchSigView('macro')">大題材檢查清單</button>
+      <button class="view-btn" id="sigViewMicroBtn" onclick="switchSigView('micro')">微題材脈衝雷達</button>
+      <button class="view-btn" id="sigViewCatchupBtn" onclick="switchSigView('catchup')">補漲雷達</button>
+      <button class="view-btn" id="sigViewResoBtn" onclick="switchSigView('reso')">🔥共振</button>
+      <button class="view-btn" id="sigViewDormantBtn" onclick="switchSigView('dormant')">🌙沉寂覺醒雷達</button>
+    </div>
+    <div class="sig-group-row"><span class="sig-group-label">🛡️風控警報</span>
+      <button class="view-btn" id="sigViewThermoBtn" onclick="switchSigView('thermo')">🌡️大盤溫度計</button>
+      <button class="view-btn" id="sigViewPledgeBtn" onclick="switchSigView('pledge')">🔓內部解質警戒</button>
+    </div>
   </div>
-  <div class="hint">頁籤上的數字＝該檢視「現在有事」的量：大題材🔔=本週檢查清單觸發的題材數、微題材🔔=本週脈衝A/B級數、處置🔔=今日需行動檔數(V4/V5買點日·出場日·🟢攤平帶)、補漲🎯=現役候選檔數；主頁籤「進場訊號🔔」=大題材+微題材合計。沒掛數字=該頁目前無新觸發，常設內容照常看。</div>
+  <div class="hint">檢視按「決策頻率」分組（2026-08-07重排，按鈕功能不變）：📅今日行動=每天看、🌟持股=每月13日調倉+持有管理（含🚪出場行動）、📡雷達=有空掃、🛡️風控=被動警報。頁籤上的數字＝該檢視「現在有事」的量：大題材🔔=本週檢查清單觸發的題材數、微題材🔔=本週脈衝A/B級數、處置🔔=今日需行動檔數(V4/V5買點日·出場日·🟢攤平帶)、補漲🎯=現役候選檔數、季級持股🔔=今日觸發+出場行動數；主頁籤「進場訊號🔔」=大題材+微題材合計。沒掛數字=該頁目前無新觸發，常設內容照常看。</div>
   <div id="sigConfluView">
   <h3 class="sec-title">🎯訊號交集——哪些股票同時出現在多條訊號線（2026-07-23上線·評估輔助）</h3>
   <div class="rule-card">
