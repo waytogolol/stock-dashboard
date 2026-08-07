@@ -3613,6 +3613,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   </div>
 
   <div id="sigThermoView" style="display:none">
+  <div class="hint" id="hpRsGauge" style="font-weight:600;border-left:3px solid var(--ac);padding-left:10px"></div>
   <div class="rule-card">
     <div class="rule-title">🌡️ 大盤溫度計——偵測「大盤恐慌殺到底」的五個買點燈</div>
     <div class="rule-item"><b>這在幹嘛（一句話）</b>：五個燈各自偵測一種「市場被嚇壞、一堆人被迫賣股票」的極端日。關鍵機制：因為斷頭、停損、風控砍倉而賣（人被迫賣，不是公司變壞）＝賣完就沒賣壓了，歷史上之後多半反彈——所以<b>燈亮＝進場窗開啟，是買點提示不是逃命警報</b>。</div>
@@ -5114,6 +5115,13 @@ function renderQuarterlySig() {
   if (btn) {
     const nAct = (Q.triple_today || []).length + (Q.exits_today || []).length + (Q.dual_sell || []).length;
     btn.innerHTML = "🌟季級持股" + (nAct ? "<span class=\"bell\">🔔" + nAct + "</span>" : "");
+  }
+  // 高價股RS溫度計(併入🌡️溫度計頁,research_high_price_followup三關過安慰劑)
+  const rsEl = document.getElementById("hpRsGauge");
+  if (rsEl && Q.hp_rs && Q.hp_rs.status) {
+    rsEl.innerHTML = "💎高價股RS溫度計(風險偏好): RS3月均 " +
+      (Q.hp_rs.rs3_pct >= 0 ? "+" : "") + Q.hp_rs.rs3_pct + "% " + Q.hp_rs.status +
+      "<br><span style='font-weight:400;color:var(--tx3)'>" + Q.hp_rs.note + "；資料日 " + (Q.last_day || "") + "</span>";
   }
 }
 

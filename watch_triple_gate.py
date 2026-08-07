@@ -48,6 +48,10 @@ def main():
         "SELECT code,date,close,money FROM fm_daily_price "
         "WHERE date>=date((select max(date) from fm_daily_price),'-600 day') "
         "AND close>0 AND money>0", conn)
+    tai_px = pd.read_sql(
+        "SELECT date,close FROM index_daily WHERE market='TAIEX' "
+        "AND date>=date((select max(date) from index_daily where market='TAIEX'),'-600 day') "
+        "ORDER BY date", conn)
     theme_map = dict(conn.execute(
         "select code, group_concat(main_group,'/') from classification "
         "where country='台' group by code"))
@@ -349,6 +353,37 @@ th{{text-align:left;color:#c3c2b7}} .note{{color:#8a8878;font-size:12.5px;line-h
         f.write(html)
     print(f"\n[watch] 已輸出 {OUT}")
 
+    # ---------- 高價股RS溫度計(research_high_price_followup.html: 三關過安慰劑的風險偏好讀數) ----------
+    hp_rs = {}
+    try:
+        tai_s = tai_px.set_index("date")["close"].reindex(C.index).ffill()
+        didx2 = pd.to_datetime(C.index)
+        mf = [i for i in np.where(~didx2.to_period("M").duplicated())[0]]
+        if len(mf) >= 5:
+            rs_m = []
+            for a, b in zip(mf[-5:-1], mf[-4:]):
+                pr = C.iloc[a].dropna()
+                liq_r = MN.rolling(20, min_periods=15).mean().shift(1).iloc[a]
+                pool = pr.index[(liq_r.reindex(pr.index) >= LIQ_MIN)]
+                top = pr[pool][pr[pool] >= pr[pool].quantile(0.95)].index
+                rets = []
+                for c in top:
+                    p0, p1 = C.iloc[a].get(c), C.iloc[b].get(c)
+                    if pd.notna(p0) and pd.notna(p1) and p0 > 0:
+                        rets.append(p1 / p0 - 1)
+                tr = tai_s.iloc[b] / tai_s.iloc[a] - 1
+                if rets:
+                    rs_m.append(np.mean(rets) - tr)
+            if len(rs_m) >= 3:
+                rs3 = float(np.mean(rs_m[-3:]))
+                hp_rs = {"rs3_pct": round(rs3 * 100, 2),
+                         "status": "🟢風險偏好健康(高價領頭羊近3月贏大盤)" if rs3 > 0
+                                   else "🔴風險偏好轉弱(領頭羊近3月輸大盤)",
+                         "note": "RS3>0時歷史下月TAIEX+2.25%/勝率69%,RS3<=0時+0.13%/55%(過20組隨機安慰劑)"}
+                print(f"\n🌡️高價股RS溫度計: RS3月均={rs3 * 100:+.2f}% {hp_rs['status']}")
+    except Exception as e:
+        print(f"[watch] 高價RS計算失敗({e}),跳過")
+
     # ---------- JSON匯出(儀表板「進場訊號→🌟季級持股」檢視吃這份, export_html.py讀) ----------
     import json
     payload = {
@@ -368,6 +403,7 @@ th{{text-align:left;color:#c3c2b7}} .note{{color:#8a8878;font-size:12.5px;line-h
         "exits_soon": [{k: r[k] for k in ("d", "code", "name", "theme", "exit_in")} for r in exits_soon],
         "dual_sell": dual_sell_rows,
         "rebalance_cmp": f"{str(m_last)[:7]}調倉建倉→現已不符",
+        "hp_rs": hp_rs,
     }
     with open("quarterly_signals.json", "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
