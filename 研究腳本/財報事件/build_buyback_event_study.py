@@ -42,20 +42,23 @@ rng = np.random.default_rng(20260807)
 def main():
     conn = sqlite3.connect(DB, timeout=60)
     bb = pd.read_sql("SELECT * FROM tw_buyback", conn)
-    px = pd.read_sql("SELECT code,date,close,money FROM fm_daily_price "
-                     "WHERE date>='2013-06-01' AND close>0 AND money>0", conn)
-    idx = pd.read_sql("SELECT market,date,close FROM index_daily "
+    px = pd.read_sql("SELECT code,date,open,close,money FROM fm_daily_price "
+                     "WHERE date>='2013-06-01' AND close>0 AND money>0 AND open>0", conn)
+    idx = pd.read_sql("SELECT market,date,open,close FROM index_daily "
                       "WHERE market IN ('TAIEX','TPEx') AND date>='2013-06-01'", conn)
     cap = pd.read_sql("SELECT code, date, shares FROM capital ORDER BY code, date", conn)
     conn.close()
 
     C = px.pivot_table(index="date", columns="code", values="close", aggfunc="first").sort_index()
+    O = px.pivot_table(index="date", columns="code", values="open", aggfunc="first").sort_index()
     MN = px.pivot_table(index="date", columns="code", values="money", aggfunc="first").sort_index()
     Cf = C.ffill(limit=5)
     dates = list(C.index)
     t_arr = np.array(dates)
     tai = idx[idx.market == "TAIEX"].set_index("date")["close"].reindex(C.index).ffill()
     tpex = idx[idx.market == "TPEx"].set_index("date")["close"].reindex(C.index).ffill()
+    tai_o = idx[idx.market == "TAIEX"].set_index("date")["open"].reindex(C.index).ffill()
+    tpex_o = idx[idx.market == "TPEx"].set_index("date")["open"].reindex(C.index).ffill()
     liq20 = MN.rolling(20, min_periods=15).mean().shift(1)
     capmap = {c: (g.date.values, g.shares.values) for c, g in cap.groupby("code")}
 
@@ -97,6 +100,23 @@ def main():
             continue
         # 宣告前20日demean(前置跌幅)
         rec["pre20"] = (prev / Cf.iat[i - 20, ci] - 1) - (bench.iloc[i] / bench.iloc[i - 20] - 1)
+        # ── 短打口徑(使用者提問): 宣告日/次日/第三日的跳空與盤中拆解 ──
+        bo = tpex_o if r.market == "上櫃" else tai_o
+        rec["d0_cc"] = prev / Cf.iat[i - 1, ci] - 1                      # 宣告日當天(重訊可能盤中已反應)
+        for lag, tag in ((1, "d1"), (2, "d2")):
+            oi = i + lag
+            if oi >= len(dates):
+                continue
+            op = O.iat[oi, ci] if oi < len(O) else np.nan
+            cl = Cf.iat[oi, ci]
+            pv = Cf.iat[oi - 1, ci]
+            if pd.isna(op) or pd.isna(cl) or pd.isna(pv) or op <= 0 or pv <= 0:
+                continue
+            b_op, b_cl, b_pv = bo.iloc[oi], bench.iloc[oi], bench.iloc[oi - 1]
+            rec[f"{tag}_gap"] = (op / pv - 1) - (b_op / b_pv - 1)        # 跳空(demean)
+            rec[f"{tag}_oc"] = (cl / op - 1) - (b_cl / b_op - 1)         # 開盤買→收盤賣(當沖,demean)
+            rec[f"{tag}_oc_abs"] = cl / op - 1                            # 絕對(成本敏感度用)
+            rec[f"{tag}_cc"] = (cl / pv - 1) - (b_cl / b_pv - 1)         # 前收→收盤
         # 規模: 預定買回股數/已發行股數
         sh = shares_at(r.code, r.board_date)
         rec["size_pct"] = (r.planned_shares / sh * 100) if (pd.notna(sh) and sh > 0
@@ -205,6 +225,38 @@ def main():
               + f" 期間後20日{pp.mean() * 100:+.2f}%"
               + (f"[{b_pp['lo']:+.2f},{b_pp['hi']:+.2f}]{'✓' if b_pp['sig'] else ''}" if b_pp else ""))
 
+    print("\n⑤ 短打口徑(使用者提問: 宣告後第一天開盤買→收盤賣會賺嗎?第二天呢?)")
+    short_rows = []
+
+    def short_line(sub, lab):
+        if len(sub) < 30:
+            print(f"  {lab:<28} n={len(sub)} 不足")
+            return
+        r = {"lab": lab, "n": len(sub), "d0": sub.d0_cc.mean() * 100}
+        for tag, nm in (("d1", "次日"), ("d2", "第三日")):
+            g, oc, cc = sub[f"{tag}_gap"].dropna(), sub[f"{tag}_oc"].dropna(), sub[f"{tag}_cc"].dropna()
+            b = boot(sub, f"{tag}_oc")
+            r[tag] = {"gap": g.mean() * 100, "oc": oc.mean() * 100, "cc": cc.mean() * 100,
+                      "oc_abs": sub[f"{tag}_oc_abs"].dropna().mean() * 100,
+                      "win": (oc > 0).mean() * 100 if len(oc) else np.nan, "b": b}
+        short_rows.append(r)
+        d1, d2 = r["d1"], r["d2"]
+        print(f"  {lab:<28} n={r['n']:>5,} 宣告日{r['d0']:+.2f}% | "
+              f"次日: 跳空{d1['gap']:+.2f}% 當沖oc{d1['oc']:+.2f}%"
+              + (f"[{d1['b']['lo']:+.2f},{d1['b']['hi']:+.2f}]{'✓' if d1['b']['sig'] else ''}" if d1["b"] else "")
+              + f"(絕對{d1['oc_abs']:+.2f}%/勝率{d1['win']:.0f}%) 全日cc{d1['cc']:+.2f}% | "
+              f"第三日: 跳空{d2['gap']:+.2f}% 當沖oc{d2['oc']:+.2f}%"
+              + (f"[{d2['b']['lo']:+.2f},{d2['b']['hi']:+.2f}]{'✓' if d2['b']['sig'] else ''}" if d2["b"] else "")
+              + f"(絕對{d2['oc_abs']:+.2f}%)")
+
+    short_line(E15, "全體")
+    short_line(E15[E15.purpose == "維護信用及股東權益"], "護盤型")
+    short_line(E15[E15.purpose == "轉讓員工"], "員工型")
+    short_line(E15[E15.size_pct >= q.iloc[1]], f"規模大(>={q.iloc[1]:.1f}%股本)")
+    short_line(E15[E15.pre20 <= -0.10], "前20日重挫<=-10%")
+    short_line(E15[E15.market == "上市"], "上市")
+    short_line(E15[E15.market == "上櫃"], "上櫃")
+
     # ---------- HTML ----------
     CSS = """
 body{background:#1a1a19;color:#fff;font-family:"Noto Sans TC",sans-serif;margin:24px;max-width:1150px}
@@ -260,6 +312,19 @@ ul{margin:4px 0;padding-left:20px;font-size:12.5px;color:#ccc;line-height:1.7}
 {tbl(Cx)}
 <h2>④ 買回期間內 vs 期間結束後20日</h2>
 {per_html}
+<h2>⑤ 短打口徑: 宣告後第一天/第二天「開盤買→收盤賣」(使用者提問)</h2>
+<div class="note">跳空=前收→開盤(demean);當沖oc=開盤買→當日收盤賣(demean,括號內為<b>絕對報酬</b>——
+當沖成本敏感,券商當沖來回約0.15-0.3%,絕對報酬要大於成本才有意義);全日cc=前收→收盤。</div>
+<div class='scroll'><table><tr><th>組</th><th>n</th><th>宣告日</th>
+<th>次日跳空</th><th>次日當沖oc(絕對/勝率)</th><th>次日全日cc</th>
+<th>第三日跳空</th><th>第三日當沖oc(絕對)</th></tr>
+{"".join(f"<tr><th>{r['lab']}</th><td>{r['n']:,}</td><td>{r['d0']:+.2f}%</td>"
+         f"<td>{r['d1']['gap']:+.2f}%</td>"
+         f"<td>{r['d1']['oc']:+.2f}%" + (f"[{r['d1']['b']['lo']:+.2f},{r['d1']['b']['hi']:+.2f}]{'✓' if r['d1']['b']['sig'] else ''}" if r['d1']['b'] else "") + f"<br><span class='hint'>絕對{r['d1']['oc_abs']:+.2f}%/勝率{r['d1']['win']:.0f}%</span></td>"
+         f"<td>{r['d1']['cc']:+.2f}%</td><td>{r['d2']['gap']:+.2f}%</td>"
+         f"<td>{r['d2']['oc']:+.2f}%<br><span class='hint'>絕對{r['d2']['oc_abs']:+.2f}%</span></td></tr>"
+         for r in short_rows)}
+</table></div>
 <h2>⚖️ 判決(2026-08-07首輪)</h2>
 <ul>
 <li><span style="background:#3b3420;color:#c3a55a;padding:6px 10px;border-radius:4px;font-weight:bold">

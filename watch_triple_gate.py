@@ -45,7 +45,7 @@ def avail_date(quarter_end):
 def main():
     conn = sqlite3.connect(DB, timeout=60)
     px = pd.read_sql(
-        "SELECT code,date,close,money FROM fm_daily_price "
+        "SELECT code,date,open,high,low,close,volume,money FROM fm_daily_price "
         "WHERE date>=date((select max(date) from fm_daily_price),'-600 day') "
         "AND close>0 AND money>0", conn)
     tai_px = pd.read_sql(
@@ -353,6 +353,45 @@ th{{text-align:left;color:#c3c2b7}} .note{{color:#8a8878;font-size:12.5px;line-h
         f.write(html)
     print(f"\n[watch] 已輸出 {OUT}")
 
+    # ---------- 🧨題材爆發(research_compression_ignition: 題材成員×爆量長紅×無壓縮
+    #            k40+3.63✓/k60+4.82/賺賠2.00/逐年12/12全正;⚠有壓縮者反而弱=不要挑安靜很久的) ----------
+    burst_today, burst_recent = [], []
+    try:
+        Hh = px.pivot_table(index="date", columns="code", values="high", aggfunc="first").sort_index() \
+            if "high" in px.columns else None
+        if Hh is not None:
+            Ll = px.pivot_table(index="date", columns="code", values="low", aggfunc="first").sort_index()
+            Oo = px.pivot_table(index="date", columns="code", values="open", aggfunc="first").sort_index()
+            Vv = px.pivot_table(index="date", columns="code", values="volume", aggfunc="first").sort_index()
+            ampd = (Hh - Ll) / C
+            a20 = ampd.rolling(20, min_periods=15).mean().shift(1)
+            a120 = ampd.rolling(120, min_periods=90).mean().shift(1)
+            v20d = Vv.rolling(20, min_periods=15).mean().shift(1)
+            bodyd = C / Oo - 1
+            liq_ok_d = MN.rolling(20, min_periods=15).mean().shift(1) >= LIQ_MIN
+            burst = (ampd >= 2 * a20) & (bodyd >= 0.02) & (Vv >= 2 * v20d) & (a20 / a120 > 1.0) & liq_ok_d
+            hi126b = C.rolling(126, min_periods=100).max()
+            for off in range(0, 6):
+                k = len(dates) - 1 - off
+                if k < 0:
+                    break
+                d = dates[k]
+                for code in burst.columns[burst.iloc[k].fillna(False).values]:
+                    if theme_map.get(code) is None:
+                        continue
+                    dd = C.iloc[k][code] / hi126b.iloc[k][code] - 1
+                    rec = {"d": d, "code": code, "name": names.get(code, ""),
+                           "theme": theme_map.get(code, "—"),
+                           "dist": f"{dd * 100:+.1f}%" if pd.notna(dd) else "—",
+                           "body": f"{bodyd.iloc[k][code] * 100:+.1f}%",
+                           "vol_x": f"{Vv.iloc[k][code] / v20d.iloc[k][code]:.1f}x"}
+                    (burst_today if off == 0 else burst_recent).append(rec)
+            print(f"\n🧨題材爆發(題材成員×爆量長紅×無壓縮): 今日{len(burst_today)}檔 / 近5日{len(burst_recent)}檔")
+            for r in burst_today + burst_recent[:10]:
+                print(f"  {r['d']} {r['code']}{r['name']:<8} [{r['theme']}] 長紅{r['body']} 量{r['vol_x']} 距高{r['dist']}")
+    except Exception as e:
+        print(f"[watch] 題材爆發計算失敗({e}),跳過")
+
     # ---------- 高價股RS溫度計(research_high_price_followup.html: 三關過安慰劑的風險偏好讀數) ----------
     hp_rs = {}
     try:
@@ -404,6 +443,7 @@ th{{text-align:left;color:#c3c2b7}} .note{{color:#8a8878;font-size:12.5px;line-h
         "dual_sell": dual_sell_rows,
         "rebalance_cmp": f"{str(m_last)[:7]}調倉建倉→現已不符",
         "hp_rs": hp_rs,
+        "burst_today": burst_today, "burst_recent": burst_recent[:20],
     }
     with open("quarterly_signals.json", "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)

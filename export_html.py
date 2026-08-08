@@ -3443,6 +3443,9 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div class="scroll-box"><table id="qtrTripleTable"></table></div>
   <h4>⚡三重門檻：持有中（出場倒數）</h4>
   <div class="scroll-box"><table id="qtrHoldTable"></table></div>
+  <h4>🧨題材爆發（今日／近5日，日級事件）</h4>
+  <div class="hint">題材成員×爆量長紅（當日振幅≥2倍近20日均振幅、收長紅≥2%、量≥2倍20日均量）×<b>無壓縮</b>（前20日振幅＞前120日＝本來就在動）→次日收盤進場、持約40交易日。回測k40 demean+3.63%✓/k60+4.82%/賺賠比2.00/<b>逐年12/12全正</b>（research_compression_ignition.html）。<b style="color:var(--red)">⚠反直覺紀律：不要挑「安靜很久突然爆發」的</b>——壓縮組實測是扣分項（中價池最糟-4.28%✓），冷門股爆量多為假動作；也不要在非題材股上用（中價池-1.53%✓虧、低價池-0.68%平）。</div>
+  <div class="scroll-box"><table id="qtrBurstTable"></table></div>
   <h4>🪤埋伏配方</h4>
   <div class="hint" id="qtrAmbStatus"></div>
   <div class="scroll-box"><table id="qtrAmbTable"></table></div>
@@ -5108,6 +5111,10 @@ function renderQuarterlySig() {
   const trip = (Q.triple_today || []).map(r => Object.assign({d: "今日"}, r)).concat(Q.triple_recent || []);
   fill("qtrTripleTable", trip, [["d", "訊號日"], ["_code", "股票"], ["theme", "題材"], ["status", "毛利率"]]);
   fill("qtrHoldTable", Q.holding, [["d", "訊號日"], ["_code", "股票"], ["theme", "題材"], ["days_held", "已持日"], ["exit_in", "出場倒數"]]);
+  const burst = (Q.burst_today || []).map(r => Object.assign({tag: "🔴今日"}, r))
+    .concat((Q.burst_recent || []).map(r => Object.assign({tag: "近5日"}, r)));
+  fill("qtrBurstTable", burst, [["tag", ""], ["d", "訊號日"], ["_code", "股票"], ["theme", "題材"],
+                                ["body", "長紅"], ["vol_x", "量能"], ["dist", "距126日高"]]);
   const amb = document.getElementById("qtrAmbStatus");
   if (amb) amb.innerHTML = (Q.amb_q || "") + "財報埋伏窗：<b>" + (Q.amb_status || "—") + "</b>（進場" + (Q.amb_entry || "?") + "→財報可得" + (Q.amb_anchor || "?") + "+5~10日出）";
   fill("qtrAmbTable", Q.amb_rows, [["_code", "股票"], ["theme", "題材"], ["nm", "次月確認"]]);
