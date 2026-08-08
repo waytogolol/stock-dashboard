@@ -3446,6 +3446,12 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <h4>🧨題材爆發（今日／近5日，日級事件）</h4>
   <div class="hint">題材成員×爆量長紅（當日振幅≥2倍近20日均振幅、收長紅≥2%、量≥2倍20日均量）×<b>無壓縮</b>（前20日振幅＞前120日＝本來就在動）→次日收盤進場、持約40交易日。回測k40 demean+3.63%✓/k60+4.82%/賺賠比2.00/<b>逐年12/12全正</b>（research_compression_ignition.html）。<b style="color:var(--red)">⚠反直覺紀律：不要挑「安靜很久突然爆發」的</b>——壓縮組實測是扣分項（中價池最糟-4.28%✓），冷門股爆量多為假動作；也不要在非題材股上用（中價池-1.53%✓虧、低價池-0.68%平）。</div>
   <div class="scroll-box"><table id="qtrBurstTable"></table></div>
+  <h4>🏢庫藏股訊號（近45天宣告）</h4>
+  <div class="hint">配方＝<b>預定買回≥2.6%股本 × 非溫吞跳空（排除次日跳空0~2%）</b>→宣告次日收盤進場、持約20交易日、<b>不抱過買回期間結束日</b>。回測（2015後n=321，~28次/年）：k20絕對<b>+9.34%</b>／demean+3.33%✓／勝率60%／賺賠比1.51；期間內絕對+13.10%（均40交易日）；扣0.5%來回成本後k20絕對+8.84%。<b style="color:var(--red)">⚠逐年不穩且近期轉弱</b>（2020+6.89%/2021+5.79%但2024-3.47%/2026-7.75%，樣本53%集中在2020與2025）＝regime依賴候選層。護盤型不加分、執行率是事後資訊別當篩選（詳research_buyback_event.html）。</div>
+  <div class="scroll-box"><table id="qtrBuybackTable"></table></div>
+  <h4>👑股王／換王</h4>
+  <div class="hint">新王上任（次日收盤進場）k20+3.87%／k60+10.37%／勝率66%，上市版k40+12.69%／賺賠2.42——<b>但11年僅39次、CI含0＝觀察層</b>，當「已持有時的加碼續抱依據」，不獨立進場（research_stock_king.html）。</div>
+  <div class="scroll-box"><table id="qtrKingTable"></table></div>
   <h4>🪤埋伏配方</h4>
   <div class="hint" id="qtrAmbStatus"></div>
   <div class="scroll-box"><table id="qtrAmbTable"></table></div>
@@ -3643,6 +3649,8 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div id="thermoCards" style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0"></div>
   <h3 class="sec-title">🚩 位階風險（獨立於上方五個買點燈：五燈＝殺到底可以接，這條＝高位階行情健不健康）</h3>
   <div id="hpRsPanel" style="margin:8px 0"></div>
+  <h3 class="sec-title">🏦 兩市資金流向（蹺蹺板＋雙市融資維持率合成）</h3>
+  <div id="twoMktPanel" style="margin:8px 0"></div>
   <h3 class="sec-title">近10日讀數（甜蜜格並發／跌停家數）</h3>
   <div class="scroll-box"><table id="thermoSeries"></table></div>
   <h3 class="sec-title">歷史同類事件(甜蜜格並發≥20)</h3>
@@ -5115,6 +5123,12 @@ function renderQuarterlySig() {
     .concat((Q.burst_recent || []).map(r => Object.assign({tag: "近5日"}, r)));
   fill("qtrBurstTable", burst, [["tag", ""], ["d", "訊號日"], ["_code", "股票"], ["theme", "題材"],
                                 ["body", "長紅"], ["vol_x", "量能"], ["dist", "距126日高"]]);
+  fill("qtrBuybackTable", Q.buyback, [["d", "宣告日"], ["_code", "股票"], ["market", "市場"],
+                                      ["purpose", "目的"], ["size", "規模%股本"], ["gap", "次日跳空"],
+                                      ["period_end", "買回迄"], ["verdict", "配方判定"]]);
+  const kingRows = Object.keys(Q.king || {}).map(mk => Object.assign({mk: mk}, Q.king[mk]));
+  fill("qtrKingTable", kingRows, [["mk", "市場"], ["_code", "股王"], ["price", "股價"],
+                                  ["since", "在位起"], ["note", "狀態"]]);
   const amb = document.getElementById("qtrAmbStatus");
   if (amb) amb.innerHTML = (Q.amb_q || "") + "財報埋伏窗：<b>" + (Q.amb_status || "—") + "</b>（進場" + (Q.amb_entry || "?") + "→財報可得" + (Q.amb_anchor || "?") + "+5~10日出）";
   fill("qtrAmbTable", Q.amb_rows, [["_code", "股票"], ["theme", "題材"], ["nm", "次月確認"]]);
@@ -5472,6 +5486,27 @@ function renderThermoTab() {
         "<br>⚠ 月頻樣本n=136仍小(live累積中)；轉弱＝新開倉降預期，不是清倉訊號。</div></div>";
     } else {
       rsPanel.innerHTML = "<div class=\"hint\">尚無資料——先跑 python watch_triple_gate.py</div>";
+    }
+  }
+  // 兩市資金流向面板(蹺蹺板+雙市融資維持率;來源=watch_triple_gate.py→quarterly_signals.json)
+  const tm = (DATA.quarterly || {}).two_mkt;
+  const tmEl = document.getElementById("twoMktPanel");
+  if (tmEl) {
+    if (tm && tm.mm_status) {
+      const small = tm.seesaw_pct > 0;
+      const col = tm.mm_status.indexOf("🚨") >= 0 ? "var(--red)" : (small ? "#7ec97e" : "#c98a1c");
+      tmEl.innerHTML =
+        "<div style=\"border:1px solid var(--bd);border-left:4px solid " + col +
+        ";border-radius:8px;padding:10px 12px;background:var(--sf)\">" +
+        "<div><b>大小盤蹺蹺板</b>（櫃買/加權指數比值20日變化）<b style=\"color:" + (small ? "#7ec97e" : "#c98a1c") + "\">" +
+        (tm.seesaw_pct >= 0 ? "+" : "") + tm.seesaw_pct + "%</b>　" + tm.seesaw_status + "</div>" +
+        "<div style=\"margin-top:6px\"><b>融資維持率</b>（" + tm.mm_date + "）上市 <b>" + tm.mm_sii +
+        "%</b>｜上櫃 <b>" + tm.mm_otc + "%</b>　" + tm.mm_status + "</div>" +
+        "<div class=\"hint\" style=\"margin:6px 0 0\">用法：蹺蹺板正＝資金敢買中小型題材（題材/營收動能線值班），負＝縮回權值避險（事件策略值班）；" +
+        "維持率<b>兩市同破150＝強出清買點</b>(k60+11.12%/勝80%)，<b>上櫃單獨破＝中小型領跌警訊</b>(短線負，別接中小型)。" +
+        "來源：regime_weather天氣儀Y軸＋margin_band雙市判決。</div></div>";
+    } else {
+      tmEl.innerHTML = "<div class=\"hint\">尚無資料——先跑 python watch_triple_gate.py</div>";
     }
   }
   cardsEl.innerHTML = cards.map(function(c) {

@@ -356,12 +356,14 @@ th{{text-align:left;color:#c3c2b7}} .note{{color:#8a8878;font-size:12.5px;line-h
     # ---------- 🧨題材爆發(research_compression_ignition: 題材成員×爆量長紅×無壓縮
     #            k40+3.63✓/k60+4.82/賺賠2.00/逐年12/12全正;⚠有壓縮者反而弱=不要挑安靜很久的) ----------
     burst_today, burst_recent = [], []
+    O_px = None
     try:
         Hh = px.pivot_table(index="date", columns="code", values="high", aggfunc="first").sort_index() \
             if "high" in px.columns else None
         if Hh is not None:
             Ll = px.pivot_table(index="date", columns="code", values="low", aggfunc="first").sort_index()
             Oo = px.pivot_table(index="date", columns="code", values="open", aggfunc="first").sort_index()
+            O_px = Oo
             Vv = px.pivot_table(index="date", columns="code", values="volume", aggfunc="first").sort_index()
             ampd = (Hh - Ll) / C
             a20 = ampd.rolling(20, min_periods=15).mean().shift(1)
@@ -439,6 +441,124 @@ th{{text-align:left;color:#c3c2b7}} .note{{color:#8a8878;font-size:12.5px;line-h
     except Exception as e:
         print(f"[watch] 高價RS計算失敗({e}),跳過")
 
+    # ---------- 🏢庫藏股訊號(research_buyback_event: 規模>=2.6%股本 × 非溫吞跳空(排除0~2%)
+    #            交乘k20絕對+9.34%/demean+3.33%✓/勝率60%/賺賠1.51,~28次/年;不抱過買回期間結束日) ----------
+    buyback_rows = []
+    try:
+        conn2 = sqlite3.connect(DB, timeout=60)
+        bb_recent = pd.read_sql(
+            "SELECT code,name,market,board_date,period_start,period_end,purpose,planned_shares,price_low,price_high "
+            "FROM tw_buyback WHERE board_date>=date(?,'-45 day') ORDER BY board_date DESC",
+            conn2, params=(last_day,))
+        cap_df = pd.read_sql("SELECT code,date,shares FROM capital ORDER BY code,date", conn2)
+        conn2.close()
+        capm = {c: (g.date.values, g.shares.values) for c, g in cap_df.groupby("code")}
+        for r in bb_recent.itertuples():
+            sh = np.nan
+            cp = capm.get(r.code)
+            if cp is not None:
+                k = int(np.searchsorted(cp[0], r.board_date, side="right")) - 1
+                sh = cp[1][k] if k >= 0 else np.nan
+            size_pct = (r.planned_shares / sh * 100) if (pd.notna(sh) and sh and pd.notna(r.planned_shares)) else np.nan
+            # 次日跳空(若已有次日資料)
+            gap = np.nan
+            if r.board_date in dates and r.code in C.columns:
+                bi = dates.index(r.board_date)
+                if bi + 1 < len(dates):
+                    op = O_px.iloc[bi + 1].get(r.code) if O_px is not None else np.nan
+                    pv = C.iloc[bi].get(r.code)
+                    if pd.notna(op) and pd.notna(pv) and pv > 0:
+                        gap = op / pv - 1
+            if pd.isna(size_pct) or size_pct < 2.6:
+                verdict = f"✗規模{size_pct:.1f}%<2.6%(小規模組k20僅+0.65%含0)" if pd.notna(size_pct) else "✗股本資料缺"
+            elif pd.isna(gap):
+                verdict = f"⏳規模{size_pct:.1f}%✓,等次日跳空判定(排除0~2%溫吞格)"
+            elif 0 < gap <= 0.02:
+                verdict = f"✗溫吞跳空{gap * 100:+.1f}%(該格k40-0.98%)"
+            else:
+                verdict = f"🎯符合配方(規模{size_pct:.1f}%×跳空{gap * 100:+.1f}%)"
+            buyback_rows.append({"d": r.board_date, "code": r.code, "name": r.name or names.get(r.code, ""),
+                                 "market": r.market, "purpose": r.purpose,
+                                 "size": f"{size_pct:.1f}%" if pd.notna(size_pct) else "—",
+                                 "gap": f"{gap * 100:+.1f}%" if pd.notna(gap) else "待次日",
+                                 "period_end": r.period_end or "—", "verdict": verdict})
+        n_hit = sum(1 for x in buyback_rows if x["verdict"].startswith("🎯"))
+        print(f"\n🏢庫藏股(近45天{len(buyback_rows)}件, 符合配方{n_hit}件):")
+        for x in buyback_rows[:12]:
+            print(f"  {x['d']} {x['code']}{x['name']:<8}[{x['market']}] {x['purpose']} "
+                  f"規模{x['size']} 跳空{x['gap']} 期間迄{x['period_end']} → {x['verdict']}")
+    except Exception as e:
+        print(f"[watch] 庫藏股訊號計算失敗({e}),跳過")
+
+    # ---------- 👑股王/換王(research_stock_king: 新王k60+10.37%/勝率66%,上市版k40+12.69%) ----------
+    king_info = {}
+    try:
+        liq_now = MN.rolling(20, min_periods=15).mean().shift(1)
+        mkt_csv = pd.read_csv("tw_all_listed.csv", dtype=str).dropna(subset=["code"])
+        mkt_map2 = dict(zip(mkt_csv.code, mkt_csv.market.fillna("")))
+        hist = {}
+        for off in range(0, 60):                       # 近60交易日的每日股王(找最近換王)
+            k = len(dates) - 1 - off
+            if k < 0:
+                break
+            pr = C.iloc[k].dropna()
+            pool = pr.index[(liq_now.iloc[k].reindex(pr.index) >= LIQ_MIN)]
+            for mk, want in (("上市", "上市"), ("上櫃", "上櫃")):
+                cand = [(pr[c], c) for c in pool if mkt_map2.get(c, "") == want]
+                if cand:
+                    hist.setdefault(mk, []).append((dates[k], max(cand)[1], max(cand)[0]))
+        for mk, seq in hist.items():
+            seq = seq[::-1]                             # 由舊到新
+            cur_code, cur_px = seq[-1][1], seq[-1][2]
+            since = seq[-1][0]
+            for d, c, _ in reversed(seq):
+                if c != cur_code:
+                    break
+                since = d
+            changed = since != seq[0][0]
+            king_info[mk] = {"code": cur_code, "name": names.get(cur_code, ""),
+                             "price": round(float(cur_px), 1), "since": since,
+                             "recent_change": changed,
+                             "note": ("⚡近60日內換王(新王k20+3.87%/k60+10.37%/勝率66%,上市版k40+12.69%;"
+                                      "n=39觀察層,當加碼續抱依據)" if changed else "位置穩定(未在近60日內換王)")}
+            print(f"\n👑{mk}股王: {cur_code}{names.get(cur_code, '')} {cur_px:.0f}元 "
+                  f"(自{since}在位) {'⚡近期換王' if changed else ''}")
+    except Exception as e:
+        print(f"[watch] 股王計算失敗({e}),跳過")
+
+    # ---------- 🏦兩市資金流向(蹺蹺板+雙市融資維持率;regime_weather+margin_band兩卷合成) ----------
+    two_mkt = {}
+    try:
+        conn3 = sqlite3.connect(DB, timeout=60)
+        mm_o = pd.read_sql("SELECT date,ratio FROM margin_maintenance_official ORDER BY date DESC LIMIT 30", conn3)
+        mm_t = pd.read_sql("SELECT date,ratio FROM margin_maintenance_otc ORDER BY date DESC LIMIT 30", conn3)
+        idx2 = pd.read_sql("SELECT market,date,close FROM index_daily WHERE market IN ('TAIEX','TPEx') "
+                           "AND date>=date(?,'-90 day') ORDER BY date", conn3, params=(last_day,))
+        conn3.close()
+        ta = idx2[idx2.market == "TAIEX"].set_index("date")["close"]
+        tp = idx2[idx2.market == "TPEx"].set_index("date")["close"]
+        ratio = (tp / ta.reindex(tp.index)).dropna()
+        if len(ratio) >= 21:
+            seesaw = (ratio.iloc[-1] / ratio.iloc[-21] - 1) * 100
+            r_o = float(mm_o.ratio.iloc[0]) if len(mm_o) else np.nan
+            r_t = float(mm_t.ratio.iloc[0]) if len(mm_t) else np.nan
+            both_break = (pd.notna(r_o) and pd.notna(r_t) and r_o < 150 and r_t < 150)
+            otc_only = (pd.notna(r_o) and pd.notna(r_t) and r_o >= 150 and r_t < 150)
+            two_mkt = {
+                "seesaw_pct": round(float(seesaw), 2),
+                "seesaw_status": ("🟢小盤強(資金敢買中小型題材)" if seesaw > 0 else "🔴大盤強(資金縮回權值避險)"),
+                "mm_sii": round(r_o, 1) if pd.notna(r_o) else None,
+                "mm_otc": round(r_t, 1) if pd.notna(r_t) else None,
+                "mm_date": mm_o.date.iloc[0] if len(mm_o) else "—",
+                "mm_status": ("🚨兩市同破150=強出清買點(k60+11.12%/勝率80%)" if both_break else
+                              ("⚠上櫃單獨破150=中小型領跌警訊(短線負,別接中小型)" if otc_only else
+                               "✅兩市維持率均在警戒線上")),
+                "note": "蹺蹺板=櫃買/加權指數比值20日變化(regime_weather天氣儀Y軸);維持率雙市判決見research_margin_band"}
+            print(f"\n🏦兩市資金流向: 蹺蹺板{seesaw:+.2f}% {two_mkt['seesaw_status']} | "
+                  f"維持率 上市{r_o:.1f}%/上櫃{r_t:.1f}% {two_mkt['mm_status']}")
+    except Exception as e:
+        print(f"[watch] 兩市資金流向計算失敗({e}),跳過")
+
     # ---------- JSON匯出(儀表板「進場訊號→🌟季級持股」檢視吃這份, export_html.py讀) ----------
     import json
     payload = {
@@ -460,6 +580,7 @@ th{{text-align:left;color:#c3c2b7}} .note{{color:#8a8878;font-size:12.5px;line-h
         "rebalance_cmp": f"{str(m_last)[:7]}調倉建倉→現已不符",
         "hp_rs": hp_rs,
         "burst_today": burst_today, "burst_recent": burst_recent[:20],
+        "buyback": buyback_rows[:25], "king": king_info, "two_mkt": two_mkt,
     }
     with open("quarterly_signals.json", "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False)
