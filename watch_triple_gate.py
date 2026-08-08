@@ -398,28 +398,44 @@ th{{text-align:left;color:#c3c2b7}} .note{{color:#8a8878;font-size:12.5px;line-h
         tai_s = tai_px.set_index("date")["close"].reindex(C.index).ffill()
         didx2 = pd.to_datetime(C.index)
         mf = [i for i in np.where(~didx2.to_period("M").duplicated())[0]]
-        if len(mf) >= 5:
-            rs_m = []
-            for a, b in zip(mf[-5:-1], mf[-4:]):
+        # 穩健版(2026-08-07門檻敏感度考卷): 單格會抖(前5%×1月甚至翻負),改用
+        # 門檻1/3/5% × 窗2/3月 共6格平均當讀數;高原區=+1.5~+2.6pp,10%以上門檻崩掉
+        if len(mf) >= 8:
+            liq_all = MN.rolling(20, min_periods=15).mean().shift(1)
+
+            def month_rs(a, b, pct):
                 pr = C.iloc[a].dropna()
-                liq_r = MN.rolling(20, min_periods=15).mean().shift(1).iloc[a]
-                pool = pr.index[(liq_r.reindex(pr.index) >= LIQ_MIN)]
-                top = pr[pool][pr[pool] >= pr[pool].quantile(0.95)].index
-                rets = []
-                for c in top:
-                    p0, p1 = C.iloc[a].get(c), C.iloc[b].get(c)
-                    if pd.notna(p0) and pd.notna(p1) and p0 > 0:
-                        rets.append(p1 / p0 - 1)
-                tr = tai_s.iloc[b] / tai_s.iloc[a] - 1
-                if rets:
-                    rs_m.append(np.mean(rets) - tr)
-            if len(rs_m) >= 3:
-                rs3 = float(np.mean(rs_m[-3:]))
-                hp_rs = {"rs3_pct": round(rs3 * 100, 2),
-                         "status": "🟢風險偏好健康(高價領頭羊近3月贏大盤)" if rs3 > 0
-                                   else "🔴風險偏好轉弱(領頭羊近3月輸大盤)",
-                         "note": "RS3>0時歷史下月TAIEX+2.25%/勝率69%,RS3<=0時+0.13%/55%(過20組隨機安慰劑)"}
-                print(f"\n🌡️高價股RS溫度計: RS3月均={rs3 * 100:+.2f}% {hp_rs['status']}")
+                pool = pr.index[(liq_all.iloc[a].reindex(pr.index) >= LIQ_MIN)]
+                if len(pool) < 50:
+                    return np.nan
+                sub = pr[pool]
+                top = sub.index[sub >= sub.quantile(1 - pct / 100)]
+                rets = [C.iloc[b][c] / C.iloc[a][c] - 1 for c in top
+                        if pd.notna(C.iloc[a].get(c)) and pd.notna(C.iloc[b].get(c)) and C.iloc[a][c] > 0]
+                if not rets:
+                    return np.nan
+                return float(np.mean(rets) - (tai_s.iloc[b] / tai_s.iloc[a] - 1))
+
+            cells, detail = [], {}
+            for pct in (1, 3, 5):
+                seq = [month_rs(a, b, pct) for a, b in zip(mf[-7:-1], mf[-6:])]
+                seq = [x for x in seq if pd.notna(x)]
+                for win in (2, 3):
+                    if len(seq) >= win:
+                        v = float(np.mean(seq[-win:]))
+                        cells.append(v)
+                        detail[f"前{pct}%×{win}月"] = round(v * 100, 2)
+            if cells:
+                rs_avg = float(np.mean(cells))
+                n_pos = sum(1 for v in cells if v > 0)
+                hp_rs = {"rs3_pct": round(rs_avg * 100, 2), "cells": detail,
+                         "agree": f"{n_pos}/{len(cells)}格為正",
+                         "status": ("🟢風險偏好健康(高價領頭羊近月贏大盤)" if rs_avg > 0
+                                    else "🔴風險偏好轉弱(領頭羊近月輸大盤)"),
+                         "note": ("6格平均(門檻1/3/5%×窗2/3月,2026-08-07敏感度考卷的穩健高原);"
+                                  "歷史RS>0時下月TAIEX+2.25%/勝率69%,<=0時+0.13%/55%(過20組隨機安慰劑)")}
+                print(f"\n🌡️高價股RS溫度計(6格平均): {rs_avg * 100:+.2f}% {hp_rs['status']} ({hp_rs['agree']})")
+                print("   各格:", detail)
     except Exception as e:
         print(f"[watch] 高價RS計算失敗({e}),跳過")
 

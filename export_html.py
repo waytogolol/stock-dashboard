@@ -5460,9 +5460,13 @@ function renderThermoTab() {
         ";border-radius:8px;padding:10px 12px;background:var(--sf)\">" +
         "<div style=\"display:flex;justify-content:space-between\"><b>💎 高價股RS(風險偏好方向盤)</b>" +
         "<span style=\"color:" + col + ";font-weight:700\">" + (healthy ? "🟢 健康" : "🔴 轉弱") + "</span></div>" +
-        "<div style=\"margin:6px 0\">高價領頭羊(池內前5%)近3月相對大盤 <b>" +
-        (hrs.rs3_pct >= 0 ? "+" : "") + hrs.rs3_pct + "%</b>｜資料日 " +
-        ((DATA.quarterly || {}).last_day || "—") + "<br>" + hrs.status + "</div>" +
+        "<div style=\"margin:6px 0\">高價領頭羊相對大盤(6格平均) <b>" +
+        (hrs.rs3_pct >= 0 ? "+" : "") + hrs.rs3_pct + "%</b>" +
+        (hrs.agree ? "（" + hrs.agree + "）" : "") + "｜資料日 " +
+        ((DATA.quarterly || {}).last_day || "—") + "<br>" + hrs.status +
+        (hrs.cells ? "<br><span style='color:var(--tx3);font-size:11.5px'>各格：" +
+          Object.keys(hrs.cells).map(k => k + " " + (hrs.cells[k] >= 0 ? "+" : "") + hrs.cells[k] + "%").join("　") +
+          "</span>" : "") + "</div>" +
         "<div class=\"hint\" style=\"margin:0\">⚠<b>不是買點燈</b>——五燈偵測「殺到底可以接」,這條看「高位階行情還健不健康」," +
         "兩者邏輯獨立可同時亮。" + hrs.note + "；三關全過(20組隨機安慰劑第100百分位／中價組反向／贏大盤自身動能)。" +
         "<br>⚠ 月頻樣本n=136仍小(live累積中)；轉弱＝新開倉降預期，不是清倉訊號。</div></div>";
