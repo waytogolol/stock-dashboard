@@ -134,8 +134,8 @@ def main():
         m = pool.iloc[i].values
         if m.sum() < 50:
             continue
-        codes = C.columns[m]
-        d = dates[i]
+        codes = C.columns[m].to_numpy()      # ⚠必須轉ndarray: 否則下方isinstance判斷失效,
+        d = dates[i]                          #   code欄會被填成重複的Index物件(v3/v4貼回時報unhashable)
         row = {"d": d, "ym": d[:7], "yr": d[:4], "code": codes,
                "fwd5": fwd5.iloc[i].values[m], "fwd5dm": fwd5_dm.iloc[i].values[m]}
         for fn in feat_names:
@@ -219,6 +219,142 @@ def main():
         print(f"  {'✅' if ok else '  '}{lab:<32} n={len(sub):>6,}({len(sub)/11.5:.0f}/年) "
               f"均{exp0:+.2f}%/dm{sub.fwd5dm.mean():+.2f}% 勝率{winr:.0f}% 賺賠{wl:.2f} "
               f"扣0.5%{exp0 - 0.5:+.2f}% 逐年{y.gt(0).sum()}/{len(y)}")
+
+    # ══ v3(2026-08-08使用者提問): 絕對門檻(1億)換成「佔市場成交值%」相對門檻,並分上市/上櫃 ══
+    print("\n" + "=" * 100)
+    print("【v3 相對流動性門檻 × 分市場】絕對1億 vs 佔市場成交值% vs 市場內分位")
+    try:
+        mkt_csv = pd.read_csv("tw_all_listed.csv", dtype=str).dropna(subset=["code"])
+        mkt_of = dict(zip(mkt_csv.code, mkt_csv.market.fillna("")))
+        is_otc_arr = np.array([("櫃" in mkt_of.get(c, "")) for c in C.columns])
+        is_sii_arr = np.array([(mkt_of.get(c, "") == "上市") for c in C.columns])
+        mn20 = MN.rolling(20, min_periods=15).mean()
+        tot_sii = mn20.loc[:, is_sii_arr].sum(axis=1)
+        tot_otc = mn20.loc[:, is_otc_arr].sum(axis=1)
+        share = pd.DataFrame(index=mn20.index, columns=mn20.columns, dtype=float)
+        share.loc[:, is_sii_arr] = mn20.loc[:, is_sii_arr].div(tot_sii, axis=0) * 10000   # 基點(bp)
+        share.loc[:, is_otc_arr] = mn20.loc[:, is_otc_arr].div(tot_otc, axis=0) * 10000
+        # 市場內橫斷面分位(0-1)
+        rank_sii = mn20.loc[:, is_sii_arr].rank(axis=1, pct=True)
+        rank_otc = mn20.loc[:, is_otc_arr].rank(axis=1, pct=True)
+        rank_all = pd.DataFrame(index=mn20.index, columns=mn20.columns, dtype=float)
+        rank_all.loc[:, is_sii_arr] = rank_sii
+        rank_all.loc[:, is_otc_arr] = rank_otc
+        # 貼回抽樣樣本
+        code_pos = {c: i for i, c in enumerate(C.columns)}
+        D["share_bp"] = [share.at[d, c] if (d in share.index and c in share.columns) else np.nan
+                         for d, c in zip(D.d, D.code)]
+        D["liq_rank"] = [rank_all.at[d, c] if (d in rank_all.index and c in rank_all.columns) else np.nan
+                         for d, c in zip(D.d, D.code)]
+        D["mkt"] = [("上櫃" if is_otc_arr[code_pos[c]] else ("上市" if is_sii_arr[code_pos[c]] else "其他"))
+                    for c in D.code]
+        print(f"  佔市場成交值(bp)分布: 中位{D.share_bp.median():.1f}bp "
+              f"(P75={D.share_bp.quantile(.75):.1f}/P90={D.share_bp.quantile(.9):.1f}/"
+              f"P95={D.share_bp.quantile(.95):.1f}); 上市{int((D.mkt == '上市').sum()):,}筆/"
+              f"上櫃{int((D.mkt == '上櫃').sum()):,}筆")
+        base = D.rev_ok & (D.n_longbar20 >= 1) & (D.days_since_longbar.between(1, 5)) & \
+            (D.ma5_dist.between(-3, 1)) & (D.theme_mom > 0)      # =F11去掉流動性條件
+        liq_defs = [
+            ("L0 無流動性門檻", pd.Series(True, index=D.index)),
+            ("L1 絕對>=1億(現用)", D.money20 >= 1.0),
+            ("L2 絕對>=3億", D.money20 >= 3.0),
+            ("L3 佔市場>=3bp(0.03%)", D.share_bp >= 3),
+            ("L4 佔市場>=5bp(0.05%)", D.share_bp >= 5),
+            ("L5 佔市場>=10bp(0.1%)", D.share_bp >= 10),
+            ("L6 市場內分位>=70%", D.liq_rank >= 0.70),
+            ("L7 市場內分位>=85%", D.liq_rank >= 0.85),
+        ]
+        v3 = []
+        for lab, lm in liq_defs:
+            sub = D[(base & lm).fillna(False)]
+            if len(sub) < 120:
+                print(f"  {lab:<24} n={len(sub)} 不足")
+                continue
+            w, l = sub.fwd5[sub.fwd5 > 0], sub.fwd5[sub.fwd5 <= 0]
+            wl = (w.mean() / abs(l.mean())) if len(w) and len(l) else np.nan
+            winr = (sub.fwd5 > 0).mean() * 100
+            m = sub.fwd5.mean()
+            ok = (wl >= 1.5) and (winr >= 50) and (m - 0.3 > 0)
+            v3.append({"lab": lab, "n": len(sub), "mean": m, "win": winr, "wl": wl,
+                       "c05": m - 0.5, "pass": ok, "seg": "全體"})
+            print(f"  {'✅' if ok else '  '}{lab:<24} n={len(sub):>5,}({len(sub)/11.5:.0f}/年) "
+                  f"均{m:+.2f}% 勝率{winr:.0f}% 賺賠{wl:.2f} 扣0.5%{m - 0.5:+.2f}%")
+        print("\n  分市場(用最佳相對門檻L6市場內分位>=70% 與 現用L1絕對1億 對照)")
+        for seg in ("上市", "上櫃"):
+            for lab, lm in (("L1絕對1億", D.money20 >= 1.0), ("L6分位>=70%", D.liq_rank >= 0.70),
+                            ("L4佔市場>=5bp", D.share_bp >= 5)):
+                sub = D[(base & lm & (D.mkt == seg)).fillna(False)]
+                if len(sub) < 80:
+                    print(f"    {seg}×{lab:<16} n={len(sub)} 不足")
+                    continue
+                w, l = sub.fwd5[sub.fwd5 > 0], sub.fwd5[sub.fwd5 <= 0]
+                wl = (w.mean() / abs(l.mean())) if len(w) and len(l) else np.nan
+                winr = (sub.fwd5 > 0).mean() * 100
+                m = sub.fwd5.mean()
+                ok = (wl >= 1.5) and (winr >= 50) and (m - 0.3 > 0)
+                v3.append({"lab": f"{seg}×{lab}", "n": len(sub), "mean": m, "win": winr, "wl": wl,
+                           "c05": m - 0.5, "pass": ok, "seg": seg})
+                print(f"    {'✅' if ok else '  '}{seg}×{lab:<16} n={len(sub):>5,} 均{m:+.2f}% "
+                      f"勝率{winr:.0f}% 賺賠{wl:.2f} 扣0.5%{m - 0.5:+.2f}%")
+    except Exception as e:
+        print(f"  [v3] 計算失敗({e})")
+        v3 = []
+
+    # ══ v4(2026-08-08使用者:「基本面爛的呢?全方位分組找寶藏」) ══
+    # 基本面三分: 好(兩月連創高) / 中(有營收資料但未連創) / 爛(近3月營收YoY<0) / 無資料
+    print("\n" + "=" * 100)
+    print("【v4 全方位分組】基本面好/中/爛/無 × 型態(長紅拉回/淺回/追高) —— 找反向寶藏")
+    try:
+        yoy3_m = (rev_w.rolling(3).sum() / rev_w.shift(12).rolling(3).sum() - 1) * 100
+        yoy3_d = yoy3_m.copy()
+        yoy3_d.index = [(m + pd.DateOffset(months=1) + pd.Timedelta(days=11)) for m in yoy3_m.index]
+        yoy3_daily = yoy3_d.reindex(pd.to_datetime(C.index), method="ffill").set_axis(C.index).reindex(
+            columns=C.columns)
+        D["yoy3"] = [yoy3_daily.at[d, c] if (d in yoy3_daily.index and c in yoy3_daily.columns) else np.nan
+                     for d, c in zip(D.d, D.code)]
+        fund_grades = [
+            ("好(兩月連創高)", D.rev_ok),
+            ("中(有營收未連創,YoY>=0)", (~D.rev_ok) & (D.yoy3 >= 0)),
+            ("爛(近3月YoY<0)", D.yoy3 < 0),
+            ("很爛(YoY<-20%)", D.yoy3 < -20),
+            ("無營收資料", D.yoy3.isna()),
+        ]
+        patterns = [
+            ("長紅後拉回5日線", (D.n_longbar20 >= 1) & (D.days_since_longbar.between(1, 5)) &
+             (D.ma5_dist.between(-3, 1))),
+            ("淺回(dist20 -3~0)", (D.dist20 >= -3) & (D.dist20 < 0)),
+            ("深回檔(<=-8%)", D.dist20 <= -8),
+            ("純追高(貼20日高)", D.dist20 >= -0.5),
+            ("(不限型態)", pd.Series(True, index=D.index)),
+        ]
+        liqm = D.money20 >= 1.0
+        v4 = []
+        print(f"  {'基本面':<22}{'型態':<20}{'n':>7}{'均':>8}{'勝率':>7}{'賺賠':>7}{'扣0.5%':>9}")
+        for fl, fm in fund_grades:
+            for pl, pm in patterns:
+                sub = D[(fm & pm & liqm).fillna(False)]
+                if len(sub) < 150:
+                    continue
+                w, l = sub.fwd5[sub.fwd5 > 0], sub.fwd5[sub.fwd5 <= 0]
+                wl = (w.mean() / abs(l.mean())) if len(w) and len(l) else np.nan
+                winr = (sub.fwd5 > 0).mean() * 100
+                m = sub.fwd5.mean()
+                ok = (wl >= 1.5) and (winr >= 50) and (m - 0.3 > 0)
+                v4.append({"fund": fl, "pat": pl, "n": len(sub), "mean": m, "win": winr,
+                           "wl": wl, "c05": m - 0.5, "pass": ok})
+                print(f"  {'✅' if ok else '  '}{fl:<20}{pl:<20}{len(sub):>7,}{m:>+8.2f}"
+                      f"{winr:>6.0f}%{wl:>7.2f}{m - 0.5:>+9.2f}")
+        # 反向寶藏檢查: 基本面爛 × 各型態 的最差格(是否有做空價值/或要避開的格)
+        bad = [x for x in v4 if x["fund"].startswith(("爛", "很爛"))]
+        if bad:
+            worst = min(bad, key=lambda x: x["mean"])
+            best_bad = max(bad, key=lambda x: x["wl"])
+            print(f"\n  基本面爛組: 最差格={worst['fund']}×{worst['pat']} 均{worst['mean']:+.2f}%/"
+                  f"勝率{worst['win']:.0f}%(=要避開或反向候選); "
+                  f"賺賠最高格={best_bad['fund']}×{best_bad['pat']} 賺賠{best_bad['wl']:.2f}")
+    except Exception as e:
+        print(f"  [v4] 計算失敗({e})")
+        v4 = []
 
     print("\n【v2-③贏家畫像·限定基本面池】(營收連創×均額>=1億內,再比贏家vs輸家)")
     P = D[D.rev_ok & (D.money20 >= 1.0)].copy()
@@ -396,7 +532,25 @@ R1: +0.82%→+0.96%、R5: +0.52%→+0.67%),<b>報酬不降反升、勝率+1pp、
 ①<b>題材動能是唯一「贏家>輸家」的特徵</b>(3.97 vs 2.75,池2.36)→ 成為F11的關鍵條件;
 ②<b>波動度反而「贏家<輸家」</b>(55.5 vs 60.2)=過熱股是輸家而非贏家→ F13用低波動也能達標。
 ③days_since_longbar 贏家7 vs 池10=「剛長紅」仍是共同前提。</li>
-<li><b>⑦下一步(仍然是出場端)</b>: F11的賺賠1.56已達標但靠的是進場品質;
+<li><span style="background:#243b24;color:#7ec97e;padding:6px 10px;border-radius:4px;font-weight:bold">
+⑦v3(使用者問「換成佔大盤成交量%、分上市櫃會不會更好」): <b>八種流動性定義全部達標,差異在雜訊內</b></span>
+L0無門檻+1.83/1.52、L1絕對1億+1.86/<b>1.56</b>、L2絕對3億+1.64/<b>1.58</b>(賺賠最高)、
+L3~L5佔市場3/5/10bp +1.74~1.82/1.51~1.55、L6~L7市場內分位70%/85% +1.73~1.77/1.52——
+<b>因為「營收連創×題材動能正×長紅拉回」本身已經濾掉小股,流動性門檻幾乎沒事可做</b>。
+實務建議: <b>改用相對定義(市場內分位>=70% 或 佔市場>=5bp)當live規則</b>——數字一樣好,
+但<b>跨時代穩定</b>(大盤量能成長時不用改參數,絕對門檻會慢慢失效)。
+<b>分市場: 上市(n=288)+1.88%/賺賠1.57 vs 上櫃(n=130)+1.81%/1.53,兩市都達標且差異極小</b>——
+這與「上櫃極端族群是陷阱」的舊教訓不衝突: <b>基本面門檻把爛的濾掉後,上櫃也變得可用</b>。</li>
+<li><span style="background:#243b24;color:#7ec97e;padding:6px 10px;border-radius:4px;font-weight:bold">
+⑧v4(使用者問「基本面爛的呢?全方位分組找寶藏」): <b>基本面是連續梯度,而且沒有反向寶藏</b></span>
+長紅後拉回在各基本面等級的表現: <b>好(兩月連創)+1.38%/賺賠1.46 &gt; 中(YoY≥0未連創)+1.10%/1.41
+&gt; 爛(YoY&lt;0)+0.66%/1.37 &gt; 很爛(YoY&lt;-20%)+0.60%/1.37 &gt;&gt; 無營收資料+0.07%/1.22</b>——
+單調遞減,<b>基本面不是二元開關而是放大器</b>;<b>「無營收資料」比「營收很爛」還糟(第五次重現的鐵律)</b>。
+<b>沒有找到反向寶藏</b>: 基本面爛的組沒有任何格出現超額反轉(最差格=很爛×淺回僅+0.12%/勝率48%,
+深回檔在很爛組+0.52%但賺賠僅1.24=超跌反彈但不夠肥)。
+<b>另一個發現: 型態的普適性大於基本面</b>——長紅後拉回在<b>每一個</b>基本面等級都是該等級最好的型態,
+而淺回在基本面差的組直接崩掉(+0.17%/+0.12%)=<b>淺回需要基本面撐,長紅拉回自己就能站</b>。</li>
+<li><b>⑨下一步(仍然是出場端)</b>: F11的賺賠1.56已達標但靠的是進場品質;
 出場仍是固定5日的鈍刀。下一張卷用F11當母體掃出場矩陣(目標價停利/移動停損/首日不利即出),
 <b>賺賠比有機會再往上一階</b>。另F11每年僅~36次=需與其他線並行才夠分散。</li>
 </ul>
