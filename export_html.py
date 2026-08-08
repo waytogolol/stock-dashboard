@@ -3388,6 +3388,7 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
     </div>
     <div class="sig-group-row"><span class="sig-group-label">🌟持股·月/季級</span>
       <button class="view-btn" id="sigViewQuarterlyBtn" onclick="switchSigView('quarterly')">🌟季級持股</button>
+      <button class="view-btn" id="sigViewBuybackBtn" onclick="switchSigView('buyback')">🏢庫藏股</button>
       <button class="view-btn" id="sigViewRevmomBtn" onclick="switchSigView('revmom')">題材營收動能</button>
     </div>
     <div class="sig-group-row"><span class="sig-group-label">📡雷達·週級</span>
@@ -3446,15 +3447,25 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <h4>🧨題材爆發（今日／近5日，日級事件）</h4>
   <div class="hint">題材成員×爆量長紅（當日振幅≥2倍近20日均振幅、收長紅≥2%、量≥2倍20日均量）×<b>無壓縮</b>（前20日振幅＞前120日＝本來就在動）→次日收盤進場、持約40交易日。回測k40 demean+3.63%✓/k60+4.82%/賺賠比2.00/<b>逐年12/12全正</b>（research_compression_ignition.html）。<b style="color:var(--red)">⚠反直覺紀律：不要挑「安靜很久突然爆發」的</b>——壓縮組實測是扣分項（中價池最糟-4.28%✓），冷門股爆量多為假動作；也不要在非題材股上用（中價池-1.53%✓虧、低價池-0.68%平）。</div>
   <div class="scroll-box"><table id="qtrBurstTable"></table></div>
-  <h4>🏢庫藏股訊號（近45天宣告）</h4>
-  <div class="hint">配方＝<b>預定買回≥2.6%股本 × 非溫吞跳空（排除次日跳空0~2%）</b>→宣告次日收盤進場、持約20交易日、<b>不抱過買回期間結束日</b>。回測（2015後n=321，~28次/年）：k20絕對<b>+9.34%</b>／demean+3.33%✓／勝率60%／賺賠比1.51；期間內絕對+13.10%（均40交易日）；扣0.5%來回成本後k20絕對+8.84%。<b style="color:var(--red)">⚠逐年不穩且近期轉弱</b>（2020+6.89%/2021+5.79%但2024-3.47%/2026-7.75%，樣本53%集中在2020與2025）＝regime依賴候選層。護盤型不加分、執行率是事後資訊別當篩選（詳research_buyback_event.html）。</div>
-  <div class="scroll-box"><table id="qtrBuybackTable"></table></div>
   <h4>👑股王／換王</h4>
   <div class="hint">新王上任（次日收盤進場）k20+3.87%／k60+10.37%／勝率66%，上市版k40+12.69%／賺賠2.42——<b>但11年僅39次、CI含0＝觀察層</b>，當「已持有時的加碼續抱依據」，不獨立進場（research_stock_king.html）。</div>
   <div class="scroll-box"><table id="qtrKingTable"></table></div>
   <h4>🪤埋伏配方</h4>
   <div class="hint" id="qtrAmbStatus"></div>
   <div class="scroll-box"><table id="qtrAmbTable"></table></div>
+  </div>
+
+  <div id="sigBuybackView" style="display:none">
+  <h3 class="sec-title">🏢 庫藏股訊號——公司自己當買方的事件線（2026-08-08上線·候選層）</h3>
+  <div class="rule-card">
+    <div class="rule-item">🎯<b>配方（唯一通過檢定的組合）</b>：<b>預定買回≥2.6%股本 × 非溫吞跳空（排除宣告次日跳空0~2%）</b>→宣告<b>次日收盤</b>進場、持約20交易日、<b>不抱過買回期間結束日</b>。實測（2015後n=321，約28次/年）：k20絕對<b>+9.34%</b>／demean+3.33%✓［+0.52,+5.42］／<b>勝率60%</b>／賺賠比1.51；買回期間內絕對+13.10%（均40交易日）；<b>扣0.5%來回成本後k20絕對+8.84%</b>。</div>
+    <div class="rule-item">📐<b>為什麼是這兩個條件</b>：①<b>規模</b>是最好的篩子（≥2.6%股本k20+2.90%✓／勝率56%，小規模組+0.65%含0）＝「買多少」比「為什麼買」重要；②<b>跳空呈U型</b>——跳空>5%（強反應）k20+3.96%✓最好、跳空≤0（沒跳空）+1.64%也不差，<b>但0~2%溫吞格最差</b>（k40-0.98%／k60-2.14%／期間內-0.67%）＝有跌但市場半信半疑、買盤撐不住。</div>
+    <div class="rule-item">🧠<b>兩個反直覺（別踩）</b>：①<b>護盤型比員工型差</b>（護盤k20+0.75含0／k60-1.65 vs 員工型+2.23%✓）——「公司出來救股價」是「股價已經很糟」的自我揭露；②<b>執行率與報酬負相關</b>（執行率≥95%組k40-1.67%最差、宣告了不買的0%組k20+6.22%最好）＝<b>執行率內生於股價</b>（不漲才需要買好買滿），且執行率是事後資訊，<b>絕對不能當篩選條件</b>。</div>
+    <div class="rule-item" style="color:var(--red)">⚠<b>逐年不穩且近期轉弱</b>：2020+6.89%／2021+5.79%／2023+5.97%，但<b>2024-3.47%／2026-7.75%</b>，且樣本53%集中在2020與2025兩年＝<b>regime依賴的候選層</b>，不是穩態alpha。宣告效應本身也短命（全體k20+1.70%✓但k60歸零-0.46%），且庫藏股是<b>跌後反應型</b>（宣告前20日平均-4.0%）不是預測型訊號。詳research_buyback_event.html。</div>
+    <div class="rule-item">🕐<b>短打不划算</b>：宣告次日「開盤買→收盤賣」全體只有+0.12%（含0，絕對+0.39%／勝率48%），肉幾乎全在跳空（+2.35%，吃不到）；只有護盤型（+0.40%✓）與宣告前重挫組（+0.31%✓）勉強顯著，扣當沖成本後所剩無幾。</div>
+  </div>
+  <div class="hint" id="bbAsof" style="font-weight:600"></div>
+  <div class="scroll-box"><table id="qtrBuybackTable"></table></div>
   </div>
 
   <div id="sigMacroView" style="display:none">
@@ -5072,7 +5083,7 @@ function renderBanner() {
 
 // ── 進場訊號頁籤 ──────────────────────────────────────────────────────
 function switchSigView(v) {
-  ["Conflu", "Quarterly", "Macro", "Micro", "Catchup", "Revmom", "Attwatch", "Dispo", "Reso", "Thermo", "Pledge", "Dormant"].forEach(function(k) {
+  ["Conflu", "Quarterly", "Buyback", "Macro", "Micro", "Catchup", "Revmom", "Attwatch", "Dispo", "Reso", "Thermo", "Pledge", "Dormant"].forEach(function(k) {
     const on = v === k.toLowerCase();
     document.getElementById("sigView" + k + "Btn").classList.toggle("active", on);
     document.getElementById("sig" + k + "View").style.display = on ? "" : "none";
@@ -5126,6 +5137,16 @@ function renderQuarterlySig() {
   fill("qtrBuybackTable", Q.buyback, [["d", "宣告日"], ["_code", "股票"], ["market", "市場"],
                                       ["purpose", "目的"], ["size", "規模%股本"], ["gap", "次日跳空"],
                                       ["period_end", "買回迄"], ["verdict", "配方判定"]]);
+  const bbEl = document.getElementById("bbAsof");
+  if (bbEl) {
+    const bb = Q.buyback || [];
+    const nHit = bb.filter(r => (r.verdict || "").indexOf("🎯") === 0).length;
+    const nWait = bb.filter(r => (r.verdict || "").indexOf("⏳") === 0).length;
+    bbEl.innerHTML = "近45天宣告 " + bb.length + " 件｜🎯符合配方 <b>" + nHit + "</b> 件｜⏳等次日跳空判定 " +
+      nWait + " 件｜資料日 " + (Q.last_day || "—");
+    const bbtn = document.getElementById("sigViewBuybackBtn");
+    if (bbtn) bbtn.innerHTML = "🏢庫藏股" + (nHit ? "<span class=\"bell\">🔔" + nHit + "</span>" : "");
+  }
   const kingRows = Object.keys(Q.king || {}).map(mk => Object.assign({mk: mk}, Q.king[mk]));
   fill("qtrKingTable", kingRows, [["mk", "市場"], ["_code", "股王"], ["price", "股價"],
                                   ["since", "在位起"], ["note", "狀態"]]);
