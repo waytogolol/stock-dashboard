@@ -356,6 +356,159 @@ def main():
         print(f"  [v4] 計算失敗({e})")
         v4 = []
 
+    # ══ v5(2026-08-08使用者): F11在「長紅拉回」裡抓到幾成?剩下的贏家有什麼特徵? ══
+    print("\n" + "=" * 100)
+    print("【v5-A 覆蓋率】長紅拉回母體(均額>=1億)中,F11條件抓到多少?贏家的召回率?")
+    LB = (D.n_longbar20 >= 1) & (D.days_since_longbar.between(1, 5)) & (D.ma5_dist.between(-3, 1)) & \
+         (D.money20 >= 1.0)
+    M = D[LB.fillna(False)].copy()
+    M["rk"] = M.groupby("d").fwd5.rank(pct=True)
+    f11 = M.rev_ok & (M.theme_mom > 0)
+    n_all, n_f11 = len(M), int(f11.sum())
+    win_all = M[M.rk >= 0.9]
+    n_win_f11 = int((win_all.rev_ok & (win_all.theme_mom > 0)).sum())
+    print(f"  長紅拉回母體 n={n_all:,}; F11(營收連創×題材動能正)命中 {n_f11:,} = {n_f11/n_all*100:.1f}%(精選度)")
+    print(f"  母體贏家(同日fwd5前10%) n={len(win_all):,}; 其中F11佔 {n_win_f11:,} = "
+          f"{n_win_f11/len(win_all)*100:.1f}%(**召回率**) → 約 {100-n_win_f11/len(win_all)*100:.0f}% 的贏家被F11漏掉")
+    rest = M[~f11.fillna(False)]
+    w, l = rest.fwd5[rest.fwd5 > 0], rest.fwd5[rest.fwd5 <= 0]
+    print(f"  被漏掉的其餘 n={len(rest):,} 均{rest.fwd5.mean():+.2f}% 勝率{(rest.fwd5>0).mean()*100:.0f}% "
+          f"賺賠{(w.mean()/abs(l.mean())):.2f} ← 這裡面還有沒有寶?下面找")
+
+    def cell(sub, lab, out=None, indent="  "):
+        if len(sub) < 120:
+            print(f"{indent}{lab:<30} n={len(sub)} 不足")
+            return None
+        w2, l2 = sub.fwd5[sub.fwd5 > 0], sub.fwd5[sub.fwd5 <= 0]
+        wl2 = (w2.mean() / abs(l2.mean())) if len(w2) and len(l2) else np.nan
+        winr = (sub.fwd5 > 0).mean() * 100
+        m2 = sub.fwd5.mean()
+        ok = (wl2 >= 1.5) and (winr >= 50) and (m2 - 0.3 > 0)
+        r = {"lab": lab, "n": len(sub), "mean": m2, "win": winr, "wl": wl2, "c05": m2 - 0.5, "pass": ok}
+        if out is not None:
+            out.append(r)
+        print(f"{indent}{'✅' if ok else '  '}{lab:<28} n={len(sub):>6,} 均{m2:+.2f}% "
+              f"勝率{winr:.0f}% 賺賠{wl2:.2f} 扣0.5%{m2-0.5:+.2f}%")
+        return r
+
+    print("\n【v5-B 日曆效應】長紅拉回 × 月內日期(營收10日公布/月底作帳等)")
+    v5b = []
+    dom = pd.to_datetime(M.d).dt.day
+    for lab, mask in [("月初1-5日", dom <= 5), ("營收公布期6-12日", dom.between(6, 12)),
+                      ("月中13-20日", dom.between(13, 20)), ("月底21日以後", dom >= 21)]:
+        cell(M[mask.values], lab, v5b)
+    print("  (交乘: F11 × 日期)")
+    for lab, mask in [("F11×營收公布期6-12日", f11.values & dom.between(6, 12).values),
+                      ("F11×其他日期", f11.values & ~dom.between(6, 12).values)]:
+        cell(M[mask], lab, v5b)
+
+    print("\n【v5-C 大盤環境】長紅拉回 × TAIEX近5日報酬(集體大跌後的長紅?)")
+    v5c = []
+    tai_r5 = (tai / tai.shift(5) - 1) * 100
+    M["tai5"] = [tai_r5.get(d, np.nan) for d in M.d]
+    for lab, mask in [("大盤近5日<=-3%(急殺後)", M.tai5 <= -3), ("大盤-3~0%", M.tai5.between(-3, 0)),
+                      ("大盤0~3%", M.tai5.between(0, 3)), ("大盤>3%(追漲期)", M.tai5 > 3)]:
+        cell(M[mask.fillna(False)], lab, v5c)
+    print("  (交乘: F11 × 大盤環境)")
+    for lab, mask in [("F11×大盤急殺(<=-3%)", f11.fillna(False) & (M.tai5 <= -3)),
+                      ("F11×大盤正常(>-3%)", f11.fillna(False) & (M.tai5 > -3))]:
+        cell(M[mask.fillna(False)], lab, v5c)
+
+    print("\n【v5-D 事件疊加】財報季/法說會/庫藏股宣告")
+    v5d = []
+    try:
+        conn2 = sqlite3.connect(DB, timeout=60)
+        conf = pd.read_sql("SELECT code, date FROM conference WHERE date>='2014-06-01'", conn2)
+        bb2 = pd.read_sql("SELECT code, board_date FROM tw_buyback", conn2)
+        conn2.close()
+        conf_set = set(zip(conf.code, conf.date))
+        conf_by_code = {}
+        for c, d in zip(conf.code, conf.date):
+            conf_by_code.setdefault(c, []).append(d)
+        for c in conf_by_code:
+            conf_by_code[c] = sorted(conf_by_code[c])
+
+        def near_conf(code, d, back=10, fwd=3):
+            lst = conf_by_code.get(code)
+            if not lst:
+                return False
+            i2 = np.searchsorted(lst, d)
+            for j in range(max(0, i2 - 1), min(len(lst), i2 + 1)):
+                dd = (pd.Timestamp(lst[j]) - pd.Timestamp(d)).days
+                if -back <= dd <= fwd:
+                    return True
+            return False
+
+        M["near_conf"] = [near_conf(c, d) for c, d in zip(M.code, M.d)]
+        bb_by_code = {}
+        for c, d in zip(bb2.code, bb2.board_date):
+            if d:
+                bb_by_code.setdefault(c, []).append(d)
+        M["near_bb"] = [any(0 <= (pd.Timestamp(d) - pd.Timestamp(x)).days <= 20
+                            for x in bb_by_code.get(c, [])) for c, d in zip(M.code, M.d)]
+        mth = pd.to_datetime(M.d).dt.month
+        fin_season = mth.isin([3, 5, 8, 11]).values & (dom <= 20).values
+        cell(M[M.near_conf], "法說會前後(前10~後3日)", v5d)
+        cell(M[~M.near_conf], "非法說會期", v5d)
+        cell(M[fin_season], "財報公布季(3/5/8/11月上中旬)", v5d)
+        cell(M[~fin_season], "非財報季", v5d)
+        cell(M[M.near_bb], "庫藏股宣告後20日內", v5d)
+        print("  (交乘: F11 × 事件)")
+        cell(M[f11.fillna(False) & M.near_conf], "F11×法說會期", v5d)
+        cell(M[f11.fillna(False) & pd.Series(fin_season, index=M.index)], "F11×財報季", v5d)
+    except Exception as e:
+        print(f"  [v5-D] 失敗({e})")
+
+    print("\n【v5-E 剩餘贏家畫像】非F11的長紅拉回中,贏家vs輸家還有什麼差異?")
+    v5e = []
+    if len(rest) > 3000:
+        R = rest.copy()
+        R["rk2"] = R.groupby("d").fwd5.rank(pct=True)
+        rw, rl = R[R.rk2 >= 0.9], R[R.rk2 <= 0.1]
+        prof3 = []
+        for fn in feat_names + ["tai5"]:
+            if fn not in R.columns:
+                continue
+            a, b, c = rw[fn].median(), R[fn].median(), rl[fn].median()
+            if pd.isna(a) or pd.isna(b):
+                continue
+            prof3.append({"f": fn, "win": a, "all": b, "lose": c, "gap": a - b, "wl_gap": a - c})
+        prof3.sort(key=lambda x: -abs(x["wl_gap"]))
+        print(f"  (n={len(R):,}; 贏家前10%均{rw.fwd5.mean():+.1f}% vs 輸家後10%{rl.fwd5.mean():+.1f}%; "
+              f"按「贏家−輸家」差距排序)")
+        for p in prof3[:10]:
+            print(f"    {p['f']:<18} 贏家{p['win']:>8.2f} | 全{p['all']:>8.2f} | 輸家{p['lose']:>8.2f} "
+                  f"| 贏−輸{p['wl_gap']:+.2f}")
+        v5e = prof3[:10]
+
+    print("\n【v5-F 依v5發現重組】長紅拉回 × {大盤環境/日曆/財報季/題材動能/波動} 最佳組合搜尋")
+    v5f = []
+    dom_M = pd.to_datetime(M.d).dt.day
+    mth_M = pd.to_datetime(M.d).dt.month
+    fin_M = mth_M.isin([3, 5, 8, 11]).values & (dom_M <= 20).values
+    tm_pos = (M.theme_mom > 0).fillna(False)
+    not_early = (dom_M > 5).values
+    crash = (M.tai5 <= -3).fillna(False)
+    lowvol = (M.vol20_ann < 60).fillna(False)
+    combos = [
+        ("G0 長紅拉回(母體)", pd.Series(True, index=M.index)),
+        ("G1 ×大盤急殺後", crash),
+        ("G2 ×題材動能正", tm_pos),
+        ("G3 ×排除月初1-5日", pd.Series(not_early, index=M.index)),
+        ("G4 ×財報季", pd.Series(fin_M, index=M.index)),
+        ("G5 題材正×排除月初", tm_pos & pd.Series(not_early, index=M.index)),
+        ("G6 題材正×排除月初×低波動", tm_pos & pd.Series(not_early, index=M.index) & lowvol),
+        ("G7 題材正×大盤急殺", tm_pos & crash),
+        ("G8 題材正×財報季", tm_pos & pd.Series(fin_M, index=M.index)),
+        ("G9 題材正×排除月初×財報季", tm_pos & pd.Series(not_early & fin_M, index=M.index)),
+        ("G10 營收連創×題材正×排除月初(F11+)", M.rev_ok.fillna(False) & tm_pos &
+         pd.Series(not_early, index=M.index)),
+        ("G11 題材正×排除月初×排除追漲期", tm_pos & pd.Series(not_early, index=M.index) &
+         (M.tai5 <= 3).fillna(False)),
+    ]
+    for lab, mask in combos:
+        cell(M[mask.fillna(False)], lab, v5f)
+
     print("\n【v2-③贏家畫像·限定基本面池】(營收連創×均額>=1億內,再比贏家vs輸家)")
     P = D[D.rev_ok & (D.money20 >= 1.0)].copy()
     if len(P) > 2000:
@@ -550,7 +703,33 @@ L3~L5佔市場3/5/10bp +1.74~1.82/1.51~1.55、L6~L7市場內分位70%/85% +1.73~
 深回檔在很爛組+0.52%但賺賠僅1.24=超跌反彈但不夠肥)。
 <b>另一個發現: 型態的普適性大於基本面</b>——長紅後拉回在<b>每一個</b>基本面等級都是該等級最好的型態,
 而淺回在基本面差的組直接崩掉(+0.17%/+0.12%)=<b>淺回需要基本面撐,長紅拉回自己就能站</b>。</li>
-<li><b>⑨下一步(仍然是出場端)</b>: F11的賺賠1.56已達標但靠的是進場品質;
+<li><span style="background:#3b2420;color:#e06c5a;padding:6px 10px;border-radius:4px;font-weight:bold">
+⑨v5(使用者問「F11抓到幾成?其餘贏家的特徵?」): <b>F11只抓到4%的贏家,96%被漏掉</b></span>
+長紅拉回母體(均額≥1億)n=14,280,F11只命中418筆(2.9%精選度);母體贏家(同日fwd5前10%)1,735筆中
+F11只佔69筆=<b>召回率僅4.0%</b>。被漏掉的13,862筆均+0.75%/勝率49%/賺賠1.35(仍優於全池基準+0.27%)
+——<b>F11是「高精選、低召回」的過濾器,不是唯一入口</b>。</li>
+<li><span style="background:#243b24;color:#7ec97e;padding:6px 10px;border-radius:4px;font-weight:bold">
+⑩其餘贏家躲在三個地方(全部是使用者猜的方向)</span>
+<b>(a)大盤環境是最大變數</b>: 長紅拉回×大盤近5日≤-3%(急殺後)<b>+2.39%/勝率59%/賺賠1.47</b>
+vs 大盤近5日>3%(追漲期)<b>-0.08%/勝率44%(負)</b>——同一個型態在兩種環境差2.5pp;
+<b>(b)日曆: 月初1-5日是死亡區</b>(-0.37%/勝率42%/扣成本-0.87%),月中13-20日最好(+1.33%/勝率53%),
+營收公布期6-12日+1.18%;<b>(c)財報季(3/5/8/11月上中旬)+1.49%/勝率55% vs 非財報季+0.56%/47%</b>;
+法說會前後(前10~後3日)+1.56%/1.49也優於非法說期。
+剩餘贏家畫像(非F11池): <b>題材動能仍是最強區分</b>(贏家3.94 vs 輸家1.59)、
+波動<b>贏家更低</b>(62.0 vs 67.5)、<b>漲太多反而是輸家</b>(ret20 10.4 vs 11.8)、下影線贏家較長。</li>
+<li><span style="background:#243b24;color:#7ec97e;padding:6px 10px;border-radius:4px;font-weight:bold">
+⑪重組後的最終配方(v5-F): 不需要營收連創,而且更好</span>
+<b>★G5 = 長紅後拉回5日線 × 題材動能正 × 排除月初1-5日</b>:
+<b>n=3,336(290次/年)/均+1.61%/勝率52%/賺賠1.59/扣0.5%後+1.11%</b>
+——樣本是F11的<b>8倍</b>而賺賠更高(1.59 vs 1.56)=<b>「營收連創」大幅砍樣本卻沒加值,可以拿掉</b>;
+<b>★★G7 = 上式×大盤近5日急殺≤-3%: n=157(14次/年)/均+5.07%/勝率66%/賺賠2.13/扣0.5%後+4.57%</b>
+=全卷最強格,<b>遠超使用者目標</b>但機會稀少(⚠n=157,樣本小,候選層);
+其他達標: G10(G5+營收連創)1.63、G9(G5×財報季)+2.13%/勝率56%/1.54、G11(G5×排除追漲期)1.59、
+G8(題材正×財報季)+1.80%/1.57、G6(G5×低波動)1.50。</li>
+<li><b>⑫實務配方(候選層)</b>: <b>主線=G5</b>(長紅後拉回×題材動能正×避開月初1-5日,290次/年可持續操作);
+<b>大盤急殺後(近5日≤-3%)出現的訊號重押</b>(G7勝率66%/賺賠2.13);
+<b>避開: 月初1-5日、大盤追漲期(近5日>3%)</b>;財報季/法說會期是加分項。</li>
+<li><b>⑬下一步(仍然是出場端)</b>: G5/G7的賺賠已達標但靠的是進場品質;
 出場仍是固定5日的鈍刀。下一張卷用F11當母體掃出場矩陣(目標價停利/移動停損/首日不利即出),
 <b>賺賠比有機會再往上一階</b>。另F11每年僅~36次=需與其他線並行才夠分散。</li>
 </ul>
