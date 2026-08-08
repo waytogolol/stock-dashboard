@@ -602,6 +602,164 @@ def main():
               f"均{exp0:+.2f}%/demean{r['dm']:+.2f}% 勝率{winr:.0f}% 賺賠{wl:.2f} "
               f"扣0.3%{r['c03']:+.2f}% 扣0.5%{r['c05']:+.2f}% 逐年{r['yr']}")
 
+    # ══ v5-G(使用者追問): 「長紅」的強度分級——漲停/大長紅/中長紅/小紅,哪一級的拉回最好? ══
+    print("\n" + "=" * 100)
+    print("【v5-G 長紅強度分級】那根長紅到底要多長?(取近5日內最強那根的漲幅分級)")
+    try:
+        chg_arr = chg.values                       # 逐日漲跌幅%
+        # 近5日內最大單日漲幅(=引發拉回的那根棒子強度)
+        max5 = pd.DataFrame(chg).rolling(5, min_periods=3).max()
+        max5.index, max5.columns = C.index, C.columns
+        D["bar_str"] = [max5.at[d, c] if (d in max5.index and c in max5.columns) else np.nan
+                        for d, c in zip(D.d, D.code)]
+        PB = (D.ma5_dist.between(-3, 1)) & (D.money20 >= 1.0)     # 拉回到5日線附近×流動性
+        bands = [("① 小紅 3~5%", D.bar_str.between(3, 5)),
+                 ("② 中長紅 5~7%", D.bar_str.between(5, 7)),
+                 ("③ 大長紅 7~9%", D.bar_str.between(7, 9)),
+                 ("④ 漲停 >=9%", D.bar_str >= 9),
+                 ("(對照)沒長紅 <3%", D.bar_str < 3)]
+        v5g = []
+        print("  [A] 純長紅強度 × 拉回到5日線")
+        for lab, m in bands:
+            cell(D[(PB & m).fillna(False)], lab, v5g)
+        print("  [B] 再疊題材動能正×排除月初(=G5口徑)")
+        dom_D = pd.to_datetime(D.d).dt.day
+        g5_extra = (D.theme_mom > 0) & pd.Series((dom_D > 5).values, index=D.index)
+        for lab, m in bands:
+            cell(D[(PB & m & g5_extra).fillna(False)], lab + "×G5條件", v5g)
+        print("  [C] 拉回深度(距那根長紅收盤的回檔%)分級")
+        # 用 ma5_dist 當拉回深度代理: >1%=還在上面, -1~1=貼線, -3~-1=略破, <-3=破深
+        depth_bands = [("深貼線(ma5 -1~+1%)", D.ma5_dist.between(-1, 1)),
+                       ("略破線(ma5 -3~-1%)", D.ma5_dist.between(-3, -1)),
+                       ("破深(ma5 -6~-3%)", D.ma5_dist.between(-6, -3)),
+                       ("未回(ma5 +1~+3%)", D.ma5_dist.between(1, 3))]
+        strong_bar = (D.bar_str >= 5) & (D.money20 >= 1.0) & (D.theme_mom > 0)
+        for lab, m in depth_bands:
+            cell(D[(strong_bar & m).fillna(False)], lab, v5g)
+    except Exception as e:
+        print(f"  [v5-G] 失敗({e})")
+        v5g = []
+
+    # ══ v6 組合層回測+權益曲線(規範第19條;逐日掃描,非抽樣) ══
+    print("\n" + "=" * 100)
+    print("【v6 組合層回測】逐日掃描(非抽樣)→次日收盤進場→持5交易日→日頻等權;成本情境0/0.3/0.5%來回")
+    dom_all = pd.to_datetime(pd.Index(dates)).day
+    mth_all = pd.to_datetime(pd.Index(dates)).month
+    tai_r5_all = (tai / tai.shift(5) - 1) * 100
+    # ⚠DataFrame沒有.between(那是Series方法),矩陣層要用兩個比較運算
+    LBm = ((F["n_longbar20"] >= 1) &
+           (F["days_since_longbar"] >= 1) & (F["days_since_longbar"] <= 5) &
+           (F["ma5_dist"] >= -3) & (F["ma5_dist"] <= 1) & (F["money20"] >= 1.0))
+    TMm = F["theme_mom"] > 0
+    # dom_all/mth_all是DatetimeIndex的屬性(ndarray),不是Series→直接用np.asarray
+    NEm = pd.DataFrame(np.tile(np.asarray(dom_all > 5)[:, None], (1, C.shape[1])),
+                       index=C.index, columns=C.columns)
+    CRm = pd.DataFrame(np.tile(np.asarray(tai_r5_all.reindex(C.index) <= -3)[:, None],
+                               (1, C.shape[1])), index=C.index, columns=C.columns)
+    FSm = pd.DataFrame(np.tile(np.asarray(mth_all.isin([3, 5, 8, 11]) & (dom_all <= 20))[:, None],
+                               (1, C.shape[1])), index=C.index, columns=C.columns)
+    sig_defs = {
+        "G5 長紅拉回×題材動能正×排除月初": (LBm & TMm & NEm),
+        "G7 G5×大盤急殺(近5日<=-3%)": (LBm & TMm & NEm & CRm),
+        "G9 G5×財報季": (LBm & TMm & NEm & FSm),
+        "G0 長紅拉回(母體對照)": LBm,
+    }
+
+    def simulate(sig, cost_side):
+        daily = {}
+        n_pos = 0
+        ev = []
+        S = sig.fillna(False).values
+        for i in range(start_i, len(dates) - HOLD - 2):
+            idxs = np.where(S[i])[0]
+            if not len(idxs):
+                continue
+            e = i + 1
+            for ci in idxs:
+                path = Cf.iloc[e:e + HOLD + 1, ci].values
+                if len(path) < HOLD + 1 or np.isnan(path).any() or path[0] <= 0:
+                    continue
+                n_pos += 1
+                rets = path[1:] / path[:-1] - 1
+                rets[0] -= cost_side
+                rets[-1] -= cost_side
+                for j in range(HOLD):
+                    daily.setdefault(e + 1 + j, []).append(rets[j])
+                ev.append((1 - cost_side) * path[-1] / path[0] * (1 - cost_side) - 1)
+        if not daily:
+            return None
+        span = range(min(daily), max(daily) + 1)
+        nav, peak, mdd = 1.0, 1.0, 0.0
+        navs, nds, rs = [], [], []
+        for i in span:
+            r = np.mean(daily[i]) if i in daily else 0.0
+            nav *= 1 + r
+            rs.append(r)
+            peak = max(peak, nav)
+            mdd = min(mdd, nav / peak - 1)
+            navs.append(nav)
+            nds.append(dates[i])
+        rs = np.array(rs)
+        yrs = len(rs) / 252
+        ann = nav ** (1 / yrs) - 1
+        shp = rs.mean() / rs.std() * np.sqrt(252) if rs.std() > 0 else np.nan
+        expo = np.mean([1 if i in daily else 0 for i in span])
+        conc = np.mean([len(daily[i]) for i in daily])
+        ev = np.array(ev)
+        w, l = ev[ev > 0], ev[ev <= 0]
+        return {"nav": nav, "ann": ann * 100, "mdd": mdd * 100, "sharpe": shp,
+                "calmar": (ann * 100) / abs(mdd * 100) if mdd < 0 else np.nan,
+                "expo": expo * 100, "conc": conc, "n": n_pos,
+                "win": len(w) / len(ev) * 100 if len(ev) else np.nan,
+                "wl": (w.mean() / abs(l.mean())) if len(w) and len(l) else np.nan,
+                "navs": navs, "nds": nds}
+
+    sims = {}
+    for lab, sig in sig_defs.items():
+        for cs in (0.0, 0.0015, 0.0025):
+            s = simulate(sig, cs)
+            if s is None:
+                continue
+            sims[(lab, cs)] = s
+            print(f"  {lab:<28} 來回{cs * 200:.1f}%: NAV={s['nav']:.2f} 年化{s['ann']:+.1f}% "
+                  f"MDD{s['mdd']:.1f}% 夏普{s['sharpe']:.2f} Calmar{s['calmar']:.2f} "
+                  f"曝險{s['expo']:.0f}% 並行{s['conc']:.1f}檔 事件{s['n']:,} "
+                  f"勝率{s['win']:.0f}% 賺賠{s['wl']:.2f}")
+    tai_sub = tai.loc[dates[start_i]:]
+    tai_nav = (tai_sub / tai_sub.iloc[0])
+    tyrs = len(tai_sub) / 252
+    tann = (tai_nav.iloc[-1] ** (1 / tyrs) - 1) * 100
+    tmdd = (tai_nav / tai_nav.cummax() - 1).min() * 100
+    print(f"  {'TAIEX(同期)':<28} 年化{tann:+.1f}% MDD{tmdd:.1f}% Calmar{tann / abs(tmdd):.2f}")
+
+    import json as _json
+    nav_payload = []
+    for lab in sig_defs:
+        s = sims.get((lab, 0.0025))
+        if s:
+            ser = pd.Series(s["navs"], index=pd.to_datetime(s["nds"])).resample("W").last().dropna()
+            nav_payload.append({"name": lab.split(" ")[0], "dates": [d.strftime("%Y-%m-%d") for d in ser.index],
+                                "vals": [round(v, 4) for v in ser.values]})
+    tw = tai_nav.copy()
+    tw.index = pd.to_datetime(tw.index)
+    tw = tw.resample("W").last().dropna()
+    nav_payload.append({"name": "TAIEX", "dates": [d.strftime("%Y-%m-%d") for d in tw.index],
+                        "vals": [round(v, 4) for v in tw.values]})
+    nav_json = _json.dumps(nav_payload, ensure_ascii=False)
+    sim_html = ("<div class='scroll'><table><tr><th>訊號</th><th>來回成本</th><th>NAV</th><th>年化</th>"
+                "<th>MDD</th><th>夏普</th><th>Calmar</th><th>曝險</th><th>並行檔數</th><th>事件數</th>"
+                "<th>單筆勝率</th><th>單筆賺賠</th></tr>"
+                + "".join(f"<tr{' class=hl' if (lab.startswith('G5') and cs == 0.0025) else ''}>"
+                          f"<th>{lab}</th><td>{cs * 200:.1f}%</td><td>{s['nav']:.2f}</td>"
+                          f"<td>{s['ann']:+.1f}%</td><td>{s['mdd']:.1f}%</td><td>{s['sharpe']:.2f}</td>"
+                          f"<td>{s['calmar']:.2f}</td><td>{s['expo']:.0f}%</td><td>{s['conc']:.1f}</td>"
+                          f"<td>{s['n']:,}</td><td>{s['win']:.0f}%</td><td>{s['wl']:.2f}</td></tr>"
+                          for (lab, cs), s in sims.items())
+                + f"<tr><th>TAIEX(同期買進持有)</th><td>—</td><td>{tai_nav.iloc[-1]:.2f}</td>"
+                  f"<td>{tann:+.1f}%</td><td>{tmdd:.1f}%</td><td>—</td>"
+                  f"<td>{tann / abs(tmdd):.2f}</td><td>100%</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>"
+                + "</table></div>")
+
     # ---- HTML ----
     CSS = """
 body{background:#1a1a19;color:#fff;font-family:"Noto Sans TC",sans-serif;margin:24px;max-width:1150px}
@@ -635,7 +793,8 @@ ul{margin:4px 0;padding-left:20px;font-size:12.5px;color:#ccc;line-height:1.7}
                            f"<td>{'✅' if r['pass'] else '—'}</td></tr>" for r in res) + "</table></div>")
 
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>一週大賺股逆向工程(2026-08-08)</title><style>{CSS}</style></head><body>
+<title>一週大賺股逆向工程(2026-08-08)</title>
+<script src="plotly.min.js"></script><style>{CSS}</style></head><body>
 <h1>🎯 一週大賺股逆向工程 + 拉回進場規則對決</h1>
 <div class="note">使用者目標: <b>持有一週(5交易日)、勝率高、賺賠比>=1.5</b>。方法=先定義結果(同日fwd5前5%)
 再回頭挖特徵,不預設型態。口徑: 次日收盤進場→第5個交易日收盤出場(可執行,零前視);
@@ -647,6 +806,11 @@ ul{margin:4px 0;padding-left:20px;font-size:12.5px;color:#ccc;line-height:1.7}
 {lad_html}
 <h2>階段二 拉回進場規則對決</h2>
 {rule_html}
+<h2>組合層回測(逐日掃描·次日收盤進·持5日·日頻等權)</h2>
+<div class="note">事件層統計不等於組合績效(重疊部位/曝險率/複利路徑都會改變結果),故補此段。
+成本情境=來回0%/0.3%/0.5%;<b>綠底=主線G5在0.5%成本下</b>。</div>
+{sim_html}
+<div id="c_nav" style="height:440px"></div>
 <h2>⚖️ 判決(2026-08-08首輪)</h2>
 <ul>
 <li><span style="background:#3b2420;color:#e06c5a;padding:6px 10px;border-radius:4px;font-weight:bold">
@@ -729,11 +893,35 @@ G8(題材正×財報季)+1.80%/1.57、G6(G5×低波動)1.50。</li>
 <li><b>⑫實務配方(候選層)</b>: <b>主線=G5</b>(長紅後拉回×題材動能正×避開月初1-5日,290次/年可持續操作);
 <b>大盤急殺後(近5日≤-3%)出現的訊號重押</b>(G7勝率66%/賺賠2.13);
 <b>避開: 月初1-5日、大盤追漲期(近5日>3%)</b>;財報季/法說會期是加分項。</li>
-<li><b>⑬下一步(仍然是出場端)</b>: G5/G7的賺賠已達標但靠的是進場品質;
+<li><span style="background:#243b24;color:#7ec97e;padding:6px 10px;border-radius:4px;font-weight:bold">
+⑬長紅強度分級(使用者追問「長紅也有分漲停/一半/漲一點點」): <b>棒子越長越好,單調遞增</b></span>
+疊上G5條件(題材動能正×排除月初)後: 小紅3~5% +0.77%/賺賠1.38 &lt; 中長紅5~7% +1.43%/1.52✅
+&lt; 大長紅7~9% +1.93%/勝率55%/1.57✅ &lt; <b>漲停≥9% +2.30%/勝率54%/賺賠1.67✅(最強)</b>;
+對照「沒長紅(&lt;3%)」+0.33%/1.25(不達標)。<b>純看棒子不疊條件時分不太出來</b>(1.24/1.31/1.30/1.45)
+——<b>棒子強度要配題材動能才顯出價值</b>。
+<b>拉回深度反而不重要</b>: 深貼線(ma5±1%)1.51 / 略破線(-3~-1%)1.54 / 破深(-6~-3%)1.54 /
+甚至未回(+1~+3%)1.53——四檔幾乎相同,<b>「等它拉回多少」不是關鍵,「那根棒子多強」才是</b>。</li>
+<li><span style="background:#3b2420;color:#e06c5a;padding:6px 10px;border-radius:4px;font-weight:bold">
+⑭組合層回測(誠實的壞消息): <b>事件層漂亮,組合層在0.5%成本下輸大盤</b></span>
+逐日掃描(非抽樣)G5: 0成本NAV=85倍/年化+48.7%/MDD-45%/Calmar1.08,
+0.3%成本+26.9%/Calmar0.56,<b>0.5%成本僅+14.1%/MDD-50%/Calmar0.28 vs TAIEX +15.0%/-31.6%/0.47</b>
+——原因=<b>持5日的週轉率是致命傷</b>(曝險96%、並行30檔、年週轉約50次),成本每加0.1%就吃掉一大塊;
+母體G0在0.5%成本下直接<b>-8.9%/MDD-81%</b>。
+<b>但低曝險版反而有意義</b>: G7(急殺後)曝險僅13%/勝率64%維持、G9(財報季)曝險24%/勝率52%——
+<b>它們是「事件疊加層」不是獨立資金線</b>: 平時資金放在季級線(雙新高/三重門檻),
+遇到大盤急殺或財報季才動用13-24%的時間做短打。這與獨漲overlay的定位完全一致。</li>
+<li><b>⑮下一步(仍然是出場端)</b>: G5/G7的賺賠已達標但靠的是進場品質;
 出場仍是固定5日的鈍刀。下一張卷用F11當母體掃出場矩陣(目標價停利/移動停損/首日不利即出),
 <b>賺賠比有機會再往上一階</b>。另F11每年僅~36次=需與其他線並行才夠分散。</li>
 </ul>
 <div class="note">維運: python 研究腳本/綜合策略/build_week_winner_anatomy.py(從根目錄執行)。</div>
+<script>
+const NAVS={nav_json};
+Plotly.newPlot('c_nav', NAVS.map(s=>({{x:s.dates,y:s.vals,name:s.name,mode:'lines'}})),
+  {{title:'組合權益曲線(0.5%來回成本,週頻取樣,對數軸) vs TAIEX',
+    paper_bgcolor:'#1a1a19',plot_bgcolor:'#22221f',font:{{color:'#ddd',size:12}},
+    yaxis:{{title:'NAV',type:'log'}},legend:{{orientation:'h'}},margin:{{t:42,l:52,r:18,b:40}}}});
+</script>
 </body></html>"""
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html)
