@@ -257,6 +257,35 @@ def main():
     short_line(E15[E15.market == "上市"], "上市")
     short_line(E15[E15.market == "上櫃"], "上櫃")
 
+    print("\n⑥ 跳空強度分層(使用者提問: 跳空大的後續是否較好?沒跳空的期間表現是否較差?)")
+    print("   ⚠所有後續報酬皆自「次日收盤」起算=跳空已發生後才進場,零前視")
+    G = []
+    gap_bands = [("跳空<=0%(沒跳空/開低)", E15.d1_gap <= 0),
+                 ("跳空0~2%", (E15.d1_gap > 0) & (E15.d1_gap <= 0.02)),
+                 ("跳空2~5%", (E15.d1_gap > 0.02) & (E15.d1_gap <= 0.05)),
+                 ("跳空>5%(市場強反應)", E15.d1_gap > 0.05)]
+    for lab, mask in gap_bands:
+        r = line(E15[mask], lab, G)
+        if r is not None:
+            sub = E15[mask]
+            ip, pp = sub.in_period.dropna(), sub.post_period20.dropna()
+            b_ip = boot(sub, "in_period")
+            r["ip"] = ip.mean() * 100 if len(ip) else np.nan
+            r["pp"] = pp.mean() * 100 if len(pp) else np.nan
+            r["b_ip"] = b_ip
+            print(f"      └ 買回期間內{r['ip']:+.2f}%"
+                  + (f"[{b_ip['lo']:+.2f},{b_ip['hi']:+.2f}]{'✓' if b_ip['sig'] else ''}" if b_ip else "")
+                  + f" / 期間後20日{r['pp']:+.2f}%")
+    print("   (交乘: 跳空×規模大)")
+    G2 = []
+    line(E15[(E15.d1_gap > 0.05) & (E15.size_pct >= q.iloc[1])], "跳空>5% × 規模>=2.6%股本", G2)
+    line(E15[(E15.d1_gap <= 0) & (E15.size_pct >= q.iloc[1])], "跳空<=0 × 規模>=2.6%股本", G2)
+    print("   (跳空與執行率的關係=事後解剖)")
+    for lab, mask in gap_bands:
+        s = E15[mask]
+        print(f"      {lab:<22} 平均執行率{s.exec_pct.mean():.0f}% "
+              f"(執行率0%佔比{(s.exec_pct == 0).mean() * 100:.1f}%)")
+
     # ---------- HTML ----------
     CSS = """
 body{background:#1a1a19;color:#fff;font-family:"Noto Sans TC",sans-serif;margin:24px;max-width:1150px}
@@ -325,6 +354,19 @@ ul{margin:4px 0;padding-left:20px;font-size:12.5px;color:#ccc;line-height:1.7}
          f"<td>{r['d2']['oc']:+.2f}%<br><span class='hint'>絕對{r['d2']['oc_abs']:+.2f}%</span></td></tr>"
          for r in short_rows)}
 </table></div>
+<h2>⑥ 跳空強度分層(使用者提問)</h2>
+<div class="note">按<b>宣告次日跳空幅度</b>(demean)分層,所有後續報酬皆自<b>次日收盤</b>起算
+(=跳空已發生後才進場,零前視);另列買回期間內表現。</div>
+<div class='scroll'><table><tr><th>跳空層</th><th>n</th><th>宣告前20日</th>
+{"".join(f"<th>k{k}</th>" for k in K_LIST)}<th>買回期間內</th><th>期間後20日</th><th>k40勝率</th></tr>
+{"".join(f"<tr><th>{r['lab']}</th><td>{r['n']:,}</td><td>{r['pre20']:+.1f}%</td>"
+         + "".join(f"<td>{r[k]['mean']:+.2f}%" + (f"<br><span style='color:#777;font-size:10.5px'>[{r[k]['b']['lo']:+.2f},{r[k]['b']['hi']:+.2f}]{'✓' if r[k]['b']['sig'] else ''}</span>" if r[k]['b'] else "") + "</td>" for k in K_LIST)
+         + f"<td>{r.get('ip', float('nan')):+.2f}%{'✓' if r.get('b_ip') and r['b_ip']['sig'] else ''}</td>"
+         f"<td>{r.get('pp', float('nan')):+.2f}%</td><td>{r[40]['win']:.0f}%</td></tr>" for r in G)}
+</table></div>
+<h3>交乘: 跳空 × 規模</h3>
+{tbl(G2)}
+
 <h2>⚖️ 判決(2026-08-07首輪)</h2>
 <ul>
 <li><span style="background:#3b3420;color:#c3a55a;padding:6px 10px;border-radius:4px;font-weight:bold">
@@ -352,9 +394,20 @@ vs 員工型k20<b>+2.23✓</b>/k40+1.98/勝率52%——「公司出來救股價�
 全體-1.88%✓[-2.70,-0.96]/護盤型-1.80✓/員工型-1.92✓——公司買盤退場後回吐,
 而<b>期間結束日在宣告時就已知</b>(period_end欄位)=這是本卷唯一乾淨可執行的規則:
 <b>不要抱過買回期間結束日</b>。</li>
-<li><b>⑥實務配方(候選層)</b>: 宣告日次日收盤進場,只做<b>預定買回≥2.6%股本</b>(可加碼條件: 現價已跌破
-買回區間下限),持有約20交易日且<b>不超過買回期間結束日</b>;護盤型不加分、執行率別當篩選。
-⚠樣本1,330筆(2015後,受fm_daily_price流動池覆蓋限制),k40多數含0=定位候選層。</li>
+<li><span style="background:#243b24;color:#7ec97e;padding:6px 10px;border-radius:4px;font-weight:bold">
+⑥跳空強度(使用者提問): 答案是<b>U型不是單調</b>——最差的是「溫吞小跳空」</span>
+跳空>5%(市場強反應,n=209): k5+2.33/<b>k20+3.96✓</b>/k40+4.00/勝率56%/期間內+4.80%=<b>最好</b>;
+跳空2~5%: k20+2.02✓/<b>期間內+2.06✓</b>;<b>跳空0~2%(n=429): k20+0.26含0/k40-0.98/k60-2.14/
+期間內-0.67%=全場最差</b>;跳空≤0(沒跳空或開低,n=212): k20+1.64/k40+1.49/期間內+1.22=<b>反而不差</b>。
+機制解讀: 兩端各有故事——強跳空=市場認同且前20日跌最深(-6.4%)的超跌反彈;沒跳空組前20日只跌-2.7%
+(跌最少)=本來就不太需要救的公司;<b>中間的0~2%最尷尬</b>: 有跌但市場半信半疑,買盤不足以撐住。
+所以使用者的「沒跳空的期間表現會不會很差?」答案是<b>不會,溫吞小跳空才差</b>。
+⚠交乘後n變薄(跳空>5%×規模大n=100 k20+4.44含0;跳空≤0×規模大n=65 k40+4.01/k60+3.50/勝率57%)。
+附註(事後解剖): 強跳空組平均執行率62%反而低於溫吞組72%——與④的內生性一致(漲上去就不用買)。</li>
+<li><b>⑦實務配方(候選層)</b>: 宣告日次日收盤進場,只做<b>預定買回≥2.6%股本</b>(可加碼條件: 現價已跌破
+買回區間下限、次日跳空>2%),<b>避開跳空0~2%的溫吞格</b>,持有約20交易日且<b>不超過買回期間結束日</b>;
+護盤型不加分、執行率別當篩選。⚠樣本1,330筆(2015後,受fm_daily_price流動池覆蓋限制),
+k40多數含0=定位候選層。</li>
 </ul>
 <h2>已知限制</h2>
 <div class="note">①除權息未還原(長窗保守偏誤);②同公司多次宣告未去重(頻繁買回的公司權重較高);
