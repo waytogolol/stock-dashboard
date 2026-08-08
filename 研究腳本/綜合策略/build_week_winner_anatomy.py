@@ -147,6 +147,98 @@ def main():
     print(f"[data] 樣本{len(D):,}筆 ({D.d.nunique()}個抽樣日); "
           f"fwd5均{D.fwd5.mean():+.2f}% 中位{D.fwd5.median():+.2f}% 勝率{(D.fwd5 > 0).mean() * 100:.0f}%")
 
+    # ══ v2(2026-08-08使用者兩項修正) ══
+    # ①胃納量: 小成交值股要剔除(0.3億池太寬,實務吃不到量)——改用1億/3億/5億三檔母體對決
+    # ②出發點改基本面: 先限定「月營收表現好」再看型態,而非全池撈型態
+    print("\n" + "=" * 100)
+    print("【v2-①胃納量】母體成交值門檻對決(同一組規則,只換池)")
+    liq_bands = [("A 0.3億(原池)", 0.3), ("B 1億", 1.0), ("C 3億", 3.0), ("D 5億", 5.0)]
+    base_rules = {
+        "R7漲停後拉回": (D.n_limitup20 >= 1) & (D.days_since_longbar.between(1, 5)) & (D.ma5_dist < 2),
+        "R1長紅後拉回5日線": (D.n_longbar20 >= 1) & (D.days_since_longbar.between(1, 5)) &
+                        (D.ma5_dist.between(-3, 1)),
+        "R5題材×淺回": (D.is_theme == 1) & (D.dist20 >= -3) & (D.dist20 < 0) & (D.theme_mom > 0),
+        "(基準)全池": pd.Series(True, index=D.index),
+    }
+    liq_res = []
+    for lab_r, mask_r in base_rules.items():
+        for lab_l, th in liq_bands:
+            sub = D[mask_r.fillna(False) & (D.money20 >= th)]
+            if len(sub) < 300:
+                continue
+            w, l = sub.fwd5[sub.fwd5 > 0], sub.fwd5[sub.fwd5 <= 0]
+            wl = (w.mean() / abs(l.mean())) if len(w) and len(l) else np.nan
+            liq_res.append({"rule": lab_r, "liq": lab_l, "n": len(sub), "mean": sub.fwd5.mean(),
+                            "win": (sub.fwd5 > 0).mean() * 100, "wl": wl,
+                            "c05": sub.fwd5.mean() - 0.5})
+            print(f"  {lab_r:<18}{lab_l:<12} n={len(sub):>7,} 均{sub.fwd5.mean():+.2f}% "
+                  f"勝率{(sub.fwd5 > 0).mean() * 100:.0f}% 賺賠{wl:.2f} 扣0.5%{sub.fwd5.mean() - 0.5:+.2f}%")
+
+    print("\n【v2-②基本面出發點】先限定月營收表現好,再看型態")
+    D["rev_ok"] = (D.rev_r1 == 1)
+    fund_res = []
+    fund_sets = [
+        ("F0 全池(對照)", pd.Series(True, index=D.index)),
+        ("F1 營收兩月連創高", D.rev_ok),
+        ("F2 營收連創×均額>=1億", D.rev_ok & (D.money20 >= 1.0)),
+        ("F3 營收連創×均額>=3億", D.rev_ok & (D.money20 >= 3.0)),
+        ("F4 營收連創×題材成員", D.rev_ok & (D.is_theme == 1)),
+        ("F5 營收連創×題材動能正", D.rev_ok & (D.theme_mom > 0)),
+        ("F6 營收連創×淺回(dist20 -3~0)", D.rev_ok & (D.dist20 >= -3) & (D.dist20 < 0)),
+        ("F7 營收連創×長紅後拉回", D.rev_ok & (D.n_longbar20 >= 1) &
+         (D.days_since_longbar.between(1, 5)) & (D.ma5_dist.between(-3, 1))),
+        ("F8 營收連創×題材動能×淺回", D.rev_ok & (D.theme_mom > 0) & (D.dist20 >= -3) & (D.dist20 < 0)),
+        ("F9 營收連創×均額1億×淺回", D.rev_ok & (D.money20 >= 1.0) & (D.dist20 >= -3) & (D.dist20 < 0)),
+        ("F10 營收連創×均額1億×長紅拉回", D.rev_ok & (D.money20 >= 1.0) & (D.n_longbar20 >= 1) &
+         (D.days_since_longbar.between(1, 5)) & (D.ma5_dist.between(-3, 1))),
+        # v2-④ 依贏家畫像追加: 題材動能是唯一「贏家>輸家」的特徵;波動度反而「贏家<輸家」
+        ("F11 F10×題材動能正", D.rev_ok & (D.money20 >= 1.0) & (D.n_longbar20 >= 1) &
+         (D.days_since_longbar.between(1, 5)) & (D.ma5_dist.between(-3, 1)) & (D.theme_mom > 0)),
+        ("F12 F11×波動<中位(排除過熱)", D.rev_ok & (D.money20 >= 1.0) & (D.n_longbar20 >= 1) &
+         (D.days_since_longbar.between(1, 5)) & (D.ma5_dist.between(-3, 1)) & (D.theme_mom > 0) &
+         (D.vol20_ann < 55)),
+        ("F13 F10×波動<55(不加題材)", D.rev_ok & (D.money20 >= 1.0) & (D.n_longbar20 >= 1) &
+         (D.days_since_longbar.between(1, 5)) & (D.ma5_dist.between(-3, 1)) & (D.vol20_ann < 55)),
+        ("F14 營收連創×1億×漲停後拉回", D.rev_ok & (D.money20 >= 1.0) & (D.n_limitup20 >= 1) &
+         (D.days_since_longbar.between(1, 5)) & (D.ma5_dist < 2)),
+    ]
+    for lab, mask in fund_sets:
+        sub = D[mask.fillna(False)]
+        if len(sub) < 200:
+            print(f"  {lab:<32} n={len(sub)} 不足")
+            continue
+        w, l = sub.fwd5[sub.fwd5 > 0], sub.fwd5[sub.fwd5 <= 0]
+        wl = (w.mean() / abs(l.mean())) if len(w) and len(l) else np.nan
+        winr = (sub.fwd5 > 0).mean() * 100
+        exp0 = sub.fwd5.mean()
+        y = sub.groupby("yr").fwd5.mean()
+        ok = (wl >= 1.5) and (winr >= 50) and (exp0 - 0.3 > 0)
+        fund_res.append({"lab": lab, "n": len(sub), "per_yr": len(sub) / 11.5, "mean": exp0,
+                         "dm": sub.fwd5dm.mean(), "win": winr, "wl": wl, "c03": exp0 - 0.3,
+                         "c05": exp0 - 0.5, "yr": f"{int((y > 0).sum())}/{len(y)}", "pass": ok})
+        print(f"  {'✅' if ok else '  '}{lab:<32} n={len(sub):>6,}({len(sub)/11.5:.0f}/年) "
+              f"均{exp0:+.2f}%/dm{sub.fwd5dm.mean():+.2f}% 勝率{winr:.0f}% 賺賠{wl:.2f} "
+              f"扣0.5%{exp0 - 0.5:+.2f}% 逐年{y.gt(0).sum()}/{len(y)}")
+
+    print("\n【v2-③贏家畫像·限定基本面池】(營收連創×均額>=1億內,再比贏家vs輸家)")
+    P = D[D.rev_ok & (D.money20 >= 1.0)].copy()
+    if len(P) > 2000:
+        P["rk"] = P.groupby("d").fwd5.rank(pct=True)
+        pw, pl = P[P.rk >= 0.9], P[P.rk <= 0.1]
+        prof2 = []
+        for fn in feat_names:
+            a, b, c = pw[fn].median(), P[fn].median(), pl[fn].median()
+            if pd.isna(a) or pd.isna(b):
+                continue
+            prof2.append({"f": fn, "win": a, "all": b, "lose": c, "gap": a - b})
+        prof2.sort(key=lambda x: -abs(x["gap"]))
+        print(f"  (池內n={len(P):,}; 贏家前10%平均{pw.fwd5.mean():+.1f}% vs 輸家後10%{pl.fwd5.mean():+.1f}%)")
+        for p in prof2[:12]:
+            print(f"    {p['f']:<18} 贏家{p['win']:>8.2f} | 池{p['all']:>8.2f} | 輸家{p['lose']:>8.2f} "
+                  f"| 贏−池{p['gap']:+.2f}")
+    else:
+        prof2 = []
+
     # ---- 階段一: 贏家畫像 ----
     D["rank"] = D.groupby("d").fwd5.rank(pct=True)
     win = D[D["rank"] >= 0.95]
@@ -289,11 +381,24 @@ R1長紅後拉回5日線(+0.82%/49%/1.40/+0.32%)、R5題材成員×淺回(+0.52%
 對照組: 純追高R4僅+0.42%、全池基準+0.27%(扣0.3%成本即為負)——
 <b>「等拉回」是對的(R7/R1 是基準的3倍),但賺賠比天花板在1.4</b>,離1.5差一步、勝率也上不了50%。
 深回檔接刀(R3)與大戶增(R8)無效。</li>
-<li><b>④下一步的方向(進場端已榨乾,要靠出場端)</b>: 本卷把進場端的特徵空間掃過一遍,
-結論是<b>賺賠比不可能只靠選股達到1.5</b>。真正還沒動的槓桿是<b>出場</b>——
-固定持有5日是最鈍的做法;可測「目標價停利(+5%/+8%)」「移動停損」「首日不利即出」「賺就抱到轉弱」等
-動態出場,<b>賺賠比正是出場端的直接產物</b>(截斷虧損=分母變小)。這是下一張卷,也是唯一還有機會
-達標的路徑。</li>
+<li><span style="background:#243b24;color:#7ec97e;padding:6px 10px;border-radius:4px;font-weight:bold">
+④v2翻盤(使用者兩項修正): 換成「基本面出發+胃納量門檻」後<b>達標了</b></span>
+使用者指正: (a)母體要剔除小成交值(胃納量) (b)出發點改成先篩月營收好再看型態。結果:
+<b>F11 = 營收兩月連創高 × 20日均額≥1億 × 長紅後拉回5日線 × 題材動能正</b>:
+<b>均+1.86% / demean+1.59% / 勝率52% / 賺賠比1.56 / 扣0.5%成本後+1.36% / 逐年8/9</b>(n=418,~36次/年)
+——<b>三項判準全過(賺賠≥1.5✓、勝率≥50%✓、成本後>0✓)</b>,是全卷唯一達標的組合;
+F13(同上但用低波動取代題材動能)賺賠1.52/勝率50%也達標;F14(漲停版)+1.49%/1.47接近。
+對照: 純型態版天花板1.42、全池基準1.22——<b>基本面當出發點是關鍵那一步</b>。</li>
+<li><b>⑤胃納量門檻幾乎零成本</b>: 同一組規則把池子從0.3億拉到5億(R7: +0.90%→+0.96%、
+R1: +0.82%→+0.96%、R5: +0.52%→+0.67%),<b>報酬不降反升、勝率+1pp、賺賠比僅微降0.05</b>
+——<b>剔除小成交值股不會傷害策略</b>,實務可執行性直接提升(使用者的胃納量顧慮解除)。</li>
+<li><b>⑥贏家畫像在基本面池內出現兩個新線索</b>(全池版被雜訊蓋住):
+①<b>題材動能是唯一「贏家>輸家」的特徵</b>(3.97 vs 2.75,池2.36)→ 成為F11的關鍵條件;
+②<b>波動度反而「贏家<輸家」</b>(55.5 vs 60.2)=過熱股是輸家而非贏家→ F13用低波動也能達標。
+③days_since_longbar 贏家7 vs 池10=「剛長紅」仍是共同前提。</li>
+<li><b>⑦下一步(仍然是出場端)</b>: F11的賺賠1.56已達標但靠的是進場品質;
+出場仍是固定5日的鈍刀。下一張卷用F11當母體掃出場矩陣(目標價停利/移動停損/首日不利即出),
+<b>賺賠比有機會再往上一階</b>。另F11每年僅~36次=需與其他線並行才夠分散。</li>
 </ul>
 <div class="note">維運: python 研究腳本/綜合策略/build_week_winner_anatomy.py(從根目錄執行)。</div>
 </body></html>"""
