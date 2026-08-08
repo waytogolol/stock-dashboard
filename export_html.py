@@ -3613,7 +3613,6 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   </div>
 
   <div id="sigThermoView" style="display:none">
-  <div class="hint" id="hpRsGauge" style="font-weight:600;border-left:3px solid var(--ac);padding-left:10px"></div>
   <div class="rule-card">
     <div class="rule-title">🌡️ 大盤溫度計——偵測「大盤恐慌殺到底」的五個買點燈</div>
     <div class="rule-item"><b>這在幹嘛（一句話）</b>：五個燈各自偵測一種「市場被嚇壞、一堆人被迫賣股票」的極端日。關鍵機制：因為斷頭、停損、風控砍倉而賣（人被迫賣，不是公司變壞）＝賣完就沒賣壓了，歷史上之後多半反彈——所以<b>燈亮＝進場窗開啟，是買點提示不是逃命警報</b>。</div>
@@ -3639,6 +3638,8 @@ tr.hl-row td { background: var(--ac-bg); font-weight: 600; }
   <div id="thermoHeadline" style="font-size:1.05em;font-weight:700;margin:4px 0 10px;padding:10px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--sf)"></div>
   <div class="hint" id="thermoAsof" style="font-weight:600"></div>
   <div id="thermoCards" style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0"></div>
+  <h3 class="sec-title">🚩 位階風險（獨立於上方五個買點燈：五燈＝殺到底可以接，這條＝高位階行情健不健康）</h3>
+  <div id="hpRsPanel" style="margin:8px 0"></div>
   <h3 class="sec-title">近10日讀數（甜蜜格並發／跌停家數）</h3>
   <div class="scroll-box"><table id="thermoSeries"></table></div>
   <h3 class="sec-title">歷史同類事件(甜蜜格並發≥20)</h3>
@@ -5116,13 +5117,6 @@ function renderQuarterlySig() {
     const nAct = (Q.triple_today || []).length + (Q.exits_today || []).length + (Q.dual_sell || []).length;
     btn.innerHTML = "🌟季級持股" + (nAct ? "<span class=\"bell\">🔔" + nAct + "</span>" : "");
   }
-  // 高價股RS溫度計(併入🌡️溫度計頁,research_high_price_followup三關過安慰劑)
-  const rsEl = document.getElementById("hpRsGauge");
-  if (rsEl && Q.hp_rs && Q.hp_rs.status) {
-    rsEl.innerHTML = "💎高價股RS溫度計(風險偏好): RS3月均 " +
-      (Q.hp_rs.rs3_pct >= 0 ? "+" : "") + Q.hp_rs.rs3_pct + "% " + Q.hp_rs.status +
-      "<br><span style='font-weight:400;color:var(--tx3)'>" + Q.hp_rs.note + "；資料日 " + (Q.last_day || "") + "</span>";
-  }
 }
 
 // ── 法說會筆記(2026-07-19上板) ────────────────────────────────────
@@ -5447,10 +5441,32 @@ function renderThermoTab() {
      verdict: "全市場融資戶的平均維持率跌破150%＝斷頭潮水位（券商開始強制賣出融資戶持股＝最典型的被迫賣壓）。歷史9次進帶，之後60日中位+14.4%／勝率78%。",
      warn: "水位與殺出深度都是「狀態」不是「進場時點」——帶內/死亡谷要等出清日訊號（溫度計/雙收斂/跌停廣度亮燈）再進，燈亮日照燈的劇本操作不衝突；2008慢熊第一次跌破是例外。"},
   ];
+  // 位階風險面板(獨立於五張買點燈: 五燈=抄底提示,這條=高位階風險方向盤)
+  const hrs = (DATA.quarterly || {}).hp_rs;
+  const rsPanel = document.getElementById("hpRsPanel");
+  if (rsPanel) {
+    if (hrs && hrs.status) {
+      const healthy = hrs.rs3_pct > 0;
+      const col = healthy ? "#7ec97e" : "var(--red)";
+      rsPanel.innerHTML =
+        "<div style=\"border:1px solid var(--bd);border-left:4px solid " + col +
+        ";border-radius:8px;padding:10px 12px;background:var(--sf)\">" +
+        "<div style=\"display:flex;justify-content:space-between\"><b>💎 高價股RS(風險偏好方向盤)</b>" +
+        "<span style=\"color:" + col + ";font-weight:700\">" + (healthy ? "🟢 健康" : "🔴 轉弱") + "</span></div>" +
+        "<div style=\"margin:6px 0\">高價領頭羊(池內前5%)近3月相對大盤 <b>" +
+        (hrs.rs3_pct >= 0 ? "+" : "") + hrs.rs3_pct + "%</b>｜資料日 " +
+        ((DATA.quarterly || {}).last_day || "—") + "<br>" + hrs.status + "</div>" +
+        "<div class=\"hint\" style=\"margin:0\">⚠<b>不是買點燈</b>——五燈偵測「殺到底可以接」,這條看「高位階行情還健不健康」," +
+        "兩者邏輯獨立可同時亮。" + hrs.note + "；三關全過(20組隨機安慰劑第100百分位／中價組反向／贏大盤自身動能)。" +
+        "<br>⚠ 月頻樣本n=136仍小(live累積中)；轉弱＝新開倉降預期，不是清倉訊號。</div></div>";
+    } else {
+      rsPanel.innerHTML = "<div class=\"hint\">尚無資料——先跑 python watch_triple_gate.py</div>";
+    }
+  }
   cardsEl.innerHTML = cards.map(function(c) {
     return "<div style=\"flex:1 1 300px;border:1px solid var(--bd);border-radius:8px;padding:10px;background:var(--sf)" +
       (c.lit ? ";box-shadow:inset 0 0 0 1px var(--red)" : "") + "\">" +
-      "<div style=\"display:flex;justify-content:space-between\"><b>" + c.name + "</b>" + pill(c.lit) + "</div>" +
+      "<div style=\"display:flex;justify-content:space-between\"><b>" + c.name + "</b>" + (c.pill_html || pill(c.lit)) + "</div>" +
       "<div style=\"margin:6px 0\">" + c.read + "</div>" +
       "<div class=\"hint\" style=\"margin:0\">" + c.verdict + "<br>⚠ " + c.warn + "</div></div>";
   }).join("");
